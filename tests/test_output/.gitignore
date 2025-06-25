@@ -1,0 +1,5 @@
+# Ignore all files in test_output directory
+*
+
+# But keep the directory itself
+!.gitignore

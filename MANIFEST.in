@@ -1,0 +1,4 @@
+include LICENSE
+include README.md
+recursive-include wf2wf/schemas *.json
+recursive-include examples * 

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wf2wf.dev/schemas/v0.1/loss.json",
+  "title": "wf2wf information-loss side-car",
+  "description": "Records metadata elements that could not be represented in a target workflow format.",
+  "type": "object",
+  "required": ["wf2wf_version", "target_engine", "source_checksum", "entries"],
+  "properties": {
+    "wf2wf_version": {
+      "type": "string",
+      "description": "wf2wf semantic version that produced the file"
+    },
+    "target_engine": {
+      "type": "string",
+      "description": "Exporter target engine (e.g. cwl, snakemake)"
+    },
+    "source_checksum": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Checksum of the Workflow IR used to generate the target files"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp of export"
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["json_pointer", "field", "lost_value", "reason", "origin", "status", "severity"],
+        "properties": {
+          "json_pointer": {"type": "string"},
+          "field": {"type": "string"},
+          "lost_value": {},
+          "reason": {"type": "string"},
+          "origin": {"type": "string", "enum": ["user", "wf2wf"]},
+          "status": {"type": "string", "enum": ["lost", "lost_again", "reapplied"]},
+          "severity": {"type": "string", "enum": ["info", "warn", "error"]}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+} 

@@ -1,0 +1,16 @@
+# HTCondor submit file for generate_report job
+universe = vanilla
+executable = scripts/generate_report.R
+
+request_cpus = 2
+request_memory = 4GB
+request_disk = 1GB
+
+transfer_input_files = analysis_results.txt
+transfer_output_files = final_report.pdf
+
+output = logs/generate_report.out
+error = logs/generate_report.err
+log = logs/generate_report.log
+
+queue 

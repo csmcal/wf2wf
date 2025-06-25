@@ -1,0 +1,399 @@
+{
+  "object_id": "https://example.org/bco/genomics-pipeline-001",
+  "spec_version": "https://w3id.org/ieee/ieee-2791-schema/2791object.json",
+  "etag": "bco-genomics-pipeline-001-v1.0",
+  "provenance_domain": {
+    "name": "Comprehensive Genomics Analysis Pipeline",
+    "version": "1.0.0",
+    "created": "2024-01-15T10:30:00Z",
+    "modified": "2024-01-20T14:45:00Z",
+    "contributors": [
+      {
+        "name": "Dr. Jane Smith",
+        "affiliation": "Genomics Research Institute",
+        "email": "jane.smith@genomics.org",
+        "contribution": ["createdBy", "curatedBy"],
+        "orcid": "https://orcid.org/0000-0000-0000-0001"
+      },
+      {
+        "name": "Dr. John Doe",
+        "affiliation": "Bioinformatics Center",
+        "email": "john.doe@bioinfo.org",
+        "contribution": ["contributedBy"],
+        "orcid": "https://orcid.org/0000-0000-0000-0002"
+      }
+    ],
+    "license": "https://spdx.org/licenses/MIT",
+    "derived_from": "https://example.org/bco/base-pipeline-001",
+    "obsolete_after": "2026-01-15T00:00:00Z",
+    "embargo": {
+      "start_time": "2024-01-15T00:00:00Z",
+      "end_time": "2024-06-15T00:00:00Z"
+    },
+    "review": [
+      {
+        "status": "approved",
+        "reviewer": {
+          "name": "Dr. Review Expert",
+          "affiliation": "Quality Assurance Lab",
+          "email": "reviewer@qa-lab.org",
+          "contribution": ["reviewedBy"],
+          "orcid": "https://orcid.org/0000-0000-0000-0003"
+        },
+        "date": "2024-01-18T12:00:00Z",
+        "comment": "Pipeline validated for regulatory compliance"
+      }
+    ]
+  },
+  "usability_domain": [
+    "Identify and characterize genetic variants in whole genome sequencing data",
+    "Perform comprehensive quality control analysis on high-throughput sequencing data",
+    "Generate standardized reports for clinical genomics applications",
+    "Support regulatory compliance for diagnostic genomics workflows",
+    "Enable reproducible genomics analysis in research and clinical settings"
+  ],
+  "extension_domain": [
+    {
+      "extension_schema": "https://example.org/bco-extensions/regulatory-v1.0",
+      "fda_approval": {
+        "approval_number": "FDA-2024-GENOMICS-001",
+        "approval_date": "2024-01-10T00:00:00Z",
+        "approval_type": "diagnostic_use",
+        "regulatory_pathway": "510k_clearance"
+      },
+      "clinical_validation": {
+        "validation_studies": [
+          {
+            "study_id": "CLIN-2023-001",
+            "study_type": "analytical_validation",
+            "sample_size": 1000,
+            "validation_metrics": {
+              "sensitivity": 0.98,
+              "specificity": 0.99,
+              "positive_predictive_value": 0.97,
+              "negative_predictive_value": 0.99
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "description_domain": {
+    "keywords": [
+      "genomics",
+      "variant calling",
+      "quality control",
+      "whole genome sequencing",
+      "bioinformatics",
+      "clinical diagnostics",
+      "regulatory compliance"
+    ],
+    "platform": ["Linux", "macOS", "Docker", "Kubernetes"],
+    "pipeline_steps": [
+      {
+        "step_number": 1,
+        "name": "Quality Control",
+        "description": "Assess raw sequencing data quality using FastQC and generate comprehensive QC reports",
+        "input_list": [
+          {
+            "uri": "file://input/raw_reads_R1.fastq.gz",
+            "access_time": "2024-01-15T10:30:00Z"
+          },
+          {
+            "uri": "file://input/raw_reads_R2.fastq.gz",
+            "access_time": "2024-01-15T10:30:00Z"
+          }
+        ],
+        "output_list": [
+          {
+            "uri": "file://output/qc_report_R1.html",
+            "access_time": "2024-01-15T10:45:00Z"
+          },
+          {
+            "uri": "file://output/qc_report_R2.html",
+            "access_time": "2024-01-15T10:45:00Z"
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "name": "Read Trimming",
+        "description": "Remove low-quality bases and adapter sequences using Trimmomatic",
+        "input_list": [
+          {
+            "uri": "file://input/raw_reads_R1.fastq.gz"
+          },
+          {
+            "uri": "file://input/raw_reads_R2.fastq.gz"
+          }
+        ],
+        "output_list": [
+          {
+            "uri": "file://output/trimmed_reads_R1.fastq.gz"
+          },
+          {
+            "uri": "file://output/trimmed_reads_R2.fastq.gz"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "name": "Read Alignment",
+        "description": "Align trimmed reads to reference genome using BWA-MEM algorithm",
+        "input_list": [
+          {
+            "uri": "file://input/trimmed_reads_R1.fastq.gz"
+          },
+          {
+            "uri": "file://input/trimmed_reads_R2.fastq.gz"
+          },
+          {
+            "uri": "file://reference/GRCh38.fa"
+          }
+        ],
+        "output_list": [
+          {
+            "uri": "file://output/aligned_reads.bam"
+          },
+          {
+            "uri": "file://output/alignment_stats.txt"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "name": "Variant Calling",
+        "description": "Identify genetic variants using GATK HaplotypeCaller with best practices",
+        "input_list": [
+          {
+            "uri": "file://input/aligned_reads.bam"
+          },
+          {
+            "uri": "file://reference/GRCh38.fa"
+          }
+        ],
+        "output_list": [
+          {
+            "uri": "file://output/variants.vcf"
+          },
+          {
+            "uri": "file://output/variant_metrics.txt"
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "name": "Variant Annotation",
+        "description": "Annotate identified variants with functional and clinical significance",
+        "input_list": [
+          {
+            "uri": "file://input/variants.vcf"
+          }
+        ],
+        "output_list": [
+          {
+            "uri": "file://output/annotated_variants.vcf"
+          },
+          {
+            "uri": "file://output/clinical_report.html"
+          }
+        ]
+      }
+    ],
+    "xref": [
+      {
+        "namespace": "pubmed",
+        "name": "PubMed",
+        "ids": ["12345678", "87654321"],
+        "access_time": "2024-01-15T10:30:00Z"
+      },
+      {
+        "namespace": "doi",
+        "name": "Digital Object Identifier",
+        "ids": ["10.1000/example.genomics.2024"],
+        "access_time": "2024-01-15T10:30:00Z"
+      }
+    ]
+  },
+  "execution_domain": {
+    "script": [
+      {
+        "uri": {
+          "uri": "https://github.com/example/genomics-pipeline/workflow.cwl",
+          "access_time": "2024-01-15T10:30:00Z",
+          "sha1_checksum": "a1b2c3d4e5f6789012345678901234567890abcd"
+        }
+      }
+    ],
+    "script_driver": "cwl-runner",
+    "software_prerequisites": [
+      {
+        "name": "FastQC",
+        "version": "0.11.9",
+        "uri": {
+          "uri": "https://www.bioinformatics.babraham.ac.uk/projects/fastqc/",
+          "access_time": "2024-01-15T10:30:00Z"
+        }
+      },
+      {
+        "name": "Trimmomatic",
+        "version": "0.39",
+        "uri": {
+          "uri": "http://www.usadellab.org/cms/?page=trimmomatic",
+          "access_time": "2024-01-15T10:30:00Z"
+        }
+      },
+      {
+        "name": "BWA",
+        "version": "0.7.17",
+        "uri": {
+          "uri": "https://github.com/lh3/bwa",
+          "access_time": "2024-01-15T10:30:00Z"
+        }
+      },
+      {
+        "name": "GATK",
+        "version": "4.2.6.1",
+        "uri": {
+          "uri": "https://gatk.broadinstitute.org/",
+          "access_time": "2024-01-15T10:30:00Z"
+        }
+      }
+    ],
+    "external_data_endpoints": [
+      {
+        "name": "Reference Genome GRCh38",
+        "url": "ftp://ftp.ensembl.org/pub/release-104/fasta/homo_sapiens/dna/",
+        "access_time": "2024-01-15T10:30:00Z"
+      },
+      {
+        "name": "dbSNP Database",
+        "url": "https://ftp.ncbi.nlm.nih.gov/snp/organisms/human_9606_b151_GRCh38p7/VCF/",
+        "access_time": "2024-01-15T10:30:00Z"
+      },
+      {
+        "name": "ClinVar Database",
+        "url": "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/",
+        "access_time": "2024-01-15T10:30:00Z"
+      }
+    ],
+    "environment_variables": {
+      "JAVA_OPTS": "-Xmx8g",
+      "TMPDIR": "/tmp",
+      "GATK_LOCAL_JAR": "/opt/gatk/gatk-package-4.2.6.1-local.jar",
+      "BWA_THREADS": "8",
+      "REFERENCE_GENOME": "/data/reference/GRCh38.fa"
+    }
+  },
+  "parametric_domain": [
+    {
+      "param": "quality_threshold",
+      "value": "30",
+      "step": "2",
+      "description": "Minimum quality score for base trimming"
+    },
+    {
+      "param": "min_read_length",
+      "value": "36",
+      "step": "2",
+      "description": "Minimum read length after trimming"
+    },
+    {
+      "param": "alignment_threads",
+      "value": "8",
+      "step": "3",
+      "description": "Number of threads for BWA alignment"
+    },
+    {
+      "param": "min_base_quality",
+      "value": "20",
+      "step": "4",
+      "description": "Minimum base quality for variant calling"
+    },
+    {
+      "param": "min_mapping_quality",
+      "value": "20",
+      "step": "4",
+      "description": "Minimum mapping quality for variant calling"
+    }
+  ],
+  "io_domain": {
+    "input_subdomain": [
+      {
+        "uri": {
+          "filename": "sample_R1.fastq.gz",
+          "uri": "file://data/input/sample_R1.fastq.gz",
+          "access_time": "2024-01-15T10:30:00Z"
+        },
+        "mediatype": "application/gzip",
+        "format": "http://edamontology.org/format_1930"
+      },
+      {
+        "uri": {
+          "filename": "sample_R2.fastq.gz",
+          "uri": "file://data/input/sample_R2.fastq.gz",
+          "access_time": "2024-01-15T10:30:00Z"
+        },
+        "mediatype": "application/gzip",
+        "format": "http://edamontology.org/format_1930"
+      },
+      {
+        "uri": {
+          "filename": "GRCh38.fa",
+          "uri": "file://data/reference/GRCh38.fa",
+          "access_time": "2024-01-15T10:30:00Z"
+        },
+        "mediatype": "text/plain",
+        "format": "http://edamontology.org/format_1929"
+      }
+    ],
+    "output_subdomain": [
+      {
+        "mediatype": "text/html",
+        "uri": {
+          "filename": "qc_report.html",
+          "uri": "file://data/output/qc_report.html",
+          "access_time": "2024-01-15T11:00:00Z"
+        },
+        "format": "http://edamontology.org/format_2331"
+      },
+      {
+        "mediatype": "application/octet-stream",
+        "uri": {
+          "filename": "aligned_reads.bam",
+          "uri": "file://data/output/aligned_reads.bam",
+          "access_time": "2024-01-15T11:30:00Z"
+        },
+        "format": "http://edamontology.org/format_2572"
+      },
+      {
+        "mediatype": "text/plain",
+        "uri": {
+          "filename": "variants.vcf",
+          "uri": "file://data/output/variants.vcf",
+          "access_time": "2024-01-15T12:00:00Z"
+        },
+        "format": "http://edamontology.org/format_3016"
+      },
+      {
+        "mediatype": "text/html",
+        "uri": {
+          "filename": "clinical_report.html",
+          "uri": "file://data/output/clinical_report.html",
+          "access_time": "2024-01-15T12:30:00Z"
+        },
+        "format": "http://edamontology.org/format_2331"
+      }
+    ]
+  },
+  "error_domain": {
+    "empirical_error": {
+      "false_negative_rate": 0.02,
+      "false_positive_rate": 0.01,
+      "description": "Error rates determined from validation studies on 1000 clinical samples"
+    },
+    "algorithmic_error": {
+      "description": "Variant calling accuracy may be reduced in repetitive regions and low-complexity sequences. Quality scores may vary between different sequencing platforms and library preparation methods."
+    }
+  }
+} 

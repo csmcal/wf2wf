@@ -1,0 +1,15 @@
+Sample data for Nextflow pipeline demonstration
+This file contains raw data that will be processed through the pipeline.
+
+Data points:
+1. Initial measurement: 42.5
+2. Second measurement: 38.2
+3. Third measurement: 45.1
+4. Fourth measurement: 41.8
+5. Fifth measurement: 43.3
+
+Metadata:
+- Collection date: 2024-01-15
+- Instrument: Demo spectrometer
+- Operator: Pipeline test
+- Quality: Good 

@@ -1,0 +1,42 @@
+{% set name = "wf2wf" %}
+{% set version = "1.0.0" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  # The SHA256 will be auto-updated by conda-smithy on each version bump.
+  url: https://pypi.io/packages/source/{{ name[0] }}/{{ name }}/{{ name }}-{{ version }}.tar.gz
+  sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  # placeholder
+
+build:
+  noarch: python
+  script: "{{ PYTHON }} -m pip install . -vv"
+
+requirements:
+  host:
+    - python >=3.9
+    - pip
+  run:
+    - python >=3.9
+    - click >=8.1
+    - jsonschema >=4
+    - pyyaml >=6
+    - snakemake >=6.0
+    # HTML report optional dependency
+    - markdown >=3.5  # [py>=3.9]
+
+test:
+  commands:
+    - wf2wf --help
+
+about:
+  home: https://github.com/your-org/wf2wf
+  summary: "Universal workflow-format converter built around a loss-preserving intermediate representation."
+  license: MIT
+  license_file: LICENSE
+
+extra:
+  recipe-maintainers:
+    - your_github_handle 

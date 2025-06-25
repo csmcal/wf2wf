@@ -1,0 +1,46 @@
+# Development dependencies for wf2wf
+# Install with one of:  
+# pip install -r requirements-dev.txt
+# conda install -f requirements-dev.txt
+
+# --- Testing ---
+pytest>=7
+pytest-cov
+pytest-xdist   # parallel tests
+jsonschema>=4.0
+
+# --- Packaging / release ---
+build
+wheel
+twine
+bumpver
+
+# --- Tooling ---
+pre-commit 
+
+# --- Workflow engine helpers (parsing / tooling) ---
+#  Installed only in the dev environment; end-users get lighter optional deps.
+#  Versions chosen for stability with Python ≥3.10.
+
+cwltool>=3.1
+snakemake>=7.32
+miniwdl>=1.6    # WDL parsing & validation
+wdltools
+galaxy-lib>=24.5
+
+# --- Environment & container automation ---
+#  Used by wf2wf.environ helpers (Phase 2) – mostly optional, guarded at runtime.
+
+conda-lock>=2.4          # generate explicit lock files
+micromamba>=0.25         # fast solver for env realisation
+conda-pack>=0.6          # create relocatable tarballs
+python-docker>=6.1       # Docker SDK for OCI builds
+spython>=0.3             # Apptainer/Singularity helper
+syft>=1.1                # SBOM generation (Anchore Syft)
+grype
+skopeo
+oras>=0.1; platform_system!="Windows"  # optional OCI artefact push 
+apptainer
+buildah
+podman
+docker

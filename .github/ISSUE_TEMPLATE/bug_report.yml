@@ -1,0 +1,39 @@
+name: Bug Report
+description: File a bug report
+labels: bug
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. wf2wf convert -i foo.smk -o bar.dag
+        2. Observe error
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: wf2wf version
+      description: Output of `wf2wf --version`.
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - Linux
+        - macOS
+        - Windows
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs and stack traces
+      render: shell 

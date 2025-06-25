@@ -1,0 +1,7 @@
+input_data:
+  class: File
+  path: data/input_data.txt
+
+analysis_threshold: 0.01
+max_iterations: 500
+output_dir: "cwl_results" 

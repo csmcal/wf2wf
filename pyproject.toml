@@ -1,0 +1,57 @@
+[build-system]
+requires = [
+    "setuptools>=61.0",
+    "wheel"
+]
+build-backend = "setuptools.build_meta"
+
+# Optional project metadata (PEP 621).  The authoritative metadata still lives
+# in setup.py, but including the basics here makes the project more friendly
+# to static tooling that only reads pyproject.toml.
+[project]
+name = "wf2wf"
+version = "1.0.0"
+description = "Universal workflow-format converter built around a loss-preserving intermediate representation"
+readme = "README.md"
+requires-python = ">=3.9"
+keywords = ["workflow", "cwl", "snakemake", "htcondor", "dagman", "nextflow", "wdl", "bioinformatics"]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Bio-Informatics"
+]
+authors = [
+  {name = "wf2wf contributors", email = "maintainers@wf2wf.dev"}
+]
+license = {text = "MIT"}
+
+dependencies = [
+  "snakemake>=6.0",
+  "click>=8.1",
+  "jsonschema>=4",
+  "pyyaml>=6",
+  "markdown>=3.5; extra == 'html'"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "pytest-cov",
+  "pre-commit",
+  "ruff",
+]
+html = ["markdown>=3.5"]
+docs = [
+  "sphinx>=7",
+  "furo>=2023.9.10",
+  "myst-parser>=2",
+]
+
+[project.scripts]
+wf2wf = "wf2wf.cli:simple_main" 

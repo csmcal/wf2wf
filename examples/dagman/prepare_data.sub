@@ -1,0 +1,17 @@
+# HTCondor submit file for prepare_data job
+universe = vanilla
+executable = scripts/prepare_data.py
+arguments = $(input_file) $(output_file)
+
+request_cpus = 1
+request_memory = 2GB
+request_disk = 1GB
+
+transfer_input_files = $(input_file)
+transfer_output_files = $(output_file)
+
+output = logs/prepare_data.out
+error = logs/prepare_data.err  
+log = logs/prepare_data.log
+
+queue 
