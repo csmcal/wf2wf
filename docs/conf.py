@@ -29,6 +29,14 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 html_theme = "furo"
 html_title = f"wf2wf {version} Documentation"
 
+# Better UX options
+html_theme_options = {
+    "sidebar_hide_name": True,
+    "light_logo": "",
+    "dark_logo": "",
+    "navigation_with_keys": True,
+}
+
 html_static_path = ["_static"]
 
 # -- Path setup --------------------------------------------------------------

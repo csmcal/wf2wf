@@ -5,6 +5,9 @@ chapters:
   - file: user_guide/prerequisites
   - file: user_guide/quickstart
   - file: user_guide/environments
+  - file: user_guide/registry_auth
+  - file: user_guide/examples
+  - file: user_guide/faq
   - file: user_guide/troubleshooting
   - file: cli/commands
   - file: developer/architecture
@@ -12,9 +15,19 @@ chapters:
   - file: developer/contributing
   - file: api/index
   - file: ../../CHANGELOG.md
+  - caption: Tutorials
+    chapters:
+      - file: user_guide/tutorials/snakemake_to_dagman
+      - file: user_guide/tutorials/cwl_to_nextflow
   - caption: Engines
     chapters:
       - file: user_guide/engines/overview
+      - file: user_guide/engines/snakemake
+      - file: user_guide/engines/cwl
+      - file: user_guide/engines/nextflow
+      - file: user_guide/engines/dagman
+      - file: user_guide/engines/wdl
+      - file: user_guide/engines/galaxy
   - file: user_guide/loss_report
   - file: cli/cli_reference
   sections:
