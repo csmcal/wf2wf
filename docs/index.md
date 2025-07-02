@@ -43,7 +43,25 @@ wf2wf convert -i analysis.cwl -o main.nf --out-format nextflow --fail-on-loss
 
 ---
 
-```{tableofcontents}
+```{toctree}
+:hidden:
+:maxdepth: 2
+
+user_guide/installation
+user_guide/prerequisites
+user_guide/quickstart
+user_guide/environments
+user_guide/troubleshooting
+cli/commands
+cli/convert
+cli/validate
+cli/info
+cli/bco
+cli/cache
+developer/architecture
+developer/loss_mapping
+developer/contributing
+api/index
 ```
 
 ---
