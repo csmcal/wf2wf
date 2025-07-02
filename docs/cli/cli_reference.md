@@ -1,6 +1,8 @@
 # Complete CLI Reference
 
-```{click} wf2wf.cli:simple_main
+:orphan:
+
+```{click} wf2wf.cli:cli
 :prog: wf2wf
 :show-nested:
 ``` 
