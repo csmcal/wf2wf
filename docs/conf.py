@@ -25,6 +25,9 @@ myst_enable_extensions = ["colon_fence", "deflist", "html_image"]
 
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
+# Prefix document path to section labels to avoid duplicates
+autosectionlabel_prefix_document = True
+
 # -- Options for HTML output -------------------------------------------------
 html_theme = "furo"
 html_title = f"wf2wf {version} Documentation"

@@ -9,16 +9,13 @@ chapters:
   - file: user_guide/examples
   - file: user_guide/faq
   - file: user_guide/troubleshooting
-  - file: developer/architecture
-  - file: developer/loss_mapping
-  - file: developer/contributing
-  - file: api/index
+  - file: user_guide/loss_report
   - caption: Tutorials
-    chapters:
+    sections:
       - file: user_guide/tutorials/snakemake_to_dagman
       - file: user_guide/tutorials/cwl_to_nextflow
   - caption: Engines
-    chapters:
+    sections:
       - file: user_guide/engines/overview
       - file: user_guide/engines/snakemake
       - file: user_guide/engines/cwl
@@ -26,13 +23,17 @@ chapters:
       - file: user_guide/engines/dagman
       - file: user_guide/engines/wdl
       - file: user_guide/engines/galaxy
-  - file: user_guide/loss_report
   - caption: CLI
-    chapters:
+    sections:
       - file: cli/cli_reference
+      - file: cli/commands
       - file: cli/convert
       - file: cli/validate
       - file: cli/info
       - file: cli/bco
       - file: cli/cache
+  - file: developer/architecture
+  - file: developer/loss_mapping
+  - file: developer/contributing
+  - file: api/index
   - file: ../../CHANGELOG.md 
