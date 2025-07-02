@@ -16,7 +16,6 @@ readme = "README.md"
 requires-python = ">=3.9"
 keywords = ["workflow", "cwl", "snakemake", "htcondor", "dagman", "nextflow", "wdl", "bioinformatics"]
 classifiers = [
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.9",
@@ -29,7 +28,7 @@ classifiers = [
 authors = [
   {name = "wf2wf contributors", email = "maintainers@wf2wf.dev"}
 ]
-license = {text = "MIT"}
+license = "MIT"
 
 dependencies = [
   "snakemake>=6.0",
@@ -54,4 +53,9 @@ docs = [
 ]
 
 [project.scripts]
-wf2wf = "wf2wf.cli:simple_main" 
+wf2wf = "wf2wf.cli:simple_main"
+
+[tool.setuptools.packages.find]
+# Only include the actual Python package and skip the conda-forge recipe directory
+include = ["wf2wf*"]
+exclude = ["recipe*"] 

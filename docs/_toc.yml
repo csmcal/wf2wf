@@ -1,0 +1,20 @@
+format: jb-book
+root: index
+chapters:
+  - file: user_guide/installation
+  - file: user_guide/prerequisites
+  - file: user_guide/quickstart
+  - file: user_guide/environments
+  - file: user_guide/troubleshooting
+  - file: cli/commands
+  - file: developer/architecture
+  - file: developer/loss_mapping
+  - file: developer/contributing
+  - file: ../../CHANGELOG.md
+  sections:
+    - file: cli/convert
+    - file: cli/validate
+    - file: cli/info
+    - file: cli/bco
+    - file: cli/cache
+  - file: api/index 

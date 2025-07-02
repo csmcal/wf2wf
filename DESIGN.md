@@ -59,7 +59,7 @@ Snakemake  ─┐
 Nextflow   ─┼─► Enhanced IR ─► DAGMan
 CWL        ─┤   (wf-json)     ├─► Nextflow  
 WDL        ─┘                 ├─► CWL
-                               └─► Snakemake
+                              └─► Snakemake
 ```
 
 ### Core Principles
