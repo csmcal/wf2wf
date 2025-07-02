@@ -10,11 +10,11 @@ chapters:
   - file: developer/architecture
   - file: developer/loss_mapping
   - file: developer/contributing
+  - file: api/index
   - file: ../../CHANGELOG.md
   sections:
     - file: cli/convert
     - file: cli/validate
     - file: cli/info
     - file: cli/bco
-    - file: cli/cache
-  - file: api/index 
+    - file: cli/cache 

@@ -2,13 +2,13 @@
 
 When a target engine cannot express an IR field, we *never* drop it silently.
 
-## Workflow
+## Loss-mapping workflow
 1. Exporter calls `loss.record(json_pointer, field, value, reason, origin)`
 2. At the end, `loss.write()` creates `output.loss.json` side-car.
 3. Importer reads side-car and tries to reinject data; status becomes `reapplied`.
 
 ## Schema excerpt
-```jsonc
+```json
 {
   "json_pointer": "/tasks/align/resources/gpu",
   "lost_value": 1,
