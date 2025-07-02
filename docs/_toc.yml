@@ -12,6 +12,11 @@ chapters:
   - file: developer/contributing
   - file: api/index
   - file: ../../CHANGELOG.md
+  - caption: Engines
+    chapters:
+      - file: user_guide/engines/overview
+  - file: user_guide/loss_report
+  - file: cli/cli_reference
   sections:
     - file: cli/convert
     - file: cli/validate

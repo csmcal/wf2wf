@@ -18,6 +18,7 @@ extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
     "sphinx.ext.autosectionlabel",
+    "sphinx_click",
 ]
 
 myst_enable_extensions = ["colon_fence", "deflist", "html_image"]
