@@ -18,7 +18,7 @@ import textwrap
 import sys
 from collections import defaultdict, namedtuple
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
 
 from wf2wf.core import Workflow, Task, ResourceSpec, EnvironmentSpec
 from wf2wf.loss import (
@@ -33,10 +33,10 @@ from wf2wf.loss import (
 
 def from_workflow(
     wf: Workflow,
-    out_file: str | Path,
+    out_file: Union[str, Path],
     *,
-    workdir: str | Path | None = None,
-    scripts_dir: str | Path | None = None,
+    workdir: Union[str, Path, None] = None,
+    scripts_dir: Union[str, Path, None] = None,
     default_memory: str = "2GB",
     default_disk: str = "2GB",
     default_cpus: int = 1,
@@ -51,13 +51,13 @@ def from_workflow(
     ----------
     wf : Workflow
         In-memory workflow IR.
-    out_file : str | Path
+    out_file : Union[str, Path]
         Target `.dag` file path.  Auxiliary submit and script files are written
         next to it unless *scripts_dir* is specified.
-    workdir : str | Path, optional
+    workdir : Union[str, Path], optional
         Initial working directory for Condor jobs.  Defaults to the directory
         containing *out_file* if not provided.
-    scripts_dir : str | Path, optional
+    scripts_dir : Union[str, Path], optional
         Directory for generated wrapper scripts.  Defaults to a sibling of the
         DAG file named ``scripts``.
     default_memory / default_disk / default_cpus : str/int

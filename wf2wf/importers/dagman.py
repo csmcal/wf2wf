@@ -20,7 +20,7 @@ def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
 
     Parameters
     ----------
-    path : str | Path
+    path : Union[str, Path]
         Path to the .dag file.
     name : str, optional
         Override workflow name (defaults to DAG filename stem).

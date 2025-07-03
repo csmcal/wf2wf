@@ -104,6 +104,7 @@ cli/cache
 developer/architecture
 developer/loss_mapping
 developer/contributing
+developer/versioning
 api/index
 ```
 

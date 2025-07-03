@@ -30,9 +30,9 @@ def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any):
     ----------
     wf : Workflow
         In-memory workflow IR.
-    out_file : str | Path
+    out_file : Union[str, Path]
         Target Snakefile path.
-    config_file : str | Path, optional
+    config_file : Union[str, Path], optional
         Write config to separate YAML file (default: embed in Snakefile).
     create_all_rule : bool, optional
         Create 'all' rule that depends on final outputs (default: True).
@@ -42,7 +42,7 @@ def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any):
         Include conda environment specifications (default: True).
     include_containers : bool, optional
         Include container specifications (default: True).
-    script_dir : str | Path, optional
+    script_dir : Union[str, Path], optional
         Directory for external scripts (default: 'scripts/').
     verbose : bool, optional
         Enable verbose output (default: False).

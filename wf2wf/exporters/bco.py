@@ -13,7 +13,7 @@ Usage:
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 import json
 from datetime import datetime, timezone
 import tarfile
@@ -176,7 +176,7 @@ def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any):  # noq
         out_path = out_path.with_suffix(out_path.suffix + ".json")
 
     include_cwl = opts.get("include_cwl", False)
-    cwl_path: Path | None = None
+    cwl_path: Union[Path, None] = None
 
     # Assemble BCO structure --------------------------------------------------
     bco: Dict[str, Any] = {
@@ -327,7 +327,7 @@ def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any):  # noq
 
 def generate_fda_submission_package(
     wf: Workflow,
-    package_path: str | Path,
+    package_path: Union[str, Path],
     *,
     submission_type: str = "510k",
     verbose: bool = False,
@@ -398,3 +398,12 @@ def generate_fda_submission_package(
             print(f"FDA submission package written to {pkg_path}")
 
     return pkg_path
+
+
+def _maybe_add_cwl_workflow(
+    wf: Workflow,
+    bco_data: Dict[str, Any],
+    cwl_path: Union[Path, None] = None
+) -> None:
+    # Implementation of the function
+    pass

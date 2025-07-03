@@ -1036,7 +1036,7 @@ if click:
 
     @cli.command()
     @click.argument("workflow_file", type=click.Path(exists=True, path_type=Path))
-    def validate_cmd(workflow_file: Path):
+    def validate(workflow_file: Path):
         """Validate a workflow file against the wf2wf JSON schema.
 
         WORKFLOW_FILE can be JSON or YAML format.

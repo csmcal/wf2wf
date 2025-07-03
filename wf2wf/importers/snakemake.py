@@ -35,13 +35,13 @@ def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
 
     Parameters
     ----------
-    path : str | Path
+    path : Union[str, Path]
         Path to the Snakefile.
-    workdir : str | Path, optional
+    workdir : Union[str, Path], optional
         Working directory for Snakemake execution.
     cores : int, optional
         Number of cores to use (default: 1).
-    configfile : str | Path, optional
+    configfile : Union[str, Path], optional
         Path to config file.
     snakemake_args : List[str], optional
         Additional arguments to pass to snakemake commands.
