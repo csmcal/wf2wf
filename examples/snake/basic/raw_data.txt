@@ -1,2 +1,2 @@
 This is the raw data file for the resources workflow.
-It will be processed by A_heavy_mem to create A.txt. 
+It will be processed by A_heavy_mem to create A.txt.

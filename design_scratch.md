@@ -132,7 +132,7 @@ Put results into `Workflow` dataclass.
 
 ### 5.5  Phase 5 – Unified CLI
 ```
-wf2wf convert --in-format snakemake --out-format dagman \ 
+wf2wf convert --in-format snakemake --out-format dagman \
               --snakefile Snakefile --out workflow.dag
 ```
 The CLI will auto-detect formats by extension when possible.
@@ -149,7 +149,7 @@ The current IR will be extended to support:
 
 #### 6.1.1  Advanced Metadata and Provenance
 - **Author Attribution**: ORCID integration, contributor tracking
-- **Versioning**: Comprehensive version control and change tracking  
+- **Versioning**: Comprehensive version control and change tracking
 - **Documentation**: Rich documentation with ontology support
 - **Regulatory Metadata**: BCO domain mapping for FDA compliance
 
@@ -220,29 +220,29 @@ class EnhancedTask:
     id: str
     label: Optional[str] = None
     doc: Optional[str] = None
-    
+
     # Execution
     command: Optional[str] = None
     script: Optional[str] = None
-    
+
     # Enhanced I/O with CWL parameter specifications
     inputs: List[ParameterSpec] = field(default_factory=list)
     outputs: List[ParameterSpec] = field(default_factory=list)
-    
+
     # Advanced execution features
     when: Optional[str] = None  # Conditional execution
     scatter: Optional[ScatterSpec] = None
     scatter_method: Optional[str] = None
-    
+
     # Enhanced specifications
     resources: ResourceSpec = field(default_factory=ResourceSpec)
     environment: EnvironmentSpec = field(default_factory=EnvironmentSpec)
     requirements: List[RequirementSpec] = field(default_factory=list)
     hints: List[RequirementSpec] = field(default_factory=list)
-    
+
     # Metadata and provenance
     intent: List[str] = field(default_factory=list)  # Ontology IRIs
-    
+
     # Legacy compatibility
     params: Dict[str, Any] = field(default_factory=dict)
     priority: int = 0
@@ -257,26 +257,26 @@ class EnhancedWorkflow:
     version: str = "1.0"
     label: Optional[str] = None
     doc: Optional[str] = None
-    
+
     # Workflow structure
     tasks: Dict[str, EnhancedTask] = field(default_factory=dict)
     edges: List[Edge] = field(default_factory=list)
-    
+
     # Enhanced I/O
     inputs: List[ParameterSpec] = field(default_factory=list)
     outputs: List[ParameterSpec] = field(default_factory=list)
-    
+
     # Requirements and hints
     requirements: List[RequirementSpec] = field(default_factory=list)
     hints: List[RequirementSpec] = field(default_factory=list)
-    
+
     # Metadata and provenance
     intent: List[str] = field(default_factory=list)
     cwl_version: Optional[str] = None
-    
+
     # BCO integration
     bco_spec: Optional[BCOSpec] = None
-    
+
     # Legacy compatibility
     config: Dict[str, Any] = field(default_factory=dict)
     meta: Dict[str, Any] = field(default_factory=dict)
@@ -292,14 +292,14 @@ class ParameterSpec:
     label: Optional[str] = None
     doc: Optional[str] = None
     default: Any = None
-    
+
     # File-specific
     format: Optional[str] = None
     secondary_files: List[str] = field(default_factory=list)
     streamable: bool = False
     load_contents: bool = False
     load_listing: Optional[str] = None
-    
+
     # Input binding (deprecated but supported)
     input_binding: Optional[Dict[str, Any]] = None
 
@@ -321,7 +321,7 @@ class BCOSpec:
     object_id: Optional[str] = None
     spec_version: str = "https://w3id.org/ieee/ieee-2791-schema/2791object.json"
     etag: Optional[str] = None
-    
+
     # BCO Domains
     provenance_domain: Dict[str, Any] = field(default_factory=dict)
     usability_domain: List[str] = field(default_factory=list)
@@ -413,10 +413,10 @@ Doing the schema & validation work first might feel abstract, but it crystallise
 
 ---
 
-## 9  Automated Environment & Container Generation Plan  
+## 9  Automated Environment & Container Generation Plan
 *(micromamba + conda-lock + conda-pack  →  OCI image via docker-buildx **or** buildah/podman  →  SIF via Apptainer)*
 
-### 9.1 Rationale  
+### 9.1 Rationale
 Many users run workflows on clusters where (a) Conda environments are preferred for native execution *or* (b) containers are required for isolation.  Creating these artefacts **by hand** is error-prone and hurts reproducibility.  The converter should therefore be able to *materialise and reference* fully reproducible software stacks while it rewrites the workflow.
 
 ### 9.2 Integration Points in wf2wf
@@ -430,7 +430,7 @@ Many users run workflows on clusters where (a) Conda environments are preferred 
    class OCIBuilder(Protocol):
        def build(self, tarball: Path, tag: str, labels: dict[str, str]) -> str: ...  # returns image digest
    ```
-   • Implementation `DockerBuildxBuilder` (uses python-docker / BuildKit)  
+   • Implementation `DockerBuildxBuilder` (uses python-docker / BuildKit)
    • Implementation `BuildahBuilder` (shells out to buildah/podman)
 4. **OCI → SIF (optional)** – If `--apptainer` is requested, call `apptainer build` (via `spython`) to convert the OCI image to `.sif` and push to the cluster mirror.
 5. **Exporter** – When emitting CWL, Snakemake, DAGMan … inject the *digest-pinned* container reference (e.g. `docker://ghcr.io/org/img@sha256:…`) or the `.sif` path plus provenance annotations.
@@ -457,16 +457,16 @@ wf2wf convert \
   --apptainer            # also produce .sif files
 ```
 Options:
-• `--auto-env off|build|reuse` – skip, build new, or reuse existing by hash  
-• `--oci-backend buildx|podman` – choose builder  
-• `--push-registry` – where to push images (otherwise local daemon)  
+• `--auto-env off|build|reuse` – skip, build new, or reuse existing by hash
+• `--oci-backend buildx|podman` – choose builder
+• `--push-registry` – where to push images (otherwise local daemon)
 • `--apptainer` – convert to SIF and update job descriptors accordingly.
 
 ### 9.4 CWL & BCO Considerations
 * **CWL** – The exporter must honour `hints/DockerRequirement`.  When `--auto-env build` is used, it should replace loose `DockerRequirement.dockerPull` strings with a *digest-pinned* `dockerPull` value and add a custom hint recording the original spec plus the Conda lock hash.
 * **BCO** – Capture the full software stack in the *Execution Domain* and *Parametric Domain*:
-  – Include SHA-256 digest of the OCI layer tar.  
-  – Attach the conda-lock file (or its hash) under `parametric_domain.software_prerequisites`.  
+  – Include SHA-256 digest of the OCI layer tar.
+  – Attach the conda-lock file (or its hash) under `parametric_domain.software_prerequisites`.
   – List the build command & tool versions under `execution_domain.script_driver`.
 * **Reproducibility** – Because the lock file + image digest are content-addressed, any third party can recreate / verify bit-for-bit identical environments.
 
@@ -491,12 +491,12 @@ Options:
 ### 9.7 Local Index & Registry-Aware Deduplication
 A build-once/reuse-everywhere strategy keeps CI quick and cluster storage small.
 
-**Local index**  
-• A lightweight SQLite database at `~/.cache/wf2wf/env_index.db` keyed by the 64-byte *environment hash* (the SHA-256 of the conda-lock file) and significant build parameters (base image, Apptainer on/off, SBOM flag…).  
-• Columns: `lock_hash`, `oci_digest`, `image_tag`, `sif_path`, `built_at`, `builder`, `metadata_json` (labels, size, SBOM link…).  
+**Local index**
+• A lightweight SQLite database at `~/.cache/wf2wf/env_index.db` keyed by the 64-byte *environment hash* (the SHA-256 of the conda-lock file) and significant build parameters (base image, Apptainer on/off, SBOM flag…).
+• Columns: `lock_hash`, `oci_digest`, `image_tag`, `sif_path`, `built_at`, `builder`, `metadata_json` (labels, size, SBOM link…).
 • On `--auto-env build` wf2wf first queries this DB; if a matching record exists **and** the local daemon or registry confirms the digest is present, no build is performed—the exporter merely re-uses the existing reference.
 
-**OCI label convention**  
+**OCI label convention**
 Every image pushed by wf2wf carries two labels:
 ```
 org.wf2wf.lock.sha256=<lock_hash>
@@ -505,18 +505,18 @@ org.wf2wf.build.v=<semver>
 This lets wf2wf rediscover images that were copied to different registries by external CI flows: it lists tags/manifests, inspects labels, and matches on `lock_hash`.
 
 **Remote registry probing algorithm**
-1. Build a candidate registry list from `--push-registry` CLI flags plus `$WF2WF_REGISTRIES` (comma-separated).  
-2. Issue concurrent catalog or `skopeo search --digest` queries.  
-3. For each manifest found, inspect labels; the first image whose `org.wf2wf.lock.sha256` equals the desired lock hash is accepted and recorded in the local index.  
+1. Build a candidate registry list from `--push-registry` CLI flags plus `$WF2WF_REGISTRIES` (comma-separated).
+2. Issue concurrent catalog or `skopeo search --digest` queries.
+3. For each manifest found, inspect labels; the first image whose `org.wf2wf.lock.sha256` equals the desired lock hash is accepted and recorded in the local index.
 4. If none found, proceed to build and then push.
 
-**SIF deduplication**  
+**SIF deduplication**
 Apptainer images are already content-addressed (`sha256` of rootfs). wf2wf creates a symbolic link `<hash>.sif` under a configurable cache directory (default `~/.cache/wf2wf/sif`). Before converting it checks for that path to skip redundant `apptainer build` runs.
 
-**Cache pruning**  
+**Cache pruning**
 `wf2wf cache prune --days 60 --min-free-gb 5` removes tarballs/SIF files that have not been referenced lately and deletes index rows whose OCI digests are absent from all configured registries.
 
-**Security considerations**  
+**Security considerations**
 When pulling an image solely by matching the label, wf2wf verifies that the manifest digests *and* the embedded conda lock hash match expectations before updating the IR.
 
 ---
@@ -614,15 +614,15 @@ wf2wf convert … --report-md report.md
 # or always
 wf2wf config set reports.default on
 ```
-• New utility `wf2wf.report.generate(wf_before, wf_after, opts, losses, artefacts) -> Path`.  
-• Inject into CLI after export phase.  
+• New utility `wf2wf.report.generate(wf_before, wf_after, opts, losses, artefacts) -> Path`.
+• Inject into CLI after export phase.
 • Template via Jinja2 with predefined sections so new exporters can register *report hooks* (plugin pattern).
 
 #### 12.1.2  File layout & artefact bundling
 When `--package` (e.g. eSTAR) is active, the report is placed in the root of the archive; otherwise next to the output files.
 
 #### 12.1.3  Open questions
-* Include inline diffs for modified YAML/JSON env files? (Y ☐ / N ☑)  
+* Include inline diffs for modified YAML/JSON env files? (Y ☐ / N ☑)
 * Provide HTML rendition alongside `.md`? Could be done via GitHub's Markdown rendering in the browser – low priority.
 
 ### 12.2  Interactive / Confirmation Mode (`--interactive`)
@@ -630,18 +630,18 @@ When `--package` (e.g. eSTAR) is active, the report is placed in the root of the
 **Goal** – Improve trust & clarity by letting users approve optional or potentially destructive steps.
 
 Scenarios:
-• Auto-build environments – ask before network / Docker heavy operations.  
-• Lossy conversion detected (`loss.severity >= warn`) – offer *abort / continue*.  
+• Auto-build environments – ask before network / Docker heavy operations.
+• Lossy conversion detected (`loss.severity >= warn`) – offer *abort / continue*.
 • Overwriting existing output files.
 
 #### 12.2.1  UX guidelines
-1. **Single flag** `-i/--interactive` enabling prompts; default remains non-interactive to keep CI flows stable.  
-2. Prompts stack with a simple `y/n/always/abort` choice set (similar to `git add -p`).  
+1. **Single flag** `-i/--interactive` enabling prompts; default remains non-interactive to keep CI flows stable.
+2. Prompts stack with a simple `y/n/always/abort` choice set (similar to `git add -p`).
 3. Respect `WF2WF_NO_PROMPT=1` env var to force headless mode even if the flag is set (useful for scripted runs).
 
 #### 12.2.2  Technical approach
 * Central helper `wf2wf.prompt.ask(question, default=False) -> bool` using `click.confirm` when `click` is present; falls back to `input()`.
-* CLI pipeline emits `PromptEvent`s that importers/exporters can hook into.  
+* CLI pipeline emits `PromptEvent`s that importers/exporters can hook into.
 
 ```python
 if interactive and potential_loss:
@@ -650,7 +650,7 @@ if interactive and potential_loss:
 ```
 
 #### 12.2.3  Future extensions
-• *Wizard* mode: step-through interactive conversion with coloured output.  
+• *Wizard* mode: step-through interactive conversion with coloured output.
 • Integration with TUI libraries (e.g. `textual`) for richer choices.
 
 ### 12.3  Roadmap & Effort

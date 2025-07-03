@@ -17,4 +17,4 @@ These files are used by various example workflows to demonstrate:
 - Environment management
 - Data processing workflows
 
-The files are intentionally small and simple to make the examples easy to understand and run. 
+The files are intentionally small and simple to make the examples easy to understand and run.

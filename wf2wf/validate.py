@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
-from jsonschema import validate as _js_validate, ValidationError, Draft202012Validator  # type: ignore
+from jsonschema import validate as _js_validate  # type: ignore
 
 # Locate schema file relative to this module
 _SCHEMA_FILE = Path(__file__).parent / "schemas" / "v0.1" / "wf.json"
@@ -52,7 +52,9 @@ def validate_bco(bco_doc: Dict[str, Any]) -> None:
     Downloads the schema (cached per session) and raises :class:`jsonschema.ValidationError`
     on failure.
     """
-    import urllib.request, json, functools
+    import urllib.request
+    import json
+    import functools
 
     @functools.lru_cache(maxsize=1)
     def _load_schema():
@@ -67,7 +69,11 @@ def validate_bco(bco_doc: Dict[str, Any]) -> None:
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "required": ["object_id", "spec_version", "provenance_domain"],
-            "properties": {"object_id": {"type": "string"}, "spec_version": {"type": "string"}, "provenance_domain": {"type": "object"}}
+            "properties": {
+                "object_id": {"type": "string"},
+                "spec_version": {"type": "string"},
+                "provenance_domain": {"type": "object"},
+            },
         }
 
     _js_validate(instance=bco_doc, schema=schema)
@@ -87,4 +93,4 @@ __all__ = [
     "validate_workflow",
     "validate_loss",
     "validate_bco",
-] 
+]

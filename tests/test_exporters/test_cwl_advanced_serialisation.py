@@ -13,20 +13,26 @@ def _roundtrip_cwl(wf: Workflow, tmp_path: Path):
 
 def test_complex_type_serialisation(tmp_path):
     # Record type with name
-    rec_type = TypeSpec(type="record", name="Pair", fields={
-        "left": TypeSpec.parse("File"),
-        "right": TypeSpec.parse("File")
-    })
+    rec_type = TypeSpec(
+        type="record",
+        name="Pair",
+        fields={"left": TypeSpec.parse("File"), "right": TypeSpec.parse("File")},
+    )
 
     wf = Workflow(name="complex_types")
-    wf.inputs.append(ParameterSpec(id="reads", type=TypeSpec(type="array", items=rec_type)))
+    wf.inputs.append(
+        ParameterSpec(id="reads", type=TypeSpec(type="array", items=rec_type))
+    )
 
     out_doc = _roundtrip_cwl(wf, tmp_path)
 
     assert "$schemas" in out_doc, "$schemas block missing"
     # Reference by name inside inputs
     in_types = next(iter(out_doc["inputs"].values()))["type"]
-    assert in_types == {"type": "array", "items": "Pair"} or in_types == ["null", {"type":"array","items":"Pair"}]
+    assert in_types == {"type": "array", "items": "Pair"} or in_types == [
+        "null",
+        {"type": "array", "items": "Pair"},
+    ]
 
 
 def test_valuefrom_and_scatter(tmp_path):
@@ -50,9 +56,14 @@ def test_valuefrom_and_scatter(tmp_path):
 
 def test_secondary_files_on_workflow_output(tmp_path):
     wf = Workflow(name="sec_files")
-    out_param = ParameterSpec(id="report", type="File", secondary_files=[".idx", ".stat"])
+    out_param = ParameterSpec(
+        id="report", type="File", secondary_files=[".idx", ".stat"]
+    )
     wf.outputs.append(out_param)
 
     out_doc = _roundtrip_cwl(wf, tmp_path)
     report_def = out_doc["outputs"]["report"]
-    assert report_def["secondaryFiles"] == [".idx", ".stat"], "secondaryFiles not preserved" 
+    assert report_def["secondaryFiles"] == [
+        ".idx",
+        ".stat",
+    ], "secondaryFiles not preserved"

@@ -25,4 +25,4 @@ A simple script to convert every example and ensure none crash:
 for f in examples/**/*.{smk,cwl,nf,wdl,ga}; do
     wf2wf info "$f" >/dev/null
 done
-``` 
+```

@@ -396,4 +396,4 @@
       "description": "Variant calling accuracy may be reduced in repetitive regions and low-complexity sequences. Quality scores may vary between different sequencing platforms and library preparation methods."
     }
   }
-} 
+}

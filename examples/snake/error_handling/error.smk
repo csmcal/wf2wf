@@ -7,5 +7,5 @@ rule all:
 rule A:
     output: "a.txt"
     shell: "echo 'A' > {output}"
-    
-    This is a syntax error. 
+
+    This is a syntax error.

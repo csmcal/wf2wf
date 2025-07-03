@@ -1,8 +1,6 @@
-import json, importlib, shutil
-from pathlib import Path
-import tarfile
-
-from wf2wf.environ import generate_sbom
+import json
+import importlib
+import shutil
 
 
 def test_generate_sbom_digestless(monkeypatch, tmp_path):
@@ -13,9 +11,14 @@ def test_generate_sbom_digestless(monkeypatch, tmp_path):
     generate_sbom = env_mod.generate_sbom
 
     # Ensure syft absent to exercise stub path but with tag reference
-    monkeypatch.setattr(shutil, "which", lambda n: None if n == "syft" else shutil.which(n), raising=False)
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda n: None if n == "syft" else shutil.which(n),
+        raising=False,
+    )
 
     ref = "myorg/myimg:latest"  # tag only
     sbom = generate_sbom(ref, dry_run=False)
     data = json.loads(sbom.read_text())
-    assert data["name"] == ref 
+    assert data["name"] == ref

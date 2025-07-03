@@ -11,7 +11,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Any, Union
 from pathlib import Path
-from datetime import datetime
 import hashlib
 
 
@@ -23,7 +22,10 @@ import hashlib
 @dataclass
 class ProvenanceSpec:
     """Provenance and authorship information for workflows and tasks."""
-    authors: List[Dict[str, str]] = field(default_factory=list)  # ORCID, name, affiliation
+
+    authors: List[Dict[str, str]] = field(
+        default_factory=list
+    )  # ORCID, name, affiliation
     contributors: List[Dict[str, str]] = field(default_factory=list)
     created: Optional[str] = None  # ISO 8601 timestamp
     modified: Optional[str] = None
@@ -33,12 +35,15 @@ class ProvenanceSpec:
     citations: List[str] = field(default_factory=list)
     keywords: List[str] = field(default_factory=list)
     derived_from: Optional[str] = None  # Source workflow reference
-    extras: Dict[str, Any] = field(default_factory=dict)  # namespaced or custom annotations
+    extras: Dict[str, Any] = field(
+        default_factory=dict
+    )  # namespaced or custom annotations
 
 
 @dataclass
 class DocumentationSpec:
     """Rich documentation for workflows and tasks."""
+
     description: Optional[str] = None
     label: Optional[str] = None
     doc: Optional[str] = None  # CWL-style documentation
@@ -50,12 +55,13 @@ class DocumentationSpec:
 @dataclass
 class TypeSpec:
     """CWL v1.2.1 type specification with advanced features."""
+
     type: str  # Base type: File, Directory, string, int, float, boolean, array, record, enum
-    items: Optional[Union[str, 'TypeSpec']] = None  # For array types
-    fields: Dict[str, 'TypeSpec'] = field(default_factory=dict)  # For record types
+    items: Optional[Union[str, "TypeSpec"]] = None  # For array types
+    fields: Dict[str, "TypeSpec"] = field(default_factory=dict)  # For record types
     symbols: List[str] = field(default_factory=list)  # For enum types
     # Union types (CWL allows multiple non-null types)
-    members: List['TypeSpec'] = field(default_factory=list)
+    members: List["TypeSpec"] = field(default_factory=list)
     name: Optional[str] = None  # Symbolic name for record/enum schemas
     nullable: bool = False  # Optional type (type?)
     default: Any = None
@@ -105,8 +111,8 @@ class TypeSpec:
         # Union list style – e.g. ['null', 'File']
         # --------------------------------------------------------------
         if isinstance(obj, list):
-            nullable = 'null' in obj
-            non_null = [t for t in obj if t != 'null']
+            nullable = "null" in obj
+            non_null = [t for t in obj if t != "null"]
             if len(non_null) == 1:
                 base = cls.parse(non_null[0])
                 base.nullable = base.nullable or nullable
@@ -123,8 +129,15 @@ class TypeSpec:
     # ------------------------------------------------------------------
 
     _PRIMITIVES = {
-        "File", "Directory", "string", "int", "long", "float", "double",
-        "boolean", "Any"
+        "File",
+        "Directory",
+        "string",
+        "int",
+        "long",
+        "float",
+        "double",
+        "boolean",
+        "Any",
     }
 
     def validate(self) -> None:
@@ -183,6 +196,7 @@ class TypeSpec:
 @dataclass
 class FileSpec:
     """Enhanced file specification with CWL features."""
+
     path: str
     class_type: str = "File"  # File or Directory
     format: Optional[str] = None  # File format ontology IRI
@@ -190,7 +204,7 @@ class FileSpec:
     size: Optional[int] = None  # File size in bytes
     secondary_files: List[str] = field(default_factory=list)
     contents: Optional[str] = None  # For small files
-    listing: List['FileSpec'] = field(default_factory=list)  # For directories
+    listing: List["FileSpec"] = field(default_factory=list)  # For directories
     basename: Optional[str] = None
     dirname: Optional[str] = None
     nameroot: Optional[str] = None
@@ -216,7 +230,6 @@ class FileSpec:
         p = Path(self.path)
         if not p.exists():
             return
-        import hashlib
         h = hashlib.sha1()
         if p.is_file():
             data = p.read_bytes()
@@ -244,22 +257,23 @@ class FileSpec:
 @dataclass
 class ParameterSpec:
     """CWL v1.2.1 parameter specification for inputs and outputs."""
+
     id: str
     type: Union[str, TypeSpec]
     label: Optional[str] = None
     doc: Optional[str] = None
     default: Any = None
-    
+
     # File-specific attributes
     format: Optional[str] = None
     secondary_files: List[str] = field(default_factory=list)
     streamable: bool = False
     load_contents: bool = False
     load_listing: Optional[str] = None  # no_listing, shallow_listing, deep_listing
-    
+
     # Input binding (for CommandLineTool)
     input_binding: Optional[Dict[str, Any]] = None
-    
+
     # Output binding (for CommandLineTool)
     output_binding: Optional[Dict[str, Any]] = None
 
@@ -293,13 +307,17 @@ class ParameterSpec:
 @dataclass
 class ScatterSpec:
     """Scatter operation specification for parallel execution."""
+
     scatter: List[str]  # Parameters to scatter over
-    scatter_method: str = "dotproduct"  # dotproduct, nested_crossproduct, flat_crossproduct
+    scatter_method: str = (
+        "dotproduct"  # dotproduct, nested_crossproduct, flat_crossproduct
+    )
 
 
 @dataclass
 class RequirementSpec:
     """CWL requirement or hint specification."""
+
     class_name: str
     data: Dict[str, Any] = field(default_factory=dict)
 
@@ -311,13 +329,26 @@ class RequirementSpec:
         if self.class_name == "DockerRequirement":
             needed = {"dockerPull", "dockerImageId", "dockerLoad", "dockerFile"}
             if not any(k in self.data for k in needed):
-                raise ValueError("DockerRequirement must define one of dockerPull, dockerImageId, dockerLoad or dockerFile")
+                raise ValueError(
+                    "DockerRequirement must define one of dockerPull, dockerImageId, dockerLoad or dockerFile"
+                )
 
         if self.class_name == "ResourceRequirement":
-            allowed = {"coresMin", "coresMax", "ramMin", "ramMax", "tmpdirMin", "tmpdirMax", "outdirMin", "outdirMax"}
+            allowed = {
+                "coresMin",
+                "coresMax",
+                "ramMin",
+                "ramMax",
+                "tmpdirMin",
+                "tmpdirMax",
+                "outdirMin",
+                "outdirMax",
+            }
             unknown = set(self.data) - allowed
             if unknown:
-                raise ValueError(f"Unknown keys in ResourceRequirement: {', '.join(unknown)}")
+                raise ValueError(
+                    f"Unknown keys in ResourceRequirement: {', '.join(unknown)}"
+                )
 
         # TODO: further per-class validations as needed
 
@@ -348,20 +379,21 @@ class ResourceSpec:
 class EnvironmentSpec:
     """Execution environment definition."""
 
-    conda: Optional[str] = None        # path or YAML file
-    container: Optional[str] = None    # docker://… or /path/image.sif
-    workdir: Optional[str] = None      # working directory override
+    conda: Optional[str] = None  # path or YAML file
+    container: Optional[str] = None  # docker://… or /path/image.sif
+    workdir: Optional[str] = None  # working directory override
     env_vars: Dict[str, str] = field(default_factory=dict)
-    modules: List[str] = field(default_factory=list)  # e.g. Lmod modules 
+    modules: List[str] = field(default_factory=list)  # e.g. Lmod modules
 
 
 @dataclass
 class BCOSpec:
     """BioCompute Object specification for regulatory compliance."""
+
     object_id: Optional[str] = None
     spec_version: str = "https://w3id.org/ieee/ieee-2791-schema/2791object.json"
     etag: Optional[str] = None
-    
+
     # BCO Domains (IEEE 2791-2020)
     provenance_domain: Dict[str, Any] = field(default_factory=dict)
     usability_domain: List[str] = field(default_factory=list)
@@ -386,30 +418,30 @@ class Task:
     id: str
     label: Optional[str] = None
     doc: Optional[str] = None
-    
+
     # Execution
     command: Optional[str] = None  # shell snippet or language‐specific command
-    script: Optional[str] = None   # path to an external script (Python/R/…)
-    
+    script: Optional[str] = None  # path to an external script (Python/R/…)
+
     # Enhanced I/O with CWL parameter specifications
     inputs: List[ParameterSpec] = field(default_factory=list)
     outputs: List[ParameterSpec] = field(default_factory=list)
-    
+
     # Advanced execution features
     when: Optional[str] = None  # Conditional execution expression
     scatter: Optional[ScatterSpec] = None
-    
+
     # Enhanced specifications
     resources: ResourceSpec = field(default_factory=ResourceSpec)
     environment: EnvironmentSpec = field(default_factory=EnvironmentSpec)
     requirements: List[RequirementSpec] = field(default_factory=list)
     hints: List[RequirementSpec] = field(default_factory=list)
-    
+
     # Metadata and provenance
     provenance: Optional[ProvenanceSpec] = None
     documentation: Optional[DocumentationSpec] = None
     intent: List[str] = field(default_factory=list)  # Ontology IRIs
-    
+
     # Legacy compatibility (deprecated but maintained for backward compatibility)
     params: Dict[str, Any] = field(default_factory=dict)  # engine-specific params
     priority: int = 0
@@ -467,28 +499,28 @@ class Workflow:
     version: str = "1.0"
     label: Optional[str] = None
     doc: Optional[str] = None
-    
+
     # Workflow structure
     tasks: Dict[str, Task] = field(default_factory=dict)
     edges: List[Edge] = field(default_factory=list)
-    
+
     # Enhanced I/O
     inputs: List[ParameterSpec] = field(default_factory=list)
     outputs: List[ParameterSpec] = field(default_factory=list)
-    
+
     # Requirements and hints
     requirements: List[RequirementSpec] = field(default_factory=list)
     hints: List[RequirementSpec] = field(default_factory=list)
-    
+
     # Metadata and provenance
     provenance: Optional[ProvenanceSpec] = None
     documentation: Optional[DocumentationSpec] = None
     intent: List[str] = field(default_factory=list)  # Ontology IRIs
     cwl_version: Optional[str] = None
-    
+
     # BCO integration
     bco_spec: Optional[BCOSpec] = None
-    
+
     # Legacy compatibility (deprecated but maintained for backward compatibility)
     config: Dict[str, Any] = field(default_factory=dict)  # merged config.yaml etc.
     meta: Dict[str, Any] = field(default_factory=dict)
@@ -509,16 +541,16 @@ class Workflow:
         # Prevent self-dependencies
         if parent == child:
             return  # Silently ignore self-dependencies
-        
+
         # Check that both tasks exist
         if parent not in self.tasks:
             raise KeyError(f"Parent task '{parent}' not found in workflow")
         if child not in self.tasks:
             raise KeyError(f"Child task '{child}' not found in workflow")
-            
+
         self.edges.append(Edge(parent, child))
 
-    # TODO: validation, topological sort, resource summaries, etc. 
+    # TODO: validation, topological sort, resource summaries, etc.
 
     # ------------------------------------------------------------------
     # Serialisation helpers
@@ -552,10 +584,10 @@ class Workflow:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Workflow":
         """Re-hydrate from `json.load(...)` result (best-effort)."""
-        
+
         # Make a copy to avoid modifying the original
         data = data.copy()
-        
+
         # Remove JSON Schema metadata that's not part of our dataclass
         data.pop("$schema", None)
 
@@ -565,9 +597,13 @@ class Workflow:
         for tid, tdict in tasks_data.items():
             tdict = tdict.copy()
             # Reconstruct nested dataclasses
-            if "resources" in tdict and not isinstance(tdict["resources"], ResourceSpec):
+            if "resources" in tdict and not isinstance(
+                tdict["resources"], ResourceSpec
+            ):
                 tdict["resources"] = ResourceSpec(**tdict["resources"])
-            if "environment" in tdict and not isinstance(tdict["environment"], EnvironmentSpec):
+            if "environment" in tdict and not isinstance(
+                tdict["environment"], EnvironmentSpec
+            ):
                 tdict["environment"] = EnvironmentSpec(**tdict["environment"])
 
             # Parameter specs (inputs / outputs)
@@ -578,11 +614,11 @@ class Workflow:
                         converted.append(p)
                     elif isinstance(p, str):
                         # Assume File for outputs, string for inputs (best effort)
-                        converted.append(ParameterSpec(id=p, type='string'))
+                        converted.append(ParameterSpec(id=p, type="string"))
                     elif isinstance(p, dict):
                         converted.append(ParameterSpec(**p))
                     else:
-                        raise TypeError(f'Unsupported parameter spec item: {p}')
+                        raise TypeError(f"Unsupported parameter spec item: {p}")
                 return converted
 
             if "inputs" in tdict:
@@ -601,11 +637,11 @@ class Workflow:
                 if isinstance(p, ParameterSpec):
                     converted.append(p)
                 elif isinstance(p, str):
-                    converted.append(ParameterSpec(id=p, type='string'))
+                    converted.append(ParameterSpec(id=p, type="string"))
                 elif isinstance(p, dict):
                     converted.append(ParameterSpec(**p))
                 else:
-                    raise TypeError(f'Unsupported parameter spec item: {p}')
+                    raise TypeError(f"Unsupported parameter spec item: {p}")
             return converted
 
         if "inputs" in data:
@@ -620,6 +656,7 @@ class Workflow:
     def from_json(cls, json_str: str) -> "Workflow":
         """Re-hydrate from JSON string produced by :py:meth:`to_json`."""
         import json
+
         data = json.loads(json_str)
         return cls.from_dict(data)
 
@@ -636,7 +673,9 @@ class Workflow:
         """
 
         # 1. JSON-Schema structural validation
-        from wf2wf.validate import validate_workflow as _js_validate  # local import to avoid cycle
+        from wf2wf.validate import (
+            validate_workflow as _js_validate,
+        )  # local import to avoid cycle
 
         _js_validate(self)
 
@@ -664,4 +703,4 @@ class Workflow:
         for r in self.requirements + self.hints:
             r.validate()
 
-    # TODO: add .save(path) / .load(path) convenience wrappers 
+    # TODO: add .save(path) / .load(path) convenience wrappers

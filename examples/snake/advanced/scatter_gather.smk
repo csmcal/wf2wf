@@ -22,4 +22,4 @@ rule merge_sample_chunks:
 rule merge_all:
     input:  expand("merged/{sample}.txt", sample=SAMPLES)
     output: "results/all_merged.txt"
-    shell:  "cat {input} > {output}" 
+    shell:  "cat {input} > {output}"

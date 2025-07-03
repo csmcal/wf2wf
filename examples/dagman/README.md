@@ -14,7 +14,7 @@ A simple linear workflow demonstrating basic DAGMan features:
 
 ### Submit Files
 - **prepare_data.sub**: Data preparation job (1 CPU, 2GB RAM)
-- **analyze_data.sub**: Analysis job with container (4 CPU, 8GB RAM)  
+- **analyze_data.sub**: Analysis job with container (4 CPU, 8GB RAM)
 - **generate_report.sub**: Report generation job (2 CPU, 4GB RAM)
 
 ## Usage
@@ -37,4 +37,4 @@ wf2wf convert -i examples/dagman/test_demo.dag -o workflow.smk
 - **File Transfer**: Input/output file specifications
 - **Retry Logic**: RETRY directives for fault tolerance
 - **Priority**: Job priority settings
-- **Variables**: VARS for parameterization 
+- **Variables**: VARS for parameterization

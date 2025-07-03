@@ -59,4 +59,4 @@ wf2wf = "wf2wf.cli:simple_main"
 [tool.setuptools.packages.find]
 # Only include the actual Python package and skip the conda-forge recipe directory
 include = ["wf2wf*"]
-exclude = ["recipe*"] 
+exclude = ["recipe*"]

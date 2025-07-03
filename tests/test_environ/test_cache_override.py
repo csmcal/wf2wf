@@ -1,5 +1,4 @@
 import importlib
-from pathlib import Path
 
 
 def test_cache_dir_override(tmp_path, monkeypatch):
@@ -10,4 +9,4 @@ def test_cache_dir_override(tmp_path, monkeypatch):
     env_mod = importlib.import_module("wf2wf.environ")
     importlib.reload(env_mod)
 
-    assert env_mod._CACHE_DIR == alt_cache.expanduser() 
+    assert env_mod._CACHE_DIR == alt_cache.expanduser()

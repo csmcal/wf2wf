@@ -1,26 +1,26 @@
 process GENERATE_REPORT {
     tag "report_${results_file.baseName}"
-    
+
     container 'pandoc/latex:2.19'
-    
+
     cpus 2
     memory '4.GB'
     disk '5.GB'
-    
+
     publishDir "${params.output_dir}/reports", mode: 'copy'
-    
+
     input:
     path results_file
     path plots_file
-    
+
     output:
     path "final_report.html", emit: report
     path "final_report.pdf", emit: pdf
-    
+
     script:
     """
     echo "Generating report from ${results_file} and ${plots_file}"
-    
+
     # Create markdown report
     cat > report.md << EOF
 # Analysis Report
@@ -44,10 +44,10 @@ EOF
 
     # Convert to HTML
     pandoc report.md -o final_report.html --standalone
-    
+
     # Convert to PDF (if pandoc supports it)
     pandoc report.md -o final_report.pdf --pdf-engine=pdflatex || echo "PDF generation skipped"
-    
+
     echo "Report generation completed"
     """
-} 
+}

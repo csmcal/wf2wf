@@ -16,4 +16,4 @@ output = logs/analyze_data.out
 error = logs/analyze_data.err
 log = logs/analyze_data.log
 
-queue 
+queue

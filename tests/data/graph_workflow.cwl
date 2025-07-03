@@ -26,4 +26,4 @@ $graph:
       outfile:
         type: File
         outputBinding:
-          glob: "$(inputs.infile.nameroot).out" 
+          glob: "$(inputs.infile.nameroot).out"

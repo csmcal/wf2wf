@@ -1,5 +1,4 @@
 import textwrap
-from pathlib import Path
 from wf2wf.importers import cwl as cwl_importer
 from wf2wf.exporters import cwl as cwl_exporter
 
@@ -31,4 +30,4 @@ def test_cwl_provenance_namespace(tmp_path):
     cwl_exporter.from_workflow(wf, out_file=out_path)
     out_content = out_path.read_text()
     assert "prov:wasGeneratedBy" in out_content
-    assert "schema:author" in out_content 
+    assert "schema:author" in out_content

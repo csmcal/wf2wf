@@ -1,8 +1,6 @@
 # tests/test_exporters/test_cwl_sif_hint.py
 from wf2wf.core import Workflow, Task, EnvironmentSpec
 from wf2wf.exporters.cwl import from_workflow
-import yaml, json, textwrap
-from pathlib import Path
 
 
 def test_cwl_sif_hint(tmp_path):

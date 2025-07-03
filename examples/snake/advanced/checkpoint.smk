@@ -31,7 +31,7 @@ rule process_sample:
 # Aggregation rule that uses checkpoint to determine inputs
 rule aggregate_results:
     input:
-        lambda wildcards: expand("processed/{sample}_result.txt", 
+        lambda wildcards: expand("processed/{sample}_result.txt",
                                 sample=glob_wildcards("samples/{sample}.txt").sample)
     output: "results/final_summary.txt"
-    shell: "cat {input} > {output}" 
+    shell: "cat {input} > {output}"

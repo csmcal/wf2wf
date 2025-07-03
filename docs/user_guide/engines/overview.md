@@ -13,4 +13,4 @@ Legend: ✅ = fully supported  | 🚧 = basic support, enhancements planned
 
 ---
 
-For details on limitations and roadmap see the [design document](https://github.com/csmcal/wf2wf/blob/main/DESIGN.md). 
+For details on limitations and roadmap see the [design document](https://github.com/csmcal/wf2wf/blob/main/DESIGN.md).

@@ -37,4 +37,4 @@ rule singularity_job:
     output: "A.txt"
     container:
         "singularity:///path/to/singularity.sif"
-    shell: "echo 'singularity' > {output}" 
+    shell: "echo 'singularity' > {output}"

@@ -36,4 +36,4 @@ body:
     id: logs
     attributes:
       label: Relevant logs and stack traces
-      render: shell 
+      render: shell

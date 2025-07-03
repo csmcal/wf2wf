@@ -17,5 +17,7 @@ with open(data_file) as f:
     data_content = f.read().strip()
 
 
-print(f"Summary based on {len(stats_content)} bytes of stats and {len(data_content)} bytes of data.")
-print("This is the final summary.") 
+print(
+    f"Summary based on {len(stats_content)} bytes of stats and {len(data_content)} bytes of data."
+)
+print("This is the final summary.")

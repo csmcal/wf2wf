@@ -25,4 +25,4 @@ rule C_mixed_resources:
     resources:
         mem_mb=1500,
         disk_mb=5000
-    shell: "echo 'mixed' > {output}" 
+    shell: "echo 'mixed' > {output}"

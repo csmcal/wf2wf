@@ -41,7 +41,9 @@ _METHODS = {
 }
 
 
-def expand(scatter_spec: Dict[str, List[Any]], method: str = "dotproduct") -> List[Dict[str, Any]]:
+def expand(
+    scatter_spec: Dict[str, List[Any]], method: str = "dotproduct"
+) -> List[Dict[str, Any]]:
     """Return a list of dictionaries representing each scatter binding.
 
     Parameters
@@ -59,4 +61,4 @@ def expand(scatter_spec: Dict[str, List[Any]], method: str = "dotproduct") -> Li
         raise ValueError(f"Unknown scatter method '{method}'")
 
     result = list(_METHODS[method](names, values))
-    return result 
+    return result

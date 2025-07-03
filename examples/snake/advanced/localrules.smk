@@ -41,4 +41,4 @@ rule cleanup:
         echo "Finalizing results..."
         cp {input} {output}
         echo "Cleanup completed at $(date)" >> {output}
-        """ 
+        """

@@ -7,4 +7,4 @@ rule container_override:
     shell: "echo 'This job should run in python:3.9-slim' > {output}"
 
 rule all:
-    input: "container_test.txt" 
+    input: "container_test.txt"

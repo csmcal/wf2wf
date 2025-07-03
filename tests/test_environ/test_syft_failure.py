@@ -1,7 +1,8 @@
 # tests/test_environ/test_syft_failure.py
-import importlib, subprocess, json, shutil
-from pathlib import Path
-from wf2wf.environ import generate_sbom
+import importlib
+import subprocess
+import json
+import shutil
 
 
 def test_syft_failure(monkeypatch, tmp_path):
@@ -10,8 +11,13 @@ def test_syft_failure(monkeypatch, tmp_path):
     generate_sbom = env_mod.generate_sbom
 
     # Make syft lookup succeed but the call fail
-    monkeypatch.setattr(shutil, "which", lambda n: "/usr/bin/syft" if n == "syft" else shutil.which(n))
-    def fail(*a, **k): raise subprocess.CalledProcessError(1, a)
+    monkeypatch.setattr(
+        shutil, "which", lambda n: "/usr/bin/syft" if n == "syft" else shutil.which(n)
+    )
+
+    def fail(*a, **k):
+        raise subprocess.CalledProcessError(1, a)
+
     monkeypatch.setattr(subprocess, "check_call", fail)
 
     sbom = generate_sbom("busybox:latest", dry_run=False)

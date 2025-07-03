@@ -10,14 +10,13 @@ operators.
 from __future__ import annotations
 
 from typing import Any, Dict
-import ast, signal, contextlib, time
+import ast
+import signal
+import contextlib
+import importlib.util
 
-try:
-    import js2py  # type: ignore
-
-    _HAS_JS2PY = True
-except ImportError:  # pragma: no cover – optional dependency
-    _HAS_JS2PY = False
+# Check if js2py is available without importing it
+_HAS_JS2PY = importlib.util.find_spec("js2py") is not None
 
 __all__ = [
     "evaluate",
@@ -43,7 +42,8 @@ def _strip_wrappers(expr: str) -> str:
     """Remove CWL wrapper syntax $() or ${} if present."""
     expr = expr.strip()
     if (expr.startswith("$(") and expr.endswith(")")) or (
-        expr.startswith("${") and expr.endswith("}")):
+        expr.startswith("${") and expr.endswith("}")
+    ):
         return expr[2:-1].strip()
     return expr
 
@@ -72,7 +72,10 @@ def _timeout(seconds: float):
 # Public helper
 # ---------------------------------------------------------------------------
 
-def evaluate(expr: str, context: Dict[str, Any] | None = None, *, timeout_s: float = 0.1) -> Any:
+
+def evaluate(
+    expr: str, context: Dict[str, Any] | None = None, *, timeout_s: float = 0.1
+) -> Any:
     """Evaluate a CWL/JS expression with the provided *context*.
 
     If *js2py* is installed we run the snippet in a sandboxed JS VM.  Otherwise
@@ -94,7 +97,8 @@ def evaluate(expr: str, context: Dict[str, Any] | None = None, *, timeout_s: flo
 
     if _HAS_JS2PY:
         try:
-            import json, js2py  # re-import for mypy typing
+            import json
+            import js2py  # re-import for mypy typing
 
             with _timeout(timeout_s):
                 js_ctx = js2py.EvalJs({})
@@ -147,11 +151,13 @@ def evaluate(expr: str, context: Dict[str, Any] | None = None, *, timeout_s: flo
 
     for node in ast.walk(tree):
         if not isinstance(node, allowed_nodes):
-            raise ExpressionError(f"Disallowed expression element: {type(node).__name__}")
+            raise ExpressionError(
+                f"Disallowed expression element: {type(node).__name__}"
+            )
 
     # Compile and evaluate with restricted namespace
     code = compile(tree, "<expr>", mode="eval")
     safe_globals: Dict[str, Any] = {"__builtins__": {}}
 
     with _timeout(timeout_s):
-        return eval(code, safe_globals, context) 
+        return eval(code, safe_globals, context)

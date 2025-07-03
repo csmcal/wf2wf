@@ -1,6 +1,5 @@
 import shutil
 from pathlib import Path
-import tempfile
 import tarfile
 
 from wf2wf.environ import build_oci_image
@@ -21,9 +20,14 @@ def test_buildah_backend_dry_run(tmp_path, monkeypatch):
     tarball = _make_dummy_tarball(tmp_path)
 
     # Pretend buildah exists but we still run dry_run=True so no subprocesses invoked
-    monkeypatch.setattr(shutil, "which", lambda n: "/usr/bin/buildah" if n == "buildah" else shutil.which(n), raising=False)
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda n: "/usr/bin/buildah" if n == "buildah" else shutil.which(n),
+        raising=False,
+    )
 
     tag, digest = build_oci_image(tarball, backend="buildah", dry_run=True)
 
     assert tag.startswith("wf2wf/env:"), tag
-    assert digest.startswith("sha256") or digest == tag 
+    assert digest.startswith("sha256") or digest == tag

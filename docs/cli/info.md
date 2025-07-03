@@ -8,4 +8,4 @@ wf2wf info [OPTIONS] <path>
 Options:
   --json        Output machine-readable JSON
   --help        Show this message and exit.
-``` 
+```

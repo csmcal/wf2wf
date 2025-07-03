@@ -12,4 +12,4 @@ def test_cwl_graph_import(tmp_path):
     assert len(wf.tasks) == 1
     assert "step1" in wf.tasks
     # Workflow input preserved
-    assert any(p.id == "input_file" for p in wf.inputs) 
+    assert any(p.id == "input_file" for p in wf.inputs)

@@ -20,4 +20,4 @@
 | `--fail-on-loss` | Abort if environment info would be lost |
 
 ## Caching & pruning
-Environment artefacts are content-addressed by the SHA-256 of the lock file. Use `wf2wf cache prune` to clear old images. 
+Environment artefacts are content-addressed by the SHA-256 of the lock file. Use `wf2wf cache prune` to clear old images.

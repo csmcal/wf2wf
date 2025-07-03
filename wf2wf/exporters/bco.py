@@ -13,18 +13,19 @@ Usage:
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 import json
 from datetime import datetime, timezone
 import tarfile
 
-from wf2wf.core import Workflow, Task, ParameterSpec, EnvironmentSpec, ResourceSpec, ProvenanceSpec
+from wf2wf.core import Workflow, ParameterSpec, EnvironmentSpec, ResourceSpec
 
 BCO_SCHEMA_URL = "https://w3id.org/ieee/ieee-2791-schema/2791object.json"
 
 # -----------------------------------------------------------------------------
 # Helper functions to populate individual BCO domains
 # -----------------------------------------------------------------------------
+
 
 def _make_provenance_domain(wf: Workflow) -> Dict[str, Any]:
     prov: Dict[str, Any] = {
@@ -33,12 +34,14 @@ def _make_provenance_domain(wf: Workflow) -> Dict[str, Any]:
         "created": datetime.now(timezone.utc).isoformat(),
     }
     if wf.provenance:
-        prov.update({
-            "contributors": wf.provenance.contributors,
-            "license": wf.provenance.license,
-            "publication": wf.provenance.doi,
-            "modified": wf.provenance.modified,
-        })
+        prov.update(
+            {
+                "contributors": wf.provenance.contributors,
+                "license": wf.provenance.license,
+                "publication": wf.provenance.doi,
+                "modified": wf.provenance.modified,
+            }
+        )
         if wf.provenance.authors:
             prov["creators"] = wf.provenance.authors
     return prov
@@ -46,7 +49,10 @@ def _make_provenance_domain(wf: Workflow) -> Dict[str, Any]:
 
 def _make_description_domain(wf: Workflow) -> Dict[str, Any]:
     return {
-        "keywords": (wf.provenance.keywords if wf.provenance and wf.provenance.keywords else []) + wf.intent,
+        "keywords": (
+            wf.provenance.keywords if wf.provenance and wf.provenance.keywords else []
+        )
+        + wf.intent,
         "platform": "wf2wf",
         "pipeline_steps": [
             {
@@ -119,20 +125,30 @@ def _make_execution_domain(wf: Workflow) -> Dict[str, Any]:
     for num, task in enumerate(wf.tasks.values(), start=1):
         env: EnvironmentSpec = task.environment
         res: ResourceSpec = task.resources
-        steps.append({
-            "step_number": num,
-            "name": task.id,
-            "software": task.command or task.script,
-            "environment": {
-                "container": env.container,
-                "conda_env": env.conda,
-                "cpu": res.cpu,
-                "memory_mb": res.mem_mb,
-                "gpu": res.gpu,
-                **({"sbom_digest": env.env_vars.get("WF2WF_SBOM_DIGEST")} if env.env_vars.get("WF2WF_SBOM_DIGEST") else {}),
-            },
-        })
-    return {"script": wf.name, "script_driver": "wf2wf", "software_prerequisites": steps}
+        steps.append(
+            {
+                "step_number": num,
+                "name": task.id,
+                "software": task.command or task.script,
+                "environment": {
+                    "container": env.container,
+                    "conda_env": env.conda,
+                    "cpu": res.cpu,
+                    "memory_mb": res.mem_mb,
+                    "gpu": res.gpu,
+                    **(
+                        {"sbom_digest": env.env_vars.get("WF2WF_SBOM_DIGEST")}
+                        if env.env_vars.get("WF2WF_SBOM_DIGEST")
+                        else {}
+                    ),
+                },
+            }
+        )
+    return {
+        "script": wf.name,
+        "script_driver": "wf2wf",
+        "software_prerequisites": steps,
+    }
 
 
 def _make_error_domain() -> Dict[str, Any]:
@@ -144,12 +160,13 @@ def _make_error_domain() -> Dict[str, Any]:
 # Public API – conforming to exporter interface
 # -----------------------------------------------------------------------------
 
+
 def from_workflow(wf: Workflow, out_file: str | Path, **opts: Any):  # noqa: N802 – public API name
     """Export *wf* to a BioCompute Object JSON document.
 
     Args:
         wf:   Workflow IR instance.
-        out_file: Target file path (\*.json).
+        out_file: Target file path (*.json).
         **opts: Currently unused; reserved for future options such as
                  compliance level, SPDX attachment, etc.
     """
@@ -186,6 +203,7 @@ def from_workflow(wf: Workflow, out_file: str | Path, **opts: Any):  # noqa: N80
     if include_cwl:
         try:
             from wf2wf.exporters import load as _load_exporter
+
             cwl_exporter = _load_exporter("cwl")
             cwl_path = out_path.with_suffix(".cwl")
             cwl_exporter.from_workflow(wf, cwl_path)
@@ -200,7 +218,9 @@ def from_workflow(wf: Workflow, out_file: str | Path, **opts: Any):  # noqa: N80
     # Compute integrity hash *before* writing so we can embed sha256 etag
     # ------------------------------------------------------------------
 
-    import hashlib, json as _json
+    import hashlib
+    import json as _json
+
     try:
         import requests  # type: ignore
     except ModuleNotFoundError:  # pragma: no cover – optional dependency
@@ -216,10 +236,12 @@ def from_workflow(wf: Workflow, out_file: str | Path, **opts: Any):  # noqa: N80
 
     intoto_path = out_path.with_suffix(".intoto.json")
     if intoto_path.exists():
-        bco.setdefault("extension_domain", []).append({
-            "namespace": "wf2wf:provenance",
-            "attestation": intoto_path.name,
-        })
+        bco.setdefault("extension_domain", []).append(
+            {
+                "namespace": "wf2wf:provenance",
+                "attestation": intoto_path.name,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Basic structural validation – ensure all mandatory BCO domains are
@@ -296,6 +318,7 @@ def from_workflow(wf: Workflow, out_file: str | Path, **opts: Any):  # noqa: N80
 
     if opts.get("verbose"):
         print(f"BCO document written to {out_path}")
+
 
 # ---------------------------------------------------------------------------
 # Convenience: FDA submission package bundler
@@ -374,4 +397,4 @@ def generate_fda_submission_package(
         if verbose:
             print(f"FDA submission package written to {pkg_path}")
 
-    return pkg_path 
+    return pkg_path

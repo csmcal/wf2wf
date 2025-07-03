@@ -95,11 +95,11 @@ The test framework can be easily extended to cover additional error scenarios:
 
 All 17 error handling tests pass successfully:
 - ✅ 3 circular dependency tests
-- ✅ 4 empty workflow tests  
+- ✅ 4 empty workflow tests
 - ✅ 2 malformed Snakefile tests
 - ✅ 2 missing input file tests
 - ✅ 2 invalid resource tests
 - ✅ 2 executable handling tests
 - ✅ 2 integration error tests
 
-Total test suite: 47 passed, 1 skipped (requires Snakemake installation) 
+Total test suite: 47 passed, 1 skipped (requires Snakemake installation)

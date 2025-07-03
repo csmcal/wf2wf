@@ -1,15 +1,29 @@
 """Shared utilities for loss-mapping during import/export cycles."""
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, TYPE_CHECKING
 
-__all__ = ["LossEntry", "reset", "record", "as_list", "write", "apply", "prepare", "compute_checksum"]
+if TYPE_CHECKING:
+    from wf2wf.core import Workflow
+
+__all__ = [
+    "LossEntry",
+    "reset",
+    "record",
+    "as_list",
+    "write",
+    "apply",
+    "prepare",
+    "compute_checksum",
+]
 
 
 class LossEntry(Dict[str, Any]):
     """Typed dict wrapper for a loss mapping entry."""
+
     # No custom behaviour – keeping simple for now.
 
 
@@ -24,7 +38,15 @@ def reset() -> None:
     _LOSSES.clear()
 
 
-def record(json_pointer: str, field: str, lost_value: Any, reason: str, origin: str = "user", *, severity: str = "warn") -> None:
+def record(
+    json_pointer: str,
+    field: str,
+    lost_value: Any,
+    reason: str,
+    origin: str = "user",
+    *,
+    severity: str = "warn",
+) -> None:
     """Append a loss entry describing that *field* at *json_pointer* was lost.
 
     • Entries are deduplicated within the current export cycle.
@@ -35,25 +57,36 @@ def record(json_pointer: str, field: str, lost_value: Any, reason: str, origin: 
         return
 
     status = "lost"
-    if any(e["json_pointer"] == json_pointer and e["field"] == field for e in _PREV_REAPPLIED):
+    if any(
+        e["json_pointer"] == json_pointer and e["field"] == field
+        for e in _PREV_REAPPLIED
+    ):
         status = "lost_again"
 
-    _LOSSES.append({
-        "json_pointer": json_pointer,
-        "field": field,
-        "lost_value": lost_value,
-        "reason": reason,
-        "origin": origin,
-        "status": status,
-        "severity": severity,
-    })
+    _LOSSES.append(
+        {
+            "json_pointer": json_pointer,
+            "field": field,
+            "lost_value": lost_value,
+            "reason": reason,
+            "origin": origin,
+            "status": status,
+            "severity": severity,
+        }
+    )
 
 
 def as_list() -> List[LossEntry]:
     return list(_LOSSES)
 
 
-def write(path: Path, *, wf2wf_version: str = "0.3.0", target_engine: str | None = None, source_checksum: str | None = None) -> None:
+def write(
+    path: Path,
+    *,
+    wf2wf_version: str = "0.3.0",
+    target_engine: str | None = None,
+    source_checksum: str | None = None,
+) -> None:
     if not _LOSSES:
         return
     doc = {
@@ -69,7 +102,8 @@ def write(path: Path, *, wf2wf_version: str = "0.3.0", target_engine: str | None
 # Re-injection helpers (best-effort for common paths – extensible).
 # -----------------------------------------------------------------------------
 
-def apply(workflow: 'Workflow', entries: List[LossEntry]) -> None:  # type: ignore[name-defined]
+
+def apply(workflow: "Workflow", entries: List[LossEntry]) -> None:  # type: ignore[name-defined]
     """Best-effort reapply *entries* onto *workflow* in-place."""
     for e in entries:
         ptr = e.get("json_pointer", "")
@@ -79,7 +113,7 @@ def apply(workflow: 'Workflow', entries: List[LossEntry]) -> None:  # type: igno
             continue
 
         # Very limited mapping for now
-        parts = ptr.strip('/').split('/')
+        parts = ptr.strip("/").split("/")
         if not parts:
             continue
 
@@ -97,7 +131,10 @@ def apply(workflow: 'Workflow', entries: List[LossEntry]) -> None:  # type: igno
             elif field == "scatter":
                 try:
                     from wf2wf.core import ScatterSpec  # type: ignore
-                    task.scatter = ScatterSpec(scatter=value if isinstance(value, list) else [value])
+
+                    task.scatter = ScatterSpec(
+                        scatter=value if isinstance(value, list) else [value]
+                    )
                 except Exception:
                     task.scatter = None
             elif field == "gpu":
@@ -120,7 +157,11 @@ def apply(workflow: 'Workflow', entries: List[LossEntry]) -> None:  # type: igno
                     setattr(task.resources, k, v)
 
             # Parameters within task inputs/outputs
-            if parts[0] == "tasks" and len(parts) >= 4 and parts[2] in ("inputs", "outputs"):
+            if (
+                parts[0] == "tasks"
+                and len(parts) >= 4
+                and parts[2] in ("inputs", "outputs")
+            ):
                 io_type = parts[2]  # inputs / outputs
                 param_id = parts[3]
                 if io_type == "inputs":
@@ -181,10 +222,13 @@ def prepare(prev_entries: List[LossEntry]) -> None:
     Should be invoked by exporters *before* they start recording new losses.
     """
     global _PREV_REAPPLIED
-    _PREV_REAPPLIED = [e for e in prev_entries if e.get("status") == "reapplied"] 
+    _PREV_REAPPLIED = [e for e in prev_entries if e.get("status") == "reapplied"]
 
-def compute_checksum(workflow: 'Workflow') -> str:  # type: ignore[name-defined]
+
+def compute_checksum(workflow: "Workflow") -> str:  # type: ignore[name-defined]
     """Return sha256 checksum of canonical JSON representation of *workflow*."""
-    import hashlib, json
+    import hashlib
+    import json
+
     j = json.dumps(workflow.to_dict(), sort_keys=True, separators=(",", ":")).encode()
-    return "sha256:" + hashlib.sha256(j).hexdigest() 
+    return "sha256:" + hashlib.sha256(j).hexdigest()

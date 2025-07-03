@@ -24,7 +24,7 @@
       "default": []
     },
     "outputs": {
-      "type": "array", 
+      "type": "array",
       "items": {"anyOf": [{"type": "string"}, {"$ref": "#/definitions/parameter_spec"}]},
       "default": []
     },
@@ -204,4 +204,4 @@
       }
     }
   }
-} 
+}

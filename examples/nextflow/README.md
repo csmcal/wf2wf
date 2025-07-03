@@ -88,4 +88,4 @@ This example demonstrates wf2wf's ability to convert:
 - Container/conda settings → EnvironmentSpec
 - Process dependencies → Edges
 - Configuration parameters → Workflow config
-- Error handling settings → Task retry/priority 
+- Error handling settings → Task retry/priority

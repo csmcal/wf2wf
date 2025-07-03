@@ -19,7 +19,7 @@ When converting to a less expressive engine wf2wf writes a `<output>.loss.json` 
 }
 ```
 
-* **severity** – `info`, `warn`, `error` (future use)  
+* **severity** – `info`, `warn`, `error` (future use)
 * **status** – `lost`, `lost_again`, `reapplied`
 
 ## CLI workflow
@@ -34,4 +34,4 @@ wf2wf validate workflow.cwl.loss.json   # checks that losses are allowed
 
 ## Tips
 * Use a richer target (e.g. DAGMan) if you see critical losses.
-* Keep the `.loss.json` with the workflow so information can be re-applied when converting back. 
+* Keep the `.loss.json` with the workflow so information can be re-applied when converting back.

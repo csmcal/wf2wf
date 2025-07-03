@@ -4,4 +4,4 @@ Line 2: Secondary measurement
 Line 3: Control group data
 Line 4: Experimental condition A
 Line 5: Experimental condition B
-Final data point for processing 
+Final data point for processing

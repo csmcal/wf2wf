@@ -11,7 +11,7 @@ transfer_input_files = $(input_file)
 transfer_output_files = $(output_file)
 
 output = logs/prepare_data.out
-error = logs/prepare_data.err  
+error = logs/prepare_data.err
 log = logs/prepare_data.log
 
-queue 
+queue

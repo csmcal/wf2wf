@@ -1,4 +1,4 @@
 channels:
   - conda-forge
 dependencies:
-  - bzip2 # Example dependency 
+  - bzip2 # Example dependency

@@ -68,8 +68,8 @@ reload()
 def get(key: str, default: Any | None = None) -> Any:
     """Dotted-key lookup with *default* fallback."""
     cur: Any = CONFIG
-    for part in key.split('.'):
+    for part in key.split("."):
         if not isinstance(cur, dict):
             return default
         cur = cur.get(part, default)
-    return cur 
+    return cur

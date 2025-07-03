@@ -17,4 +17,4 @@ rule rule_b:
 rule rule_c:
     input:  "B.txt"
     output: "C.txt"
-    shell: "cat {input} > {output}; echo 'C' >> {output}" 
+    shell: "cat {input} > {output}; echo 'C' >> {output}"

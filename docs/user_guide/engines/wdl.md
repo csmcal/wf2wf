@@ -8,4 +8,4 @@
 | Runtime attrs | ✅ cpu/mem/disk |
 | Object & Array types | ✅ |
 | Struct types | 🚧 roadmap |
-| Secondary files | 🚧 partial | 
+| Secondary files | 🚧 partial |

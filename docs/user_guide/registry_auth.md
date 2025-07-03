@@ -27,6 +27,6 @@ export WF2WF_REGISTRIES=<registry>
 `wf2wf` will probe all registries listed in the env var for existing images before building anew.
 
 ### Troubleshooting pushes
-* 403 Forbidden – token lacks `write:packages` (GHCR) → regenerate PAT.  
-* connection timeout – corporate firewall → use proxy or mirror registry.  
-* manifest invalid – disable experimental features if using rootless Docker. 
+* 403 Forbidden – token lacks `write:packages` (GHCR) → regenerate PAT.
+* connection timeout – corporate firewall → use proxy or mirror registry.
+* manifest invalid – disable experimental features if using rootless Docker.

@@ -14,4 +14,4 @@ We welcome pull requests!  Please follow these steps:
 * Type hints are mandatory for new code.
 
 ## Docs
-All docs live under `docs/` and are built by Sphinx.  Add a new `.md` page and reference it in `_toc.yml`. 
+All docs live under `docs/` and are built by Sphinx.  Add a new `.md` page and reference it in `_toc.yml`.

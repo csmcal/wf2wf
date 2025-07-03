@@ -25,4 +25,4 @@ wf2wf convert -i main.nf -o roundtrip.cwl --out-format cwl
 ```bash
 wf2wf validate roundtrip.cwl.loss.json
 ```
-All entries should be `reapplied` — confirming metadata round-tripped. 
+All entries should be `reapplied` — confirming metadata round-tripped.

@@ -139,7 +139,6 @@ wf2wf_scripts/
 
 # Test outputs and temporary files
 test_run/
-*.dag
 *.tmp
 test_output/
 temp_*/
@@ -158,6 +157,6 @@ test_*.sub
 test_*.smk
 test_*.yaml
 test_*.yml
-*_test.*
-*_demo.*
-cleanup_test_files.py 
+cleanup_test_files.py
+test_ci_locally.py
+test_local.sh

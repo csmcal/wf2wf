@@ -3,6 +3,7 @@ import yaml
 from wf2wf.importers import cwl as cwl_importer
 from wf2wf.exporters import cwl as cwl_exporter
 
+
 def test_cwl_graph_options(tmp_path):
     data_dir = Path(__file__).parent.parent / "data"
     src = data_dir / "graph_workflow.cwl"
@@ -17,6 +18,6 @@ def test_cwl_graph_options(tmp_path):
         structure_prov=True,
     )
 
-    doc = yaml.safe_load(out_path.read_text().split("\n",2)[-1])
+    doc = yaml.safe_load(out_path.read_text().split("\n", 2)[-1])
     assert doc["$graph"][0]["id"] == "my_root"
-    # provenance block optional 
+    # provenance block optional

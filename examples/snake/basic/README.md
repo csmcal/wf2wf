@@ -30,4 +30,4 @@ Run any example with:
 snake2dagman --snakefile examples/basic/[example].smk
 ```
 
-These examples are designed to be simple and educational, focusing on one feature at a time. 
+These examples are designed to be simple and educational, focusing on one feature at a time.

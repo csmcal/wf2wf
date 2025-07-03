@@ -13,4 +13,4 @@ Python 3.9 – 3.12.
 It means the target format can't represent some metadata. The original data are safely stored in `.loss.json` for round-trip.
 
 ## Where is the intermediate JSON stored?
-By default it's kept in memory; use `wf2wf convert ... --export-ir ir.json` (planned) to write it. 
+By default it's kept in memory; use `wf2wf convert ... --export-ir ir.json` (planned) to write it.

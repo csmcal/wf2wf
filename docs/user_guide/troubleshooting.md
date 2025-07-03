@@ -17,4 +17,4 @@ Add `-v` / `--verbose` to see stack traces and subprocess output. Combine with `
 
 ## Getting help
 * Run `wf2wf info <file>` to inspect a workflow and ensure wf2wf can parse it.
-* Open an issue with `--debug` logs attached. 
+* Open an issue with `--debug` logs attached.

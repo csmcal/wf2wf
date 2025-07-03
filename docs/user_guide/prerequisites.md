@@ -48,4 +48,4 @@ If the native tool cannot parse the workflow, `wf2wf` will likely fail or lose i
 | `apptainer` | HPC `.sif` images | <https://apptainer.org/> |
 | `syft` & `grype` | SBOM & CVE scan | `brew install syft grype` |
 
-All are optional – wf2wf falls back to stubs – but enable the full feature set. 
+All are optional – wf2wf falls back to stubs – but enable the full feature set.

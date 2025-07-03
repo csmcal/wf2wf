@@ -53,7 +53,9 @@ def generate_lock_hash(env_yaml: Path) -> str:
     remove comment lines), ensuring platform-independent hashes.
     """
     txt = env_yaml.read_text(encoding="utf-8")
-    norm = "\n".join(line for line in txt.splitlines() if not line.strip().startswith("#"))
+    norm = "\n".join(
+        line for line in txt.splitlines() if not line.strip().startswith("#")
+    )
     digest = hashlib.sha256(norm.encode()).hexdigest()
     return digest
 
@@ -194,6 +196,7 @@ def prepare_env(
 # 9.2.3 – OCI image build abstraction (initial stub)
 # ---------------------------------------------------------------------------
 
+
 class OCIBuilder:
     """Protocol-like base class for OCI builders."""
 
@@ -281,13 +284,15 @@ class DockerBuildxBuilder(OCIBuilder):
         subprocess.check_call(cmd)
         # Resolve digest via Docker inspect (works after --load as well)
         try:
-            insp = subprocess.check_output([
-                "docker",
-                "inspect",
-                tag,
-                "--format",
-                "{{index .RepoDigests 0}}",
-            ])
+            insp = subprocess.check_output(
+                [
+                    "docker",
+                    "inspect",
+                    tag,
+                    "--format",
+                    "{{index .RepoDigests 0}}",
+                ]
+            )
             ref = insp.decode().strip()
             digest = ref.split("@", 1)[1] if "@" in ref else tag
         except subprocess.CalledProcessError:
@@ -320,14 +325,14 @@ class BuildahBuilder(OCIBuilder):
         platform: str = "linux/amd64",
     ) -> str:  # noqa: D401
         if not self.tool:
-            raise RuntimeError("Neither buildah nor podman is available on PATH; cannot build images")
+            raise RuntimeError(
+                "Neither buildah nor podman is available on PATH; cannot build images"
+            )
 
         labels = labels or {}
         context_dir = Path(tempfile.mkdtemp(prefix="wf2wf_img_"))
         dockerfile = context_dir / "Containerfile"
-        dockerfile.write_text(
-            "FROM scratch\nADD env.tar.gz /opt/env\n"
-        )
+        dockerfile.write_text("FROM scratch\nADD env.tar.gz /opt/env\n")
         # Symlinks pointing outside the build context are ignored by BuildKit; copy instead.
         env_tar_path = context_dir / "env.tar.gz"
         try:
@@ -356,13 +361,15 @@ class BuildahBuilder(OCIBuilder):
 
         # Resolve digest via Docker inspect (works after --load as well)
         try:
-            insp = subprocess.check_output([
-                "docker",
-                "inspect",
-                tag,
-                "--format",
-                "{{index .RepoDigests 0}}",
-            ])
+            insp = subprocess.check_output(
+                [
+                    "docker",
+                    "inspect",
+                    tag,
+                    "--format",
+                    "{{index .RepoDigests 0}}",
+                ]
+            )
             ref = insp.decode().strip()
             digest = ref.split("@", 1)[1] if "@" in ref else tag
         except subprocess.CalledProcessError:
@@ -395,7 +402,9 @@ def build_oci_image(
         raise ValueError(f"Unsupported backend '{backend}'")
 
     # Note: current builder implementations ignore platform/build_cache but parameters are reserved
-    digest = builder.build(tarball, tag, labels, push=push, build_cache=build_cache, platform=platform)
+    digest = builder.build(
+        tarball, tag, labels, push=push, build_cache=build_cache, platform=platform
+    )
     return tag, digest
 
 
@@ -449,13 +458,15 @@ class SBOMInfo:
         return hash((self._path, self.digest))
 
 
-def generate_sbom(image_ref: str, out_dir: Path | None = None, *, dry_run: bool = True) -> SBOMInfo:
+def generate_sbom(
+    image_ref: str, out_dir: Path | None = None, *, dry_run: bool = True
+) -> SBOMInfo:
     """Generate an SPDX SBOM for *image_ref* and return :class:`SBOMInfo`.
 
     In dry-run mode (the default during unit tests) this creates a minimal
     JSON file containing the image reference and a fake package list.
     """
-    out_dir = (out_dir or _CACHE_DIR)
+    out_dir = out_dir or _CACHE_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     sbom_path = out_dir / f"{image_ref.replace('/', '_').replace(':', '_')}.sbom.json"
 
@@ -464,36 +475,61 @@ def generate_sbom(image_ref: str, out_dir: Path | None = None, *, dry_run: bool 
         return SBOMInfo(sbom_path, digest)
 
     if dry_run or not shutil.which("syft"):
-        sbom_path.write_text(json.dumps({
-            "spdxVersion": "SPDX-2.3",
-            "name": image_ref,
-            "packages": [
-                {"name": "example", "versionInfo": "0.0.0", "licenseConcluded": "NOASSERTION"}
-            ]
-        }, indent=2))
+        sbom_path.write_text(
+            json.dumps(
+                {
+                    "spdxVersion": "SPDX-2.3",
+                    "name": image_ref,
+                    "packages": [
+                        {
+                            "name": "example",
+                            "versionInfo": "0.0.0",
+                            "licenseConcluded": "NOASSERTION",
+                        }
+                    ],
+                },
+                indent=2,
+            )
+        )
         digest = "sha256:" + hashlib.sha256(sbom_path.read_bytes()).hexdigest()
         return SBOMInfo(sbom_path, digest)
 
     # Real syft call – may require syft installation
     try:
-        subprocess.check_call([
-            "syft", "packages", image_ref, "-o", "spdx-json", "--file", str(sbom_path)
-        ], timeout=120)
+        subprocess.check_call(
+            [
+                "syft",
+                "packages",
+                image_ref,
+                "-o",
+                "spdx-json",
+                "--file",
+                str(sbom_path),
+            ],
+            timeout=120,
+        )
         digest = "sha256:" + hashlib.sha256(sbom_path.read_bytes()).hexdigest()
         return SBOMInfo(sbom_path, digest)
     except Exception as exc:
         # Gracefully degrade: write a minimal stub SBOM so downstream steps can continue.
-        sbom_path.write_text(json.dumps({
-            "spdxVersion": "SPDX-2.3",
-            "name": image_ref,
-            "packages": [],
-            "_generatedBy": f"wf2wf fallback due to syft error: {exc}"
-        }, indent=2))
+        sbom_path.write_text(
+            json.dumps(
+                {
+                    "spdxVersion": "SPDX-2.3",
+                    "name": image_ref,
+                    "packages": [],
+                    "_generatedBy": f"wf2wf fallback due to syft error: {exc}",
+                },
+                indent=2,
+            )
+        )
         digest = "sha256:" + hashlib.sha256(sbom_path.read_bytes()).hexdigest()
         return SBOMInfo(sbom_path, digest)
 
 
-def convert_to_sif(image_ref: str, *, sif_dir: Path | None = None, dry_run: bool = True) -> Path:
+def convert_to_sif(
+    image_ref: str, *, sif_dir: Path | None = None, dry_run: bool = True
+) -> Path:
     """Convert OCI *image_ref* to Apptainer SIF file.
 
     Uses `spython` if available; otherwise simulates by touching a file.
@@ -514,7 +550,9 @@ def convert_to_sif(image_ref: str, *, sif_dir: Path | None = None, dry_run: bool
         from spython.main import Client as _spython  # type: ignore
     except ImportError:
         # Fallback to system apptainer
-        subprocess.check_call(["apptainer", "build", str(sif_path), f"docker://{image_ref}"])
+        subprocess.check_call(
+            ["apptainer", "build", str(sif_path), f"docker://{image_ref}"]
+        )
         return sif_path
 
     _spython.build(f"docker://{image_ref}", sif_path)
@@ -544,13 +582,23 @@ def _image_exists_locally(tag_or_digest: str) -> bool:
     if not shutil.which("docker"):
         return False
     try:
-        out = subprocess.check_output(["docker", "images", "--no-trunc", "--format", "{{.Repository}}@{{.Digest}}"])
+        out = subprocess.check_output(
+            [
+                "docker",
+                "images",
+                "--no-trunc",
+                "--format",
+                "{{.Repository}}@{{.Digest}}",
+            ]
+        )
         return tag_or_digest in out.decode()
     except subprocess.CalledProcessError:
         return False
 
 
-def _probe_remote_registries(lock_hash: str, registries: list[str] | None = None, *, dry_run: bool = True) -> str | None:
+def _probe_remote_registries(
+    lock_hash: str, registries: list[str] | None = None, *, dry_run: bool = True
+) -> str | None:
     """Return image digest if an image with *lock_hash* label exists in any *registries*.
 
     The implementation is intentionally lightweight: in *dry_run* mode we always
@@ -560,21 +608,28 @@ def _probe_remote_registries(lock_hash: str, registries: list[str] | None = None
     if dry_run or not registries or not shutil.which("skopeo"):
         return None
 
-    import json, subprocess
+    import json
+    import subprocess
 
     for reg in registries:
         repo = f"{reg}/wf2wf/env"
         try:
             # List tags (may be many – limit to 50 for speed)
-            out = subprocess.check_output(["skopeo", "list-tags", f"docker://{repo}", "--format", "json"])
+            out = subprocess.check_output(
+                ["skopeo", "list-tags", f"docker://{repo}", "--format", "json"]
+            )
             tags = json.loads(out).get("Tags", [])[:50]
             for tag in tags:
                 ref = f"{repo}:{tag}"
-                cfg = subprocess.check_output(["skopeo", "inspect", "--config", f"docker://{ref}"])
+                cfg = subprocess.check_output(
+                    ["skopeo", "inspect", "--config", f"docker://{ref}"]
+                )
                 labels = json.loads(cfg).get("config", {}).get("Labels", {}) or {}
                 if labels.get("org.wf2wf.lock.sha256") == lock_hash:
                     # Found matching image – return digest reference
-                    insp = subprocess.check_output(["skopeo", "inspect", f"docker://{ref}"])
+                    insp = subprocess.check_output(
+                        ["skopeo", "inspect", f"docker://{ref}"]
+                    )
                     digest = json.loads(insp).get("Digest")
                     if digest:
                         return f"{repo}@{digest}"
@@ -600,7 +655,9 @@ def build_or_reuse_env_image(
     """
 
     cache_dir = cache_dir or _CACHE_DIR
-    build_res = prepare_env(env_yaml, cache_dir=cache_dir, verbose=False, dry_run=dry_run)
+    build_res = prepare_env(
+        env_yaml, cache_dir=cache_dir, verbose=False, dry_run=dry_run
+    )
     lock_hash = build_res["lock_hash"]
     tarball: Path = build_res["tarball"]
 
@@ -620,7 +677,9 @@ def build_or_reuse_env_image(
     if env_reg:
         registries.extend([r.strip() for r in env_reg.split(",") if r.strip()])
 
-    probe_digest = _probe_remote_registries(lock_hash, registries or None, dry_run=dry_run)
+    probe_digest = _probe_remote_registries(
+        lock_hash, registries or None, dry_run=dry_run
+    )
     if probe_digest:
         entry = {"tag": probe_digest, "digest": probe_digest}
         index[lock_hash] = entry
@@ -670,4 +729,4 @@ def prune_cache(*, days: int = 60, min_free_gb: int = 5, verbose: bool = False):
             pass
 
     if verbose and freed:
-        print(f"[prune] freed {freed/1e9:.2f} GB") 
+        print(f"[prune] freed {freed/1e9:.2f} GB")

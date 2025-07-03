@@ -10,7 +10,7 @@ output_file = sys.argv[2]
 # Simulate a CPU-intensive task
 time.sleep(5)
 
-with open(output_file, 'w') as f:
+with open(output_file, "w") as f:
     f.write(f"Intensive analysis completed on {input_file}\\n")
 
-print("Intensive analysis finished.") 
+print("Intensive analysis finished.")

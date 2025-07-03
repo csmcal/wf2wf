@@ -21,7 +21,9 @@ def _have_tool(name: str) -> bool:
 
     if name == "docker":
         try:
-            subprocess.check_output(["docker", "info"], stderr=subprocess.STDOUT, timeout=10)
+            subprocess.check_output(
+                ["docker", "info"], stderr=subprocess.STDOUT, timeout=10
+            )
         except Exception:
             return False
 
@@ -39,7 +41,9 @@ def _isolate_cache(tmp_path, monkeypatch):
 
     env_mod = importlib.import_module("wf2wf.environ")
     monkeypatch.setattr(env_mod, "_CACHE_DIR", cache_root, raising=False)
-    monkeypatch.setattr(env_mod, "_INDEX_FILE", cache_root / "env_index.json", raising=False)
+    monkeypatch.setattr(
+        env_mod, "_INDEX_FILE", cache_root / "env_index.json", raising=False
+    )
 
     yield SimpleNamespace(cache=cache_root)
 
@@ -52,6 +56,7 @@ def test_conda_to_image_pipeline(tmp_path: Path, _isolate_cache):
     missing = [t for t in required if not _have_tool(t)]
     if missing:
         import warnings
+
         warnings.warn(
             f"Wet-run skipped: missing external tools: {', '.join(missing)}",
             RuntimeWarning,
@@ -97,17 +102,25 @@ rule test:
     out_ga = tmp_path / "flow.ga"
 
     cmd = [
-        "wf2wf", "convert",
-        "--input", str(snakefile),
-        "--in-format", "snakemake",
-        "--out", str(out_ga),
-        "--out-format", "galaxy",
-        "--auto-env", "build",
-        "--push-registry", "",  # local daemon only
+        "wf2wf",
+        "convert",
+        "--input",
+        str(snakefile),
+        "--in-format",
+        "snakemake",
+        "--out",
+        str(out_ga),
+        "--out-format",
+        "galaxy",
+        "--auto-env",
+        "build",
+        "--push-registry",
+        "",  # local daemon only
         "--confirm-push",
         "--sbom",
         "--apptainer",
-        "--platform", "linux/amd64",
+        "--platform",
+        "linux/amd64",
     ]
 
     env = os.environ.copy()
@@ -148,4 +161,4 @@ rule test:
     # Ensure no artefacts leaked into project root
     repo_root = Path.cwd()
     leaks = list(repo_root.glob("*.tar.gz")) + list(repo_root.glob("*.sif"))
-    assert not leaks, f"Artefacts leaked into repo root: {leaks}" 
+    assert not leaks, f"Artefacts leaked into repo root: {leaks}"

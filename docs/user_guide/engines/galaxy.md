@@ -6,4 +6,4 @@
 | Collections | 🚧 partial |
 | Workflow parameters | ✅ |
 | Subworkflows | 🚧 |
-| Metadata (creator, license) | ✅ | 
+| Metadata (creator, license) | ✅ |

@@ -1,7 +1,6 @@
 import os
 import shutil
 import subprocess
-import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -45,7 +44,9 @@ def _isolate_cache(tmp_path, monkeypatch):
 
     env_mod = importlib.import_module("wf2wf.environ")
     monkeypatch.setattr(env_mod, "_CACHE_DIR", cache_root, raising=False)
-    monkeypatch.setattr(env_mod, "_INDEX_FILE", cache_root / "env_index.json", raising=False)
+    monkeypatch.setattr(
+        env_mod, "_INDEX_FILE", cache_root / "env_index.json", raising=False
+    )
 
     yield SimpleNamespace(cache=cache_root)
 
@@ -94,11 +95,7 @@ rule buildx_test:
     out_cwl = tmp_path / "flow.cwl"  # use CWL export for variety
 
     wf2wf_bin = shutil.which("wf2wf")
-    cmd = (
-        [wf2wf_bin]
-        if wf2wf_bin
-        else [sys.executable, "-m", "wf2wf"]
-    ) + [
+    cmd = ([wf2wf_bin] if wf2wf_bin else [sys.executable, "-m", "wf2wf"]) + [
         "convert",
         "--input",
         str(snakefile),
@@ -134,4 +131,4 @@ rule buildx_test:
 
     # Verify SBOM reference embedded in CWL (simple text check)
     cwl_text = out_cwl.read_text()
-    assert "wf2wf_sbom" in cwl_text, "SBOM hint missing in CWL output" 
+    assert "wf2wf_sbom" in cwl_text, "SBOM hint missing in CWL output"

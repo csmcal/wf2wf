@@ -13,4 +13,4 @@ rule python_run_block:
     run:
         print(f"Got greeting: {params.greeting}")
         with open(output[0], "w") as f:
-            f.write(f"The greeting was: {params.greeting}") 
+            f.write(f"The greeting was: {params.greeting}")

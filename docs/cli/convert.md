@@ -17,4 +17,4 @@ Options:
   -v, --verbose                  Increase verbosity
   -q, --quiet                    Reduce output
   --help                         Show this message and exit.
-``` 
+```

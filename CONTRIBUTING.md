@@ -102,4 +102,4 @@ $ python -m build
 $ ruff check wf2wf
 ```
 
-All metadata lives in `pyproject.toml`; do **not** bump version in `setup.py` (legacy).  New features must update `CHANGELOG.md` under **Unreleased**. 
+All metadata lives in `pyproject.toml`; do **not** bump version in `setup.py` (legacy).  New features must update `CHANGELOG.md` under **Unreleased**.

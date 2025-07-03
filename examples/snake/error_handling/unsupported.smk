@@ -19,8 +19,8 @@ rule pipe_job:
     shell: "cat {input} > {output}"
 
 rule consumer:
-    input: 
+    input:
         dynamic("dynamic_out_{i}.txt" for i in range(2)),
         "piped_output.txt"
     output: "final.txt"
-    shell: "cat {input} > {output}" 
+    shell: "cat {input} > {output}"

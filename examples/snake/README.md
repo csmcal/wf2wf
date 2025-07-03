@@ -37,4 +37,4 @@ Each example can be run with:
 snake2dagman --snakefile examples/[category]/[example].smk
 ```
 
-See the individual example files for specific usage instructions and requirements. 
+See the individual example files for specific usage instructions and requirements.

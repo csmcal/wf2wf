@@ -18,10 +18,10 @@ rule prepare_data:
 # Jupyter notebook analysis
 rule analyze_notebook:
     input: "data/dataset.csv"
-    output: 
+    output:
         notebook="results/analysis.ipynb",
         html="results/analysis_report.html"
     notebook: "notebooks/analysis_template.ipynb"
 
 # Note: This example requires a notebook template at notebooks/analysis_template.ipynb
-# The notebook directive is experimental and may not be fully supported by snake2dagman 
+# The notebook directive is experimental and may not be fully supported by snake2dagman

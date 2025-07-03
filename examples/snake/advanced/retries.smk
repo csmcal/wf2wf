@@ -29,4 +29,4 @@ rule C_no_retry:
     input:  "B.txt"
     output: "C.txt"
     retries: 0 # Explicitly no retries
-    shell:  "cat {input} > {output}; echo 'C ran.' >> {output}" 
+    shell:  "cat {input} > {output}; echo 'C ran.' >> {output}"

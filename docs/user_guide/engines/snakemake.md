@@ -16,4 +16,4 @@
 * `threads`, `resources`, `envmodules`, `params`, `input`/`output`, `benchmark`, `log`.
 
 ## Unsupported
-* `pipe()`, `dynamic()`, `shadow`, modules. 
+* `pipe()`, `dynamic()`, `shadow`, modules.

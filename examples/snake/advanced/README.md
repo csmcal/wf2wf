@@ -66,4 +66,4 @@ Run any example with:
 snake2dagman --snakefile examples/advanced/[example].smk
 ```
 
-These examples demonstrate more complex use cases and integration of multiple features. 
+These examples demonstrate more complex use cases and integration of multiple features.

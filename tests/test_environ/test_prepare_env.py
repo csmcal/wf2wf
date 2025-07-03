@@ -1,6 +1,7 @@
 from pathlib import Path
 from wf2wf.environ import prepare_env, generate_lock_hash
 
+
 def test_prepare_env(tmp_path: Path):
     # Create simple conda YAML
     yaml_path = tmp_path / "env.yml"
@@ -22,4 +23,4 @@ def test_prepare_env(tmp_path: Path):
 
     # Idempotency
     res2 = prepare_env(yaml_path, cache_dir=tmp_path)
-    assert res2["tarball"] == res["tarball"] 
+    assert res2["tarball"] == res["tarball"]

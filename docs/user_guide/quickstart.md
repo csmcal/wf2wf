@@ -18,4 +18,4 @@ wf2wf convert -i analysis.cwl -o main.nf \
              --fail-on-loss
 ```
 
-See the [Commands](../cli/commands.md) page for full CLI reference. 
+See the [Commands](../cli/commands.md) page for full CLI reference.

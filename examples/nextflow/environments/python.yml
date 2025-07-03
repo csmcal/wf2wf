@@ -13,4 +13,4 @@ dependencies:
   - pip
   - pip:
     - plotly==5.3.1
-    - dash==2.0.0 
+    - dash==2.0.0

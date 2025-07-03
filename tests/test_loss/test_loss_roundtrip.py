@@ -1,12 +1,10 @@
 import json
 from pathlib import Path
 
-import pytest
 
 from wf2wf.core import Workflow, Task, ParameterSpec, ResourceSpec
 from wf2wf.exporters import cwl as cwl_exporter, snakemake as snakemake_exporter
 from wf2wf.importers import cwl as cwl_importer
-from wf2wf.loss import as_list, compute_checksum
 
 
 def _build_simple_workflow() -> Workflow:
@@ -17,7 +15,7 @@ def _build_simple_workflow() -> Workflow:
         outputs=[ParameterSpec(id="out", type="File")],
         priority=10,
         retry=2,
-        resources=ResourceSpec(cpu=1, mem_mb=100)
+        resources=ResourceSpec(cpu=1, mem_mb=100),
     )
     wf = Workflow(name="simple", tasks={t1.id: t1}, edges=[])
     return wf
@@ -73,4 +71,4 @@ def test_checksum_mismatch(tmp_path: Path):
     wf2 = cwl_importer.to_workflow(cwl_path)
     assert wf2.tasks["task1"].priority == 0  # not reapplied
     skipped = [e for e in wf2.loss_map if e.get("status") == "reapplied"]
-    assert not skipped 
+    assert not skipped

@@ -1,6 +1,4 @@
-import os
 import json
-from pathlib import Path
 import importlib
 import shutil
 
@@ -43,4 +41,4 @@ def test_generate_sbom_fallback(tmp_path, monkeypatch):
     # If you want to test this, you would need to add a condition to check if syft is available
     # and then assert that _generatedBy is not empty.
     # This would require changes to the test_generate_sbom_fallback function to check for syft availability.
-    # If you're interested in adding this, please let me know, and I can help you with the implementation. 
+    # If you're interested in adding this, please let me know, and I can help you with the implementation.

@@ -9,4 +9,4 @@ Commands:
   sign       Sign a BCO JSON with a private key
   package    Bundle BCO + artefacts (e.g., eSTAR)
   diff       Compare two BCO documents
-``` 
+```

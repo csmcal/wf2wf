@@ -144,4 +144,4 @@ rule quality_check:
     shell:
         """
         python scripts/quality_check.py {input} {output} 2> {log}
-        """ 
+        """

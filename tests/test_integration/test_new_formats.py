@@ -8,54 +8,54 @@ from wf2wf.exporters import load as load_exporter
 
 def test_wdl_importer_registration():
     """Test that WDL importer is properly registered."""
-    
+
     # Test that WDL importer can be loaded
-    wdl_importer = load_importer('wdl')
+    wdl_importer = load_importer("wdl")
     assert wdl_importer is not None
-    assert hasattr(wdl_importer, 'to_workflow')
+    assert hasattr(wdl_importer, "to_workflow")
 
 
 def test_wdl_exporter_registration():
     """Test that WDL exporter is properly registered."""
-    
+
     # Test that WDL exporter can be loaded
-    wdl_exporter = load_exporter('wdl')
+    wdl_exporter = load_exporter("wdl")
     assert wdl_exporter is not None
-    assert hasattr(wdl_exporter, 'from_workflow')
+    assert hasattr(wdl_exporter, "from_workflow")
 
 
 def test_galaxy_importer_registration():
     """Test that Galaxy importer is properly registered."""
-    
+
     # Test that Galaxy importer can be loaded
-    galaxy_importer = load_importer('galaxy')
+    galaxy_importer = load_importer("galaxy")
     assert galaxy_importer is not None
-    assert hasattr(galaxy_importer, 'to_workflow')
+    assert hasattr(galaxy_importer, "to_workflow")
 
 
 def test_galaxy_exporter_registration():
     """Test that Galaxy exporter is properly registered."""
-    
+
     # Test that Galaxy exporter can be loaded
-    galaxy_exporter = load_exporter('galaxy')
+    galaxy_exporter = load_exporter("galaxy")
     assert galaxy_exporter is not None
-    assert hasattr(galaxy_exporter, 'from_workflow')
+    assert hasattr(galaxy_exporter, "from_workflow")
 
 
 def test_all_supported_formats():
     """Test that all expected formats are supported."""
-    
+
     # Test importers
-    expected_importers = ['snakemake', 'dagman', 'nextflow', 'cwl', 'wdl', 'galaxy']
+    expected_importers = ["snakemake", "dagman", "nextflow", "cwl", "wdl", "galaxy"]
     for fmt in expected_importers:
         try:
             importer = load_importer(fmt)
             assert importer is not None, f"Importer for {fmt} should be available"
         except ValueError as e:
             pytest.fail(f"Importer for {fmt} should be registered: {e}")
-    
+
     # Test exporters
-    expected_exporters = ['snakemake', 'dagman', 'nextflow', 'cwl', 'wdl', 'galaxy']
+    expected_exporters = ["snakemake", "dagman", "nextflow", "cwl", "wdl", "galaxy"]
     for fmt in expected_exporters:
         try:
             exporter = load_exporter(fmt)
@@ -66,19 +66,19 @@ def test_all_supported_formats():
 
 def test_format_error_handling():
     """Test error handling for unsupported formats."""
-    
+
     # Test unsupported importer format
     with pytest.raises(ValueError, match="Unsupported importer format"):
-        load_importer('unsupported_format')
-    
+        load_importer("unsupported_format")
+
     # Test unsupported exporter format
     with pytest.raises(ValueError, match="Unknown exporter format"):
-        load_exporter('unsupported_format')
+        load_exporter("unsupported_format")
 
 
 def test_wdl_round_trip_basic():
     """Test basic round-trip conversion: WDL -> IR -> WDL."""
-    
+
     # Simple WDL workflow
     wdl_content = """
 version 1.0
@@ -87,15 +87,15 @@ task hello {
     input {
         String name
     }
-    
+
     command <<<
         echo "Hello, ${name}!"
     >>>
-    
+
     output {
         String greeting = stdout()
     }
-    
+
     runtime {
         memory: "1 GB"
         cpu: 1
@@ -106,46 +106,46 @@ workflow hello_workflow {
     input {
         String input_name = "World"
     }
-    
+
     call hello {
         input: name = input_name
     }
-    
+
     output {
         String result = hello.greeting
     }
 }
 """
-    
+
     # Create temporary files
     input_wdl = Path("test_input.wdl")
     output_wdl = Path("test_output.wdl")
-    
+
     try:
         # Write input WDL
         input_wdl.write_text(wdl_content)
-        
+
         # Import WDL to IR
-        wdl_importer = load_importer('wdl')
+        wdl_importer = load_importer("wdl")
         workflow = wdl_importer.to_workflow(input_wdl)
-        
+
         # Verify basic import
         assert workflow.name == "hello_workflow"
         assert len(workflow.tasks) == 1
-        
+
         # Export IR back to WDL
-        wdl_exporter = load_exporter('wdl')
+        wdl_exporter = load_exporter("wdl")
         wdl_exporter.from_workflow(workflow, output_wdl)
-        
+
         # Verify output file was created
         assert output_wdl.exists()
         output_content = output_wdl.read_text()
-        
+
         # Basic verification of output content
         assert "version 1.0" in output_content
         assert "task hello" in output_content
         assert "workflow hello_workflow" in output_content
-        
+
     finally:
         # Clean up
         for file in [input_wdl, output_wdl]:
@@ -155,9 +155,9 @@ workflow hello_workflow {
 
 def test_galaxy_round_trip_basic():
     """Test basic round-trip conversion: Galaxy -> IR -> Galaxy."""
-    
+
     import json
-    
+
     # Simple Galaxy workflow
     galaxy_workflow = {
         "a_galaxy_workflow": "true",
@@ -179,48 +179,48 @@ def test_galaxy_round_trip_basic():
                 "tool_version": None,
                 "type": "data_input",
                 "uuid": "input-uuid",
-                "workflow_outputs": []
+                "workflow_outputs": [],
             }
         },
         "tags": ["test"],
         "uuid": "workflow-uuid",
-        "version": "1.0"
+        "version": "1.0",
     }
-    
+
     # Create temporary files
     input_galaxy = Path("test_input.ga")
     output_galaxy = Path("test_output.ga")
-    
+
     try:
         # Write input Galaxy workflow
-        with open(input_galaxy, 'w') as f:
+        with open(input_galaxy, "w") as f:
             json.dump(galaxy_workflow, f)
-        
+
         # Import Galaxy to IR
-        galaxy_importer = load_importer('galaxy')
+        galaxy_importer = load_importer("galaxy")
         workflow = galaxy_importer.to_workflow(input_galaxy)
-        
+
         # Verify basic import
         assert workflow.name == "Test Workflow"
         assert len(workflow.inputs) == 1
-        
+
         # Export IR back to Galaxy
-        galaxy_exporter = load_exporter('galaxy')
+        galaxy_exporter = load_exporter("galaxy")
         galaxy_exporter.from_workflow(workflow, output_galaxy)
-        
+
         # Verify output file was created
         assert output_galaxy.exists()
-        
+
         # Load and verify output content
-        with open(output_galaxy, 'r') as f:
+        with open(output_galaxy, "r") as f:
             output_data = json.load(f)
-        
+
         assert output_data["a_galaxy_workflow"] == "true"
         assert output_data["name"] == "Test Workflow"
         assert "steps" in output_data
-        
+
     finally:
         # Clean up
         for file in [input_galaxy, output_galaxy]:
             if file.exists():
-                file.unlink() 
+                file.unlink()

@@ -9,4 +9,4 @@ rule B:
     shell: "echo 'B' > {output}"
 
 rule all:
-    input: "A_out.txt" # This will trigger the circular dependency check 
+    input: "A_out.txt" # This will trigger the circular dependency check

@@ -9,7 +9,7 @@
 **This design document presents both current implementation and future vision. Key status indicators:**
 
 - ✅ **Implemented**: Features currently working in the codebase
-- 🚧 **Partial**: Basic implementation exists, enhancements planned  
+- 🚧 **Partial**: Basic implementation exists, enhancements planned
 - ❌ **Planned**: Future development, not yet implemented
 
 **Quick Status Summary:**
@@ -57,7 +57,7 @@ Each format has distinct strengths but creates silos that limit collaboration an
 ```
 Snakemake  ─┐
 Nextflow   ─┼─► Enhanced IR ─► DAGMan
-CWL        ─┤   (wf-json)     ├─► Nextflow  
+CWL        ─┤   (wf-json)     ├─► Nextflow
 WDL        ─┘                 ├─► CWL
                               └─► Snakemake
 ```
@@ -136,28 +136,28 @@ class Workflow:
     version: str = "1.0"
     label: Optional[str] = None
     doc: Optional[str] = None
-    
+
     # Workflow structure
     tasks: Dict[str, Task] = field(default_factory=dict)
     edges: List[Edge] = field(default_factory=list)
-    
+
     # Enhanced I/O with CWL parameter specifications
     inputs: List[ParameterSpec] = field(default_factory=list)
     outputs: List[ParameterSpec] = field(default_factory=list)
-    
+
     # Requirements and hints system
     requirements: List[RequirementSpec] = field(default_factory=list)
     hints: List[RequirementSpec] = field(default_factory=list)
-    
+
     # Metadata and provenance
     provenance: Optional[ProvenanceSpec] = None
     documentation: Optional[DocumentationSpec] = None
     intent: List[str] = field(default_factory=list)  # Ontology IRIs
     cwl_version: Optional[str] = None
-    
+
     # BCO integration for regulatory compliance
     bco_spec: Optional[BCOSpec] = None
-    
+
     # Legacy compatibility
     config: Dict[str, Any] = field(default_factory=dict)
     meta: Dict[str, Any] = field(default_factory=dict)
@@ -169,30 +169,30 @@ class Task:
     id: str
     label: Optional[str] = None
     doc: Optional[str] = None
-    
+
     # Execution specifications
     command: Optional[str] = None
     script: Optional[str] = None
-    
+
     # Enhanced I/O
     inputs: List[ParameterSpec] = field(default_factory=list)
     outputs: List[ParameterSpec] = field(default_factory=list)
-    
+
     # Advanced execution features
     when: Optional[str] = None  # Conditional execution
     scatter: Optional[ScatterSpec] = None
-    
+
     # Resource and environment specifications
     resources: ResourceSpec = field(default_factory=ResourceSpec)
     environment: EnvironmentSpec = field(default_factory=EnvironmentSpec)
     requirements: List[RequirementSpec] = field(default_factory=list)
     hints: List[RequirementSpec] = field(default_factory=list)
-    
+
     # Metadata and provenance
     provenance: Optional[ProvenanceSpec] = None
     documentation: Optional[DocumentationSpec] = None
     intent: List[str] = field(default_factory=list)
-    
+
     # Legacy compatibility
     params: Dict[str, Any] = field(default_factory=dict)
     priority: int = 0
@@ -318,7 +318,7 @@ wf2wf convert --snakefile workflow.smk \
               --auto-conda-setup \
               --conda-prefix /shared/envs
 
-# Planned: Docker container integration  
+# Planned: Docker container integration
 wf2wf convert --snakefile workflow.smk \
               --out-format dagman \
               --auto-docker-build \
@@ -530,7 +530,7 @@ class BCOSpec:
     """BioCompute Object specification for regulatory compliance."""
     object_id: str
     spec_version: str = "https://w3id.org/ieee/ieee-2791-schema/2791object.json"
-    
+
     # Nine BCO Domains
     provenance_domain: Dict[str, Any]    # Workflow provenance and authorship
     usability_domain: List[str]          # Scientific application domains
@@ -610,7 +610,7 @@ examples/
 │   ├── linear.smk           # Sequential processing
 │   ├── parallel.smk         # Parallel processing
 │   └── mixed.smk            # Mixed patterns
-├── advanced/                # Complex workflow features  
+├── advanced/                # Complex workflow features
 │   ├── checkpoints.smk      # Dynamic workflows
 │   ├── containers.smk       # Container integration
 │   └── gpu_workflows.smk    # GPU acceleration

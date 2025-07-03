@@ -5,9 +5,10 @@ Entry point for running wf2wf as a module: python -m wf2wf
 
 from .cli import cli, simple_main
 
-if __name__ == '__main__':
-    try:
-        import click
+if __name__ == "__main__":
+    import importlib.util
+    
+    if importlib.util.find_spec("click") is not None:
         cli()
-    except ImportError:
-        simple_main() 
+    else:
+        simple_main()

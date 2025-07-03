@@ -15,4 +15,4 @@ rule map_reads:
 rule call_variants:
     input: "mapped/{sample}.bam"
     output: "variants/{sample}.vcf"
-    shell: "echo 'calling variants for {input}' > {output}" 
+    shell: "echo 'calling variants for {input}' > {output}"

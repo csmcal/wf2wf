@@ -28,4 +28,4 @@ wf2wf/
 1. Implement `importers/<engine>.py` returning a `Workflow` instance.
 2. Implement `exporters/<engine>.py` consuming a `Workflow`.
 3. Register entry-points if distributing externally.
-4. Add tests & docs. 
+4. Add tests & docs.

@@ -10,7 +10,7 @@ output_file = sys.argv[2]
 # Simulate logging to stderr
 print("This is a log message to stderr.", file=sys.stderr)
 
-with open(output_file, 'w') as f:
+with open(output_file, "w") as f:
     f.write(f"Quality check passed for {input_file}\\n")
 
-print("Quality check finished.") 
+print("Quality check finished.")

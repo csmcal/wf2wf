@@ -1,5 +1,5 @@
 # Development dependencies for wf2wf
-# Install with one of:  
+# Install with one of:
 # pip install -r requirements-dev.txt
 # conda install -f requirements-dev.txt
 
@@ -16,7 +16,7 @@ twine
 bumpver
 
 # --- Tooling ---
-pre-commit 
+pre-commit
 
 # --- Workflow engine helpers (parsing / tooling) ---
 #  Installed only in the dev environment; end-users get lighter optional deps.
@@ -39,7 +39,7 @@ spython>=0.3             # Apptainer/Singularity helper
 syft>=1.1                # SBOM generation (Anchore Syft)
 grype
 skopeo
-oras>=0.1; platform_system!="Windows"  # optional OCI artefact push 
+oras>=0.1; platform_system!="Windows"  # optional OCI artefact push
 apptainer
 buildah
 podman

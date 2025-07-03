@@ -43,4 +43,4 @@ steps:
     in:
       data_file: preprocess/processed_file
     out: [summary_file]
-    when: "$context.run_optional == true" 
+    when: "$context.run_optional == true"

@@ -62,7 +62,7 @@ python -m pytest tests/test_core/
 # Exporters
 python -m pytest tests/test_exporters/
 
-# Importers  
+# Importers
 python -m pytest tests/test_importers/
 
 # CLI interface
@@ -142,11 +142,11 @@ def test_my_feature(persistent_test_output):
     # Create test workflow
     wf = Workflow(name="test_workflow")
     # ... setup workflow
-    
+
     # Export to test directory
     output_file = persistent_test_output / "output.ext"
     exporter.from_workflow(wf, output_file)
-    
+
     # Verify results
     assert output_file.exists()
     # ... additional assertions
@@ -158,4 +158,4 @@ The test suite is designed to run cleanly in CI environments with:
 - Automatic cleanup to prevent test pollution
 - Proper isolation between test runs
 - Comprehensive coverage of all conversion paths
-- Error handling verification 
+- Error handling verification

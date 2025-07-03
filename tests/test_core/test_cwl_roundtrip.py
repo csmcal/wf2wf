@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from wf2wf.importers import cwl as cwl_importer
@@ -7,7 +6,12 @@ from wf2wf.exporters import cwl as cwl_exporter
 
 def test_cwl_roundtrip_advanced(tmp_path: Path):
     """Import advanced CWL, export again, re-import and check key features."""
-    src_path = Path(__file__).parent.parent.parent / "examples" / "cwl" / "advanced_features.cwl"
+    src_path = (
+        Path(__file__).parent.parent.parent
+        / "examples"
+        / "cwl"
+        / "advanced_features.cwl"
+    )
     wf = cwl_importer.to_workflow(src_path, preserve_metadata=True)
 
     # Ensure advanced features were parsed
@@ -26,4 +30,4 @@ def test_cwl_roundtrip_advanced(tmp_path: Path):
 
     # Check that at least one conditional and scatter survived
     assert any(t.when for t in wf2.tasks.values())
-    assert any(t.scatter for t in wf2.tasks.values()) 
+    assert any(t.scatter for t in wf2.tasks.values())

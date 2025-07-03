@@ -15,4 +15,4 @@ rule gpu_job:
 rule cpu_job:
     input: "gpu_output.txt"
     output: "final.txt"
-    shell: "echo 'This is a CPU job' > {output}" 
+    shell: "echo 'This is a CPU job' > {output}"

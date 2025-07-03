@@ -20,12 +20,12 @@ requirements:
           import sys
           import json
           import random
-          
+
           def analyze_data(input_file, threshold, max_iter, output_file):
               # Read processed data
               with open(input_file, 'r') as f:
                   data = f.read()
-              
+
               # Simulate analysis
               results = {
                   "input_file": input_file,
@@ -36,14 +36,14 @@ requirements:
                   "significant": random.choice([True, False]),
                   "iterations_used": random.randint(10, max_iter)
               }
-              
+
               # Write results
               with open(output_file, 'w') as f:
                   json.dump(results, f, indent=2)
-              
+
               print(f"Analysis completed. Results saved to {output_file}")
               return results
-          
+
           if __name__ == "__main__":
               analyze_data(sys.argv[1], float(sys.argv[2]), int(sys.argv[3]), sys.argv[4])
 
@@ -59,15 +59,15 @@ inputs:
   input_file:
     type: File
     doc: "Processed data file to analyze"
-  
+
   threshold:
     type: float
     doc: "Statistical threshold for analysis"
-  
+
   max_iter:
     type: int
     doc: "Maximum number of iterations"
-  
+
   output_name:
     type: string
     doc: "Name for the output results file"
@@ -79,4 +79,4 @@ outputs:
       glob: $(inputs.output_name)
     doc: "Analysis results in JSON format"
 
-stdout: analyze_data.log 
+stdout: analyze_data.log

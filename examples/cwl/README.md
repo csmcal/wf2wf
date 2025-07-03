@@ -7,7 +7,7 @@ This directory contains a demonstration CWL (Common Workflow Language) workflow 
 - `workflow.cwl` - Main workflow definition
 - `tools/` - Individual tool definitions
   - `prepare_data.cwl` - Data preparation tool
-  - `analyze_data.cwl` - Data analysis tool  
+  - `analyze_data.cwl` - Data analysis tool
   - `generate_report.cwl` - Report generation tool
 - `data/input_data.txt` - Sample input data
 - `job.yml` - Job input parameters
@@ -21,14 +21,14 @@ The workflow consists of three sequential steps:
    - Resources: 2 CPU cores, 4GB RAM
    - Container: python:3.9-slim
 
-2. **Data Analysis** (`analyze_data`) 
+2. **Data Analysis** (`analyze_data`)
    - Analyzes processed data with statistical methods
    - Resources: 4 CPU cores, 8GB RAM
    - Container: python:3.9-slim
 
 3. **Report Generation** (`generate_report`)
    - Creates final HTML report
-   - Resources: 1 CPU core, 2GB RAM  
+   - Resources: 1 CPU core, 2GB RAM
    - Container: python:3.9-slim
 
 ## Dependencies
@@ -69,4 +69,4 @@ wf2wf convert -i workflow.cwl -o Snakefile
 
 # CWL to DAGMan
 wf2wf convert -i workflow.cwl -o workflow.dag
-``` 
+```

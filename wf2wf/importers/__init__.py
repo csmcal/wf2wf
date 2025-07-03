@@ -10,26 +10,29 @@ from importlib import import_module
 from typing import Dict
 
 __all__ = [
-    'load',
-    'snakemake',
-    'dagman',
-    'nextflow',
-    'cwl',
-    'wdl',
-    'galaxy',
+    "load",
+    "snakemake",
+    "dagman",
+    "nextflow",
+    "cwl",
+    "wdl",
+    "galaxy",
 ]
 
 _plugins: Dict[str, str] = {
-    'snakemake': '.snakemake',
-    'dagman': '.dagman',
-    'nextflow': '.nextflow',
-    'cwl': '.cwl',
-    'wdl': '.wdl',
-    'galaxy': '.galaxy',
+    "snakemake": ".snakemake",
+    "dagman": ".dagman",
+    "nextflow": ".nextflow",
+    "cwl": ".cwl",
+    "wdl": ".wdl",
+    "galaxy": ".galaxy",
 }
+
 
 def load(fmt: str):
     """Dynamically import the requested importer sub-module."""
     if fmt not in _plugins:
-        raise ValueError(f"Unsupported importer format '{fmt}'. Available: {list(_plugins)}")
-    return import_module(__name__ + _plugins[fmt]) 
+        raise ValueError(
+            f"Unsupported importer format '{fmt}'. Available: {list(_plugins)}"
+        )
+    return import_module(__name__ + _plugins[fmt])

@@ -6,7 +6,6 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 import textwrap
-import json
 import contextvars
 
 __all__ = ["generate"]
@@ -20,8 +19,10 @@ def _md_table(rows: List[List[str]]) -> str:
     widths = [max(len(r[i]) for r in rows) for i in range(col_count)]
     lines = []
     header, *body = rows
+
     def _fmt(row):
         return "| " + " | ".join(cell.ljust(w) for cell, w in zip(row, widths)) + " |"
+
     lines.append(_fmt(header))
     lines.append("| " + " | ".join("-" * w for w in widths) + " |")
     lines += [_fmt(r) for r in body]
@@ -80,19 +81,25 @@ def generate(
         f"**Target**: `{dst_path}`",
     ]
     if wf_before and getattr(wf_before, "name", None):
-        summary_lines.append(f"**Workflow**: {wf_before.name} (v{getattr(wf_before,'version','?')})")
+        summary_lines.append(
+            f"**Workflow**: {wf_before.name} (v{getattr(wf_before,'version','?')})"
+        )
     md_content += "\n".join(summary_lines) + "\n\n---\n\n"
 
     # Actions section
     if actions:
-        md_content += "## Actions Performed\n\n" + "\n".join(f"* {a}" for a in actions) + "\n\n"
+        md_content += (
+            "## Actions Performed\n\n" + "\n".join(f"* {a}" for a in actions) + "\n\n"
+        )
 
     # Losses
     if losses:
         md_content += "## Information Loss\n\n"
         rows = [["Path", "Field", "Reason"]]
         for e in losses:
-            rows.append([e.get("json_pointer", "?"), e.get("field", ""), e.get("reason", "")])
+            rows.append(
+                [e.get("json_pointer", "?"), e.get("field", ""), e.get("reason", "")]
+            )
         md_content += _md_table(rows) + "\n\n"
     else:
         md_content += "## Information Loss\n\n_None_\n\n"
@@ -123,27 +130,43 @@ def generate(
 
     # Next steps (call-to-action)
     if next_steps:
-        md_content += "## Next Steps\n\n" + "\n".join(f"* {step}" for step in next_steps) + "\n"
+        md_content += (
+            "## Next Steps\n\n" + "\n".join(f"* {step}" for step in next_steps) + "\n"
+        )
 
     # Inline diff – show when IR mutated
     if wf_before is not None and wf_after is not None and wf_before != wf_after:
         try:
-            import dataclasses, json, difflib
+            import dataclasses
+            import json
+            import difflib
 
-            before_json = json.dumps(dataclasses.asdict(wf_before), sort_keys=True, indent=2)
-            after_json = json.dumps(dataclasses.asdict(wf_after), sort_keys=True, indent=2)
+            before_json = json.dumps(
+                dataclasses.asdict(wf_before), sort_keys=True, indent=2
+            )
+            after_json = json.dumps(
+                dataclasses.asdict(wf_after), sort_keys=True, indent=2
+            )
 
-            diff_lines = list(difflib.unified_diff(
-                before_json.splitlines(),
-                after_json.splitlines(),
-                fromfile="before", tofile="after", lineterm=""
-            ))
+            diff_lines = list(
+                difflib.unified_diff(
+                    before_json.splitlines(),
+                    after_json.splitlines(),
+                    fromfile="before",
+                    tofile="after",
+                    lineterm="",
+                )
+            )
 
             max_lines = 400
             if len(diff_lines) > max_lines:
                 diff_lines = diff_lines[:max_lines] + ["... (truncated)"]
 
-            md_content += "\n## IR Diff (truncated)\n\n```diff\n" + "\n".join(diff_lines) + "\n```\n"
+            md_content += (
+                "\n## IR Diff (truncated)\n\n```diff\n"
+                + "\n".join(diff_lines)
+                + "\n```\n"
+            )
         except Exception:
             pass
 
@@ -154,14 +177,16 @@ def generate(
     if html_path is not None:
         # Determine output path
         if isinstance(html_path, bool):
-            html_out = md_path.with_suffix('.html')
+            html_out = md_path.with_suffix(".html")
         else:
             html_out = Path(html_path)
 
         try:
             import markdown as _md_lib  # type: ignore
 
-            html_content = _md_lib.markdown(md_content, extensions=["tables", "fenced_code"])
+            html_content = _md_lib.markdown(
+                md_content, extensions=["tables", "fenced_code"]
+            )
         except ImportError:
             import html as _html
 
@@ -194,7 +219,9 @@ class _ReportContext:
         self.artefacts.append(p)
 
 
-_ctx_var: contextvars.ContextVar[Optional[_ReportContext]] = contextvars.ContextVar("wf2wf_report_ctx", default=None)
+_ctx_var: contextvars.ContextVar[Optional[_ReportContext]] = contextvars.ContextVar(
+    "wf2wf_report_ctx", default=None
+)
 
 
 def start_collection() -> None:
@@ -220,4 +247,4 @@ def add_action(msg: str):
 def add_artefact(p: Path):
     ctx = _ctx_var.get()
     if ctx is not None:
-        ctx.add_artefact(Path(p)) 
+        ctx.add_artefact(Path(p))

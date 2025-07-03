@@ -1,11 +1,9 @@
 import json
 import subprocess
 from pathlib import Path
-import types
 
 import pytest
 
-import click
 from click.testing import CliRunner
 
 from wf2wf.cli import cli
@@ -39,10 +37,22 @@ def _fake_openssl(cmd, *a, **kw):  # helper for monkeypatch
 def test_bco_sign_generates_etag_and_attestation(monkeypatch, minimal_bco):
     runner = CliRunner()
 
-    # Monkeypatch subprocess and pkg_resources lookup
+    # Monkeypatch subprocess and version lookup
     monkeypatch.setattr(subprocess, "check_call", _fake_openssl, raising=True)
-    import pkg_resources
-    monkeypatch.setattr(pkg_resources, "get_distribution", lambda _: types.SimpleNamespace(version="0.0.0"))
+
+    # Mock the modern importlib.metadata.version function
+    try:
+        from importlib import metadata
+
+        monkeypatch.setattr(metadata, "version", lambda _: "0.0.0")
+    except ImportError:
+        # Fallback for older Python versions
+        try:
+            import importlib_metadata
+
+            monkeypatch.setattr(importlib_metadata, "version", lambda _: "0.0.0")
+        except ImportError:
+            pass  # Will fall back to "unknown" in the actual code
 
     key = minimal_bco.parent / "dummy.key"
     key.write_text("stub")
@@ -54,7 +64,9 @@ def test_bco_sign_generates_etag_and_attestation(monkeypatch, minimal_bco):
     data = json.loads(minimal_bco.read_text())
     assert str(data.get("etag", "")).startswith("sha256:"), "etag not updated"
     ext = data.get("extension_domain", [])
-    assert any(e.get("namespace") == "wf2wf:provenance" for e in ext), "attestation ref missing"
+    assert any(
+        e.get("namespace") == "wf2wf:provenance" for e in ext
+    ), "attestation ref missing"
 
     # Signature & attestation files exist
     assert minimal_bco.with_suffix(".sig").exists()
@@ -91,8 +103,8 @@ def test_bco_diff_outputs_changes(tmp_path):
     result = runner.invoke(cli, ["bco", "diff", str(pa), str(pb)])
     assert result.exit_code == 0
     assert "### description_domain" in result.output
-    assert "-  \"overview\": \"old\"" in result.output
-    assert "+  \"overview\": \"new\"" in result.output
+    assert '-  "overview": "old"' in result.output
+    assert '+  "overview": "new"' in result.output
 
 
 def test_convert_intent_flag(tmp_path):
@@ -109,15 +121,25 @@ def test_convert_intent_flag(tmp_path):
 
     out = tmp_path / "wf.bco.json"
     runner = CliRunner()
-    result = runner.invoke(cli, [
-        "convert",
-        "--input", str(inp),
-        "--in-format", "json",
-        "--out", str(out),
-        "--out-format", "bco",
-        "--intent", "http://purl.obolibrary.org/obo/OBI_0600015",
-    ])
+    result = runner.invoke(
+        cli,
+        [
+            "convert",
+            "--input",
+            str(inp),
+            "--in-format",
+            "json",
+            "--out",
+            str(out),
+            "--out-format",
+            "bco",
+            "--intent",
+            "http://purl.obolibrary.org/obo/OBI_0600015",
+        ],
+    )
     assert result.exit_code == 0, result.output
 
     data = json.loads(out.read_text())
-    assert "http://purl.obolibrary.org/obo/OBI_0600015" in data.get("description_domain", {}).get("keywords", []) 
+    assert "http://purl.obolibrary.org/obo/OBI_0600015" in data.get(
+        "description_domain", {}
+    ).get("keywords", [])

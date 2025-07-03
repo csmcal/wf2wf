@@ -3,7 +3,7 @@
 In this tutorial we'll convert a simple Snakemake workflow to HTCondor DAGMan, build its environments and validate the result.
 
 ## Prerequisites
-* Docker daemon running (for image builds)  
+* Docker daemon running (for image builds)
 * HTCondor client tools (optional – for submitting)
 
 ## 1. Clone the example workflow
@@ -48,4 +48,4 @@ wf2wf validate linear.dag.loss.json
 condor_submit_dag -f linear.dag
 ```
 
-That's it! You can re-import the DAG back to Snakemake later. 
+That's it! You can re-import the DAG back to Snakemake later.

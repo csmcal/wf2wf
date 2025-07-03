@@ -60,7 +60,11 @@ def ask(question: str, *, default: bool | None = None) -> bool:
         # Build prompt text – emulate git-style choices
         prompt_txt = question.strip() + " (y)es/(n)o/(a)lways/(q)uit: "
         while True:
-            ans = click.prompt(prompt_txt, type=str, default=("y" if default else "n") if default is not None else None)
+            ans = click.prompt(
+                prompt_txt,
+                type=str,
+                default=("y" if default else "n") if default is not None else None,
+            )
             ans = ans.lower().strip()
             if ans in ("y", "yes"):
                 return True
@@ -76,4 +80,4 @@ def ask(question: str, *, default: bool | None = None) -> bool:
         # Fallback minimal prompt
         prompt_txt = question.strip() + " [y/N]: "
         ans = input(prompt_txt)
-        return ans.lower().startswith("y") 
+        return ans.lower().startswith("y")

@@ -73,4 +73,4 @@ snake2dagman --snakefile examples/full_workflow/data_analysis.smk
 - ✅ Log file generation
 - ✅ Parameter configuration
 - ✅ Quality control
-- ✅ Complex dependency chains 
+- ✅ Complex dependency chains

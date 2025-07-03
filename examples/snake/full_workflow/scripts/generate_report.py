@@ -27,7 +27,7 @@ html_content = f"""
 </html>
 """
 
-with open(args.output, 'w') as f:
+with open(args.output, "w") as f:
     f.write(html_content)
 
-print(f"Report generated at {args.output}") 
+print(f"Report generated at {args.output}")

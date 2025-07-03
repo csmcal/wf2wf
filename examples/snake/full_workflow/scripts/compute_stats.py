@@ -1,7 +1,6 @@
 # Standard library imports
 import argparse
 import json
-import sys
 
 # This is a dummy script
 print("Running compute_stats.py")
@@ -17,10 +16,10 @@ stats = {
     "stddev": 0.1,
     "p_value": 0.04,
     "threshold": args.threshold,
-    "significant": 0.04 < args.threshold
+    "significant": 0.04 < args.threshold,
 }
 
-with open(args.output_file, 'w') as f:
+with open(args.output_file, "w") as f:
     json.dump(stats, f, indent=4)
 
-print(f"Stats computed and saved to {args.output_file}") 
+print(f"Stats computed and saved to {args.output_file}")

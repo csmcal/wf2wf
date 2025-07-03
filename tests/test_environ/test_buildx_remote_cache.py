@@ -1,5 +1,6 @@
 # tests/test_environ/test_buildx_remote_cache.py
-import tempfile, tarfile, shutil
+import tarfile
+import shutil
 from pathlib import Path
 from wf2wf.environ import build_oci_image
 
@@ -16,9 +17,12 @@ def _tarball(tmp: Path) -> Path:
 def test_buildx_remote_cache_dry_run(tmp_path, monkeypatch):
     tarball = _tarball(tmp_path)
     # Pretend docker exists, but keep dry_run=True
-    monkeypatch.setattr(shutil, "which",
-                        lambda n: "/usr/bin/docker" if n == "docker" else shutil.which(n),
-                        raising=False)
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda n: "/usr/bin/docker" if n == "docker" else shutil.which(n),
+        raising=False,
+    )
 
     tag, digest = build_oci_image(
         tarball,

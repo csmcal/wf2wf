@@ -46,18 +46,61 @@ wf2wf convert -i analysis.cwl -o main.nf --out-format nextflow --fail-on-loss
 ```{toctree}
 :hidden:
 :maxdepth: 2
+:caption: User Guide
 
 user_guide/installation
 user_guide/prerequisites
 user_guide/quickstart
 user_guide/environments
+user_guide/registry_auth
+user_guide/examples
+user_guide/faq
 user_guide/troubleshooting
+user_guide/loss_report
+```
+
+```{toctree}
+:hidden:
+:maxdepth: 2
+:caption: Tutorials
+
+user_guide/tutorials/snakemake_to_dagman
+user_guide/tutorials/cwl_to_nextflow
+```
+
+```{toctree}
+:hidden:
+:maxdepth: 2
+:caption: Engines
+
+user_guide/engines/overview
+user_guide/engines/snakemake
+user_guide/engines/cwl
+user_guide/engines/nextflow
+user_guide/engines/dagman
+user_guide/engines/wdl
+user_guide/engines/galaxy
+```
+
+```{toctree}
+:hidden:
+:maxdepth: 2
+:caption: CLI Reference
+
+cli/cli_reference
 cli/commands
 cli/convert
 cli/validate
 cli/info
 cli/bco
 cli/cache
+```
+
+```{toctree}
+:hidden:
+:maxdepth: 2
+:caption: Developer Guide
+
 developer/architecture
 developer/loss_mapping
 developer/contributing
@@ -71,4 +114,4 @@ api/index
 * **User Guide** – step-by-step tutorials and best practices.
 * **CLI Reference** – exhaustive help for every command.
 * **Developer Guide** – IR schema, environment pipeline, contributor tips.
-* **Changelog** – project history. 
+* **Changelog** – project history.

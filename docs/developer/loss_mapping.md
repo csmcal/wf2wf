@@ -20,4 +20,4 @@ When a target engine cannot express an IR field, we *never* drop it silently.
 
 ## CLI integration
 * `--fail-on-loss` aborts if unresolved losses ≥ given severity.
-* `wf2wf validate` checks `.loss.json` files. 
+* `wf2wf validate` checks `.loss.json` files.

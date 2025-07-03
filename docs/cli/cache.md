@@ -8,4 +8,4 @@ wf2wf cache COMMAND [ARGS]...
 Commands:
   prune      Remove unused artefacts (see flags)
   list       Show cached items
-``` 
+```

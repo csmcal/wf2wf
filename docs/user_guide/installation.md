@@ -24,4 +24,4 @@ pytest -q
 
 ### Optional extras
 * `.[docs]` – build documentation
-* `.[html]` – Markdown → HTML report generation 
+* `.[html]` – Markdown → HTML report generation

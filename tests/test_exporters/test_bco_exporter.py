@@ -23,7 +23,7 @@ def test_bco_export(tmp_path: Path):
     wf = _dummy_workflow()
     out_path = tmp_path / "workflow.bco.json"
 
-    bco_exporter = load_exporter('bco')
+    bco_exporter = load_exporter("bco")
     bco_exporter.from_workflow(wf, out_path)
 
     # Verify file written and basic structure
@@ -35,21 +35,21 @@ def test_bco_export(tmp_path: Path):
     assert data["io_domain"]["output_subdomain"][0]["id"] == "result_file"
     # New domains
     assert data["parametric_domain"][0]["param"] == "input_file"
-    assert len(data["usability_domain"]) > 0 
+    assert len(data["usability_domain"]) > 0
 
 
 def test_bco_with_cwl_package(tmp_path: Path):
     wf = _dummy_workflow()
     bco_path = tmp_path / "wf.bco.json"
 
-    bco_exporter = load_exporter('bco')
+    bco_exporter = load_exporter("bco")
     bco_exporter.from_workflow(wf, bco_path, include_cwl=True, package=True)
 
     # Verify files
     assert bco_path.exists()
-    cwl_path = bco_path.with_suffix('.cwl')
+    cwl_path = bco_path.with_suffix(".cwl")
     assert cwl_path.exists()
-    pkg_path = bco_path.with_suffix('.tar.gz')
+    pkg_path = bco_path.with_suffix(".tar.gz")
     assert pkg_path.exists()
 
 
@@ -71,4 +71,4 @@ def test_fda_submission_bundle(tmp_path: Path):
         assert any(name.endswith(".bco.json") for name in members)
         assert any(name.endswith(".cwl") for name in members)
         assert "validation.txt" in members
-        assert "README.txt" in members 
+        assert "README.txt" in members

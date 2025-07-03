@@ -15,25 +15,22 @@ __email__ = "cmcallester@gmail.com"
 __description__ = "Convert workflows between different formats using a unified intermediate representation"
 
 # Package metadata
-__all__ = [
-    "__version__",
-    "__author__", 
-    "__email__",
-    "__description__"
-]
+__all__ = ["__version__", "__author__", "__email__", "__description__"]
+
 
 def get_version():
     """Return the current package version."""
     return __version__
 
+
 def get_package_info():
     """Return package information dictionary."""
     return {
-        'name': 'wf2wf',
-        'version': __version__,
-        'author': __author__,
-        'email': __email__,
-        'description': __description__,
-        'url': 'https://github.com/your-org/wf2wf',
-        'license': 'MIT'
-    } 
+        "name": "wf2wf",
+        "version": __version__,
+        "author": __author__,
+        "email": __email__,
+        "description": __description__,
+        "url": "https://github.com/your-org/wf2wf",
+        "license": "MIT",
+    }

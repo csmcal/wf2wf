@@ -1,6 +1,6 @@
 import textwrap
-from pathlib import Path
 from wf2wf.importers import cwl as cwl_importer
+
 
 def test_import_nested_prov(tmp_path):
     cwl_text = textwrap.dedent("""
@@ -19,4 +19,4 @@ def test_import_nested_prov(tmp_path):
     wf = cwl_importer.to_workflow(f)
     assert wf.provenance
     assert wf.provenance.extras["prov:wasGeneratedBy"] == "test-pipeline"
-    assert wf.provenance.extras["prov:entity"] == "ABC123" 
+    assert wf.provenance.extras["prov:entity"] == "ABC123"

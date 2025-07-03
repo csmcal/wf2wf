@@ -4,4 +4,4 @@ input_data:
 
 analysis_threshold: 0.01
 max_iterations: 500
-output_dir: "cwl_results" 
+output_dir: "cwl_results"

@@ -11,4 +11,4 @@
 | Inline JS blocks | 🚧 perf tuning |
 | Subworkflows | ✅ |
 | Schemas `id: #myrecord` | ✅ |
-| Looping (`while`) | ❌ – not in spec | 
+| Looping (`while`) | ❌ – not in spec |

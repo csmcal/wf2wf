@@ -10,4 +10,4 @@ output_file <- snakemake@output[[1]]
 # Create a dummy plot file
 file.create(output_file)
 
-print(paste("Plot created at", output_file)) 
+print(paste("Plot created at", output_file))

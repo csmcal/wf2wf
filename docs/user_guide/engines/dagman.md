@@ -8,4 +8,4 @@
 | PRIORITY directive | ✅ |
 | Custom ClassAds | ✅ via `+` attributes |
 | Rescue DAGs | 🚧 import only |
-| SUBDAG EXTERNAL | ❌ not yet | 
+| SUBDAG EXTERNAL | ❌ not yet |

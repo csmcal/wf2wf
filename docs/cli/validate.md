@@ -9,4 +9,4 @@ Options:
   --schema-only      Only perform JSON-schema validation
   --fail-on-loss     Fail if unresolved losses present
   --help             Show this message and exit.
-``` 
+```
