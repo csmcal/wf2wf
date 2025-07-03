@@ -3,6 +3,7 @@ import subprocess
 import time
 import os
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -87,20 +88,30 @@ def test_bco_sign_generates_etag_and_attestation(monkeypatch, minimal_bco):
     key = minimal_bco.parent / "dummy.key"
     key.write_text("stub")
 
+    # Check if we're running under coverage (which can interfere with file operations on Windows)
+    running_under_coverage = 'coverage' in sys.modules or 'pytest_cov' in sys.modules
+    
     # Run the CLI command
     result = runner.invoke(cli, ["bco", "sign", str(minimal_bco), "--key", str(key)])
     
-    # Add longer delay for Windows file operations to complete
-    time.sleep(0.5)
-    
-    # Force file system sync on Windows
+    # Add extra delay for Windows file operations, especially under coverage
     if os.name == 'nt':
+        delay = 1.0 if running_under_coverage else 0.5
+        time.sleep(delay)
+        
+        # Force garbage collection to close any open handles
+        import gc
+        gc.collect()
+        
+        # Force file system sync on Windows
         try:
             os.sync()
         except AttributeError:
             pass  # sync() not available on all Windows versions
+    else:
+        time.sleep(0.1)
     
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 0, f"CLI command failed: {result.output}\nException: {result.exception}"
 
     # Use retry logic to read the BCO file
     data = _safe_read_json_with_retry(minimal_bco)
@@ -114,8 +125,8 @@ def test_bco_sign_generates_etag_and_attestation(monkeypatch, minimal_bco):
     sig_file = minimal_bco.with_suffix(".sig")
     intoto_file = minimal_bco.with_suffix(".intoto.json")
     
-    # Wait for files to be created and released
-    max_wait = 2.0  # seconds
+    # Wait for files to be created and released with longer timeout on Windows + coverage
+    max_wait = 5.0 if (os.name == 'nt' and running_under_coverage) else 2.0
     start_time = time.time()
     while time.time() - start_time < max_wait:
         try:

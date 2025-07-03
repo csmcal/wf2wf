@@ -19,6 +19,9 @@ import os
 import zipfile
 import hashlib
 import datetime
+import shutil
+import time
+import platform
 
 try:
     import click
@@ -1261,6 +1264,55 @@ if click:
         import shutil
         import subprocess
         import tempfile
+        import time
+
+        def _safe_file_move(src, dst):
+            """Safely move a file with Windows-specific handling."""
+            if platform.system() == 'Windows':
+                # On Windows, ensure the source file is fully written and closed
+                time.sleep(0.1)
+                
+                # Try multiple times if file is locked
+                max_attempts = 5
+                for attempt in range(max_attempts):
+                    try:
+                        # Force close any open handles by explicitly calling gc
+                        import gc
+                        gc.collect()
+                        
+                        # Use copy + delete instead of move for better reliability on Windows
+                        shutil.copy2(src, dst)
+                        
+                        # Verify the copy was successful before deleting
+                        if Path(dst).exists() and Path(dst).stat().st_size > 0:
+                            try:
+                                os.unlink(src)
+                            except (PermissionError, OSError):
+                                # If we can't delete the temp file, that's OK
+                                pass
+                            break
+                        else:
+                            # Fallback to regular move
+                            shutil.move(src, dst)
+                            break
+                    except (PermissionError, OSError) as e:
+                        if attempt < max_attempts - 1:
+                            # Exponential backoff with jitter
+                            wait_time = 0.1 * (2 ** attempt) + (attempt * 0.05)
+                            time.sleep(wait_time)
+                            continue
+                        else:
+                            # Last resort: try a simple copy and ignore the temp file
+                            try:
+                                shutil.copy2(src, dst)
+                                break
+                            except Exception:
+                                raise e
+                
+                # Additional delay after operation
+                time.sleep(0.05)
+            else:
+                shutil.move(src, dst)
 
         data = json.loads(bco_file.read_text())
         if not str(data.get("etag", "")).startswith("sha256:"):
@@ -1277,13 +1329,8 @@ if click:
                 # Ensure data is written to disk before moving (Windows compatibility)
                 if hasattr(os, 'fsync'):
                     os.fsync(tmp.fileno())
-                shutil.move(tmp.name, bco_file)
-            
-            # Add small delay for Windows file system synchronization
-            import platform
-            if platform.system() == 'Windows':
-                import time
-                time.sleep(0.1)
+                
+            _safe_file_move(tmp.name, bco_file)
                 
             if verbose:
                 click.echo(f"Updated etag to sha256:{digest}")
@@ -1311,7 +1358,6 @@ if click:
             raise click.ClickException(f"openssl failed: {e}")
 
         # 3. Generate lightweight in-toto provenance attestation (unsigned JSON)
-        import os
         import json as _json
 
         # Get version using modern importlib.metadata instead of deprecated pkg_resources
@@ -1366,13 +1412,8 @@ if click:
             # Ensure data is written to disk before moving (Windows compatibility)
             if hasattr(os, 'fsync'):
                 os.fsync(tmp2.fileno())
-            shutil.move(tmp2.name, bco_file)
-
-        # Add small delay for Windows file system synchronization
-        import platform
-        if platform.system() == 'Windows':
-            import time
-            time.sleep(0.1)
+                
+        _safe_file_move(tmp2.name, bco_file)
 
         if verbose:
             click.echo(f"Provenance attestation written to {att_path}")
