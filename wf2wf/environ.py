@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 import tarfile
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional, Union
 import json
 import subprocess
 import os
@@ -25,6 +25,10 @@ import string
 import shutil
 import time
 import itertools
+
+import yaml
+
+from wf2wf.core import Env, Task, Workflow
 
 __all__ = [
     "generate_lock_hash",

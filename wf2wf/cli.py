@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 import os
 import zipfile
 import hashlib
@@ -567,7 +567,7 @@ if click:
         platform: str,
         build_cache: str,
         intent: tuple,
-        report_md: Path | None,
+        report_md: Union[Path, None],
         interactive: bool,
     ):
         """Convert workflows between different formats.
@@ -1158,7 +1158,7 @@ if click:
     def bco_package(
         bco_file: Path,
         pkg_format: str,
-        out_path: Path | None,
+        out_path: Union[Path, None],
         verbose: bool,
         interactive: bool,
     ):
@@ -1232,7 +1232,7 @@ if click:
     def bco_sign(
         bco_file: Path,
         priv_key: Path,
-        sig_file: Path | None,
+        sig_file: Union[Path, None],
         verbose: bool,
         interactive: bool,
     ):
@@ -1257,6 +1257,7 @@ if click:
         # 1. Ensure etag digest
         import json
         import hashlib
+        import os
         import shutil
         import subprocess
         import tempfile
@@ -1273,7 +1274,17 @@ if click:
             ) as tmp:
                 json.dump(data, tmp, indent=2)
                 tmp.flush()
+                # Ensure data is written to disk before moving (Windows compatibility)
+                if hasattr(os, 'fsync'):
+                    os.fsync(tmp.fileno())
                 shutil.move(tmp.name, bco_file)
+            
+            # Add small delay for Windows file system synchronization
+            import platform
+            if platform.system() == 'Windows':
+                import time
+                time.sleep(0.1)
+                
             if verbose:
                 click.echo(f"Updated etag to sha256:{digest}")
 
@@ -1330,7 +1341,7 @@ if click:
             "predicateType": "https://wf2wf.dev/Provenance/v0.1",
             "builder": {"id": os.getenv("USER", "wf2wf")},
             "metadata": {
-                "buildStartedOn": datetime.datetime.now(datetime.UTC).isoformat() + "Z"
+                "buildStartedOn": datetime.datetime.now(datetime.timezone.utc).isoformat() + "Z"
             },
             "predicate": {
                 "wf2wf_version": wf2wf_version,
@@ -1352,7 +1363,16 @@ if click:
         ) as tmp2:
             _json.dump(data, tmp2, indent=2)
             tmp2.flush()
+            # Ensure data is written to disk before moving (Windows compatibility)
+            if hasattr(os, 'fsync'):
+                os.fsync(tmp2.fileno())
             shutil.move(tmp2.name, bco_file)
+
+        # Add small delay for Windows file system synchronization
+        import platform
+        if platform.system() == 'Windows':
+            import time
+            time.sleep(0.1)
 
         if verbose:
             click.echo(f"Provenance attestation written to {att_path}")

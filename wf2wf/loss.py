@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List, Dict, Any, TYPE_CHECKING
+from typing import List, Dict, Any, TYPE_CHECKING, Union
 
 if TYPE_CHECKING:
     from wf2wf.core import Workflow
@@ -84,8 +84,8 @@ def write(
     path: Path,
     *,
     wf2wf_version: str = "0.3.0",
-    target_engine: str | None = None,
-    source_checksum: str | None = None,
+    target_engine: Union[str, None] = None,
+    source_checksum: Union[str, None] = None,
 ) -> None:
     if not _LOSSES:
         return

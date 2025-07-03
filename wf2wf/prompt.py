@@ -9,7 +9,7 @@ answers for the process lifetime so users can choose "always" to skip further
 prompts in the same execution.
 """
 
-from typing import Dict
+from typing import Dict, Union
 import os
 
 __all__ = ["ask"]
@@ -39,7 +39,7 @@ def _no_prompt() -> bool:
     return os.getenv("WF2WF_NO_PROMPT", "0") in ("1", "true", "yes", "on")
 
 
-def ask(question: str, *, default: bool | None = None) -> bool:
+def ask(question: str, *, default: Union[bool, None] = None) -> bool:
     """Ask *question* on the terminal, return bool.
 
     • When *default* is None the user **must** answer explicitly.

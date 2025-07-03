@@ -9,7 +9,7 @@ operators.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Union
 import ast
 import signal
 import contextlib
@@ -79,7 +79,7 @@ def _timeout(seconds: float):
 
 
 def evaluate(
-    expr: str, context: Dict[str, Any] | None = None, *, timeout_s: float = 0.1
+    expr: str, context: Union[Dict[str, Any], None] = None, *, timeout_s: float = 0.1
 ) -> Any:
     """Evaluate a CWL/JS expression with the provided *context*.
 

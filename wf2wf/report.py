@@ -1,14 +1,33 @@
 from __future__ import annotations
 
-"""wf2wf.report – simple Markdown conversion report generator (Phase 12.1)"""
+"""wf2wf.report – Markdown report generation for conversions.
+
+This module provides functionality to generate human-readable reports
+documenting workflow conversions, including:
+
+• Source and target workflow information
+• Conversion actions performed
+• Information losses and their handling
+• Generated artifacts and next steps
+• Optional HTML rendering
+
+The reports are designed to be informative for both technical users
+and workflow authors who need to understand what changed during conversion.
+"""
 
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 import textwrap
 import contextvars
+import json
 
-__all__ = ["generate"]
+__all__ = [
+    "generate",
+    "start_collection",
+    "record_action",
+    "record_loss",
+]
 
 
 def _md_table(rows: List[List[str]]) -> str:
