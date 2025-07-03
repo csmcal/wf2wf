@@ -28,7 +28,7 @@ import itertools
 
 import yaml
 
-from wf2wf.core import Env, Task, Workflow
+from wf2wf.core import Task, Workflow
 
 __all__ = [
     "generate_lock_hash",
@@ -78,11 +78,11 @@ class EnvBuildResult(Dict[str, Any]):
 
 
 def prepare_env(
-    env_yaml: str | Path,
+    env_yaml: Union[str, Path],
     *,
-    cache_dir: Path | None = None,
+    cache_dir: Optional[Path] = None,
     verbose: bool = False,
-    dry_run: bool | None = None,
+    dry_run: Optional[bool] = None,
 ) -> EnvBuildResult:
     """Simulate environment build pipeline and return artefact locations.
 
@@ -208,10 +208,10 @@ class OCIBuilder:
         self,
         tarball: Path,
         tag: str,
-        labels: Dict[str, str] | None = None,
+        labels: Optional[Dict[str, str]] = None,
         *,
         push: bool = False,
-        build_cache: str | None = None,
+        build_cache: Optional[str] = None,
     ) -> str:  # noqa: D401
         """Build image, optionally push, and return digest (sha256:...)."""
         raise NotImplementedError
@@ -227,10 +227,10 @@ class DockerBuildxBuilder(OCIBuilder):
         self,
         tarball: Path,
         tag: str,
-        labels: Dict[str, str] | None = None,
+        labels: Optional[Dict[str, str]] = None,
         *,
         push: bool = False,
-        build_cache: str | None = None,
+        build_cache: Optional[str] = None,
         platform: str = "linux/amd64",
     ) -> str:
         labels = labels or {}
@@ -313,7 +313,7 @@ class DockerBuildxBuilder(OCIBuilder):
 class BuildahBuilder(OCIBuilder):
     """Wrapper around *buildah* / *podman build* for sites that prefer it."""
 
-    def __init__(self, *, tool: str | None = None, dry_run: bool = True):
+    def __init__(self, *, tool: Optional[str] = None, dry_run: bool = True):
         # *tool* allows forcing "podman" instead of "buildah".
         self.tool = tool or (shutil.which("buildah") and "buildah" or "podman")
         self.dry_run = dry_run or (os.environ.get("WF2WF_ENVIRON_DRYRUN") == "1")
@@ -322,10 +322,10 @@ class BuildahBuilder(OCIBuilder):
         self,
         tarball: Path,
         tag: str,
-        labels: Dict[str, str] | None = None,
+        labels: Optional[Dict[str, str]] = None,
         *,
         push: bool = False,
-        build_cache: str | None = None,
+        build_cache: Optional[str] = None,
         platform: str = "linux/amd64",
     ) -> str:  # noqa: D401
         if not self.tool:
@@ -389,7 +389,7 @@ def build_oci_image(
     backend: str = "buildx",
     push: bool = False,
     platform: str = "linux/amd64",
-    build_cache: str | None = None,
+    build_cache: Optional[str] = None,
     dry_run: bool = True,
 ) -> tuple[str, str]:
     """High-level helper that picks a builder backend and returns (tag, digest)."""
@@ -463,7 +463,7 @@ class SBOMInfo:
 
 
 def generate_sbom(
-    image_ref: str, out_dir: Path | None = None, *, dry_run: bool = True
+    image_ref: str, out_dir: Optional[Path] = None, *, dry_run: bool = True
 ) -> SBOMInfo:
     """Generate an SPDX SBOM for *image_ref* and return :class:`SBOMInfo`.
 
@@ -532,7 +532,7 @@ def generate_sbom(
 
 
 def convert_to_sif(
-    image_ref: str, *, sif_dir: Path | None = None, dry_run: bool = True
+    image_ref: str, *, sif_dir: Optional[Path] = None, dry_run: bool = True
 ) -> Path:
     """Convert OCI *image_ref* to Apptainer SIF file.
 
@@ -601,8 +601,8 @@ def _image_exists_locally(tag_or_digest: str) -> bool:
 
 
 def _probe_remote_registries(
-    lock_hash: str, registries: list[str] | None = None, *, dry_run: bool = True
-) -> str | None:
+    lock_hash: str, registries: Optional[List[str]] = None, *, dry_run: bool = True
+) -> Optional[str]:
     """Return image digest if an image with *lock_hash* label exists in any *registries*.
 
     The implementation is intentionally lightweight: in *dry_run* mode we always
@@ -644,14 +644,14 @@ def _probe_remote_registries(
 
 
 def build_or_reuse_env_image(
-    env_yaml: str | Path,
+    env_yaml: Union[str, Path],
     *,
-    registry: str | None = None,
+    registry: Optional[str] = None,
     push: bool = False,
     backend: str = "buildx",
     dry_run: bool = True,
-    build_cache: str | None = None,
-    cache_dir: Path | None = None,
+    build_cache: Optional[str] = None,
+    cache_dir: Optional[Path] = None,
 ) -> Dict[str, str]:
     """High-level helper: build image for *env_yaml* unless identical hash already indexed.
 
