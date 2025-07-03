@@ -2,6 +2,7 @@
 
 from wf2wf.core import Workflow, Task, ResourceSpec, EnvironmentSpec
 from wf2wf.exporters.snakemake import from_workflow
+import os
 
 
 class TestSnakemakeExporter:

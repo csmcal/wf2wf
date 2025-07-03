@@ -1,5 +1,6 @@
 import json
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,8 @@ def _fake_openssl(cmd, *a, **kw):  # helper for monkeypatch
     if "-out" in cmd:
         out_idx = cmd.index("-out") + 1
         sig_path = Path(cmd[out_idx])
+        # Add a small delay to prevent Windows file locking issues
+        time.sleep(0.1)
         sig_path.write_bytes(b"sig")
     return 0
 
@@ -59,6 +62,9 @@ def test_bco_sign_generates_etag_and_attestation(monkeypatch, minimal_bco):
 
     result = runner.invoke(cli, ["bco", "sign", str(minimal_bco), "--key", str(key)])
     assert result.exit_code == 0, result.output
+
+    # Add a small delay to ensure file operations complete on Windows
+    time.sleep(0.2)
 
     # BCO file should now have sha256 etag and extension_domain reference
     data = json.loads(minimal_bco.read_text())

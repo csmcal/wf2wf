@@ -56,6 +56,11 @@ def _timeout(seconds: float):
         yield
         return
 
+    # Windows doesn't have SIGALRM, so we skip timeout on Windows
+    if not hasattr(signal, 'SIGALRM'):
+        yield
+        return
+
     def _handler(signum, frame):  # noqa: D401 – local handler
         raise ExpressionTimeout("expression evaluation timed out")
 

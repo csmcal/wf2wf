@@ -388,7 +388,8 @@ def _generate_rule(
             script_dir.mkdir(parents=True, exist_ok=True)
             script_dest = script_dir / Path(task.script).name
             # Note: In real implementation, you might want to copy the script file
-            script_path = str(script_dest.relative_to(script_dir.parent))
+            # Use forward slashes consistently for cross-platform compatibility
+            script_path = str(script_dest.relative_to(script_dir.parent)).replace("\\", "/")
 
         lines.append(f'    script: "{script_path}"')
 
