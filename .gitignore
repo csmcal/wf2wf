@@ -147,16 +147,16 @@ temp_*/
 # Generated during CI/testing
 .test_artifacts/
 
-# Test files that should not be in base directory
-demo_*.nf
-demo_*.json
-test_*.nf
-test_*.json
-test_*.dag
-test_*.sub
-test_*.smk
-test_*.yaml
-test_*.yml
-cleanup_test_files.py
-test_ci_locally.py
-test_local.sh
+# Test files that should not be in base directory (root level only)
+/demo_*.nf
+/demo_*.json
+/test_*.nf
+/test_*.json
+/test_*.dag
+/test_*.sub
+/test_*.smk
+/test_*.yaml
+/test_*.yml
+/cleanup_test_files.py
+/test_ci_locally.py
+/test_local.sh

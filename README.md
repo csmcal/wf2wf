@@ -2,6 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![CI](https://github.com/csmcal/wf2wf/actions/workflows/ci.yml/badge.svg)](https://github.com/csmcal/wf2wf/actions/workflows/ci.yml)
+[![Docs](https://github.com/csmcal/wf2wf/actions/workflows/docs.yml/badge.svg)](https://csmcal.github.io/wf2wf/)
 [![PyPI](https://img.shields.io/pypi/v/wf2wf.svg)](https://pypi.org/project/wf2wf)
 [![codecov](https://codecov.io/gh/csmcal/wf2wf/branch/main/graph/badge.svg)](https://codecov.io/gh/csmcal/wf2wf)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)

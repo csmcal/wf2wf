@@ -1,0 +1,180 @@
+{
+  "name": "sample_workflow",
+  "version": "1.0",
+  "label": "Sample Test Workflow",
+  "doc": "A sample workflow for testing purposes",
+  "tasks": {
+    "prepare_data": {
+      "id": "prepare_data",
+      "label": "Prepare Data",
+      "doc": "Prepare input data for analysis",
+      "command": "python prepare_data.py --input raw_data.txt --output prepared_data.txt",
+      "inputs": [
+        {
+          "id": "raw_data",
+          "type": "File",
+          "label": "Raw input data"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "prepared_data",
+          "type": "File",
+          "label": "Prepared data file"
+        }
+      ],
+      "resources": {
+        "cpu": 1,
+        "mem_mb": 1024,
+        "disk_mb": 0,
+        "gpu": 0,
+        "gpu_mem_mb": 0,
+        "time_s": 0,
+        "threads": 1,
+        "extra": {}
+      },
+      "environment": {
+        "conda": null,
+        "container": null,
+        "workdir": null,
+        "env_vars": {},
+        "modules": []
+      },
+      "requirements": [],
+      "hints": [],
+      "provenance": null,
+      "documentation": null,
+      "intent": [],
+      "params": {},
+      "priority": 0,
+      "retry": 0,
+      "meta": {}
+    },
+    "analyze": {
+      "id": "analyze",
+      "label": "Analyze Data",
+      "doc": "Perform analysis on prepared data",
+      "command": "python analyze.py --input prepared_data.txt --output analysis_results.txt",
+      "inputs": [
+        {
+          "id": "prepared_data",
+          "type": "File",
+          "label": "Prepared data file"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "analysis_results",
+          "type": "File",
+          "label": "Analysis results"
+        }
+      ],
+      "resources": {
+        "cpu": 2,
+        "mem_mb": 2048,
+        "disk_mb": 0,
+        "gpu": 0,
+        "gpu_mem_mb": 0,
+        "time_s": 0,
+        "threads": 2,
+        "extra": {}
+      },
+      "environment": {
+        "conda": null,
+        "container": null,
+        "workdir": null,
+        "env_vars": {},
+        "modules": []
+      },
+      "requirements": [],
+      "hints": [],
+      "provenance": null,
+      "documentation": null,
+      "intent": [],
+      "params": {},
+      "priority": 0,
+      "retry": 0,
+      "meta": {}
+    },
+    "generate_report": {
+      "id": "generate_report",
+      "label": "Generate Report",
+      "doc": "Generate final report from analysis results",
+      "command": "python generate_report.py --input analysis_results.txt --output final_report.pdf",
+      "inputs": [
+        {
+          "id": "analysis_results",
+          "type": "File",
+          "label": "Analysis results"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "final_report",
+          "type": "File",
+          "label": "Final report"
+        }
+      ],
+      "resources": {
+        "cpu": 1,
+        "mem_mb": 1024,
+        "disk_mb": 0,
+        "gpu": 0,
+        "gpu_mem_mb": 0,
+        "time_s": 0,
+        "threads": 1,
+        "extra": {}
+      },
+      "environment": {
+        "conda": null,
+        "container": null,
+        "workdir": null,
+        "env_vars": {},
+        "modules": []
+      },
+      "requirements": [],
+      "hints": [],
+      "provenance": null,
+      "documentation": null,
+      "intent": [],
+      "params": {},
+      "priority": 0,
+      "retry": 0,
+      "meta": {}
+    }
+  },
+  "edges": [
+    {
+      "parent": "prepare_data",
+      "child": "analyze"
+    },
+    {
+      "parent": "analyze",
+      "child": "generate_report"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "raw_data",
+      "type": "File",
+      "label": "Raw input data file"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "final_report",
+      "type": "File",
+      "label": "Final analysis report"
+    }
+  ],
+  "requirements": [],
+  "hints": [],
+  "provenance": null,
+  "documentation": null,
+  "intent": [],
+  "cwl_version": null,
+  "bco_spec": null,
+  "config": {},
+  "meta": {},
+  "loss_map": []
+}
