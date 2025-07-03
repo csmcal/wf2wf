@@ -28,7 +28,14 @@ classifiers = [
 authors = [
   {name = "wf2wf contributors", email = "maintainers@wf2wf.dev"}
 ]
-license = "MIT"
+license = {text = "MIT"}
+
+[project.urls]
+Homepage = "https://csmcal.github.io/wf2wf/"
+Documentation = "https://csmcal.github.io/wf2wf/"
+Repository = "https://github.com/csmcal/wf2wf"
+Issues = "https://github.com/csmcal/wf2wf/issues"
+Changelog = "https://github.com/csmcal/wf2wf/blob/main/CHANGELOG.md"
 
 dependencies = [
   "snakemake>=6.0",

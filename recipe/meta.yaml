@@ -32,7 +32,7 @@ test:
     - wf2wf --help
 
 about:
-  home: https://github.com/your-org/wf2wf
+  home: https://github.com/csmcal/wf2wf
   summary: "Universal workflow-format converter built around a loss-preserving intermediate representation."
   license: MIT
   license_file: LICENSE

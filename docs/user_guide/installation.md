@@ -9,9 +9,14 @@
 pip install wf2wf
 ```
 
-## Conda (once feedstock is live)
+## Conda
 ```bash
-conda install -c conda-forge wf2wf
+# Coming soon - conda-forge feedstock in progress
+# conda install -c conda-forge wf2wf
+```
+
+```{note}
+The conda-forge package is currently under review. For now, use the PyPI installation method.
 ```
 
 ## Development install

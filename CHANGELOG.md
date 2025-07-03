@@ -23,5 +23,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - CLI flag refinements; global prompt helper.
 
-[Unreleased]: https://github.com/your-org/wf2wf/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/your-org/wf2wf/releases/tag/v1.0.0
+[Unreleased]: https://github.com/csmcal/wf2wf/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/csmcal/wf2wf/releases/tag/v1.0.0

@@ -7,7 +7,7 @@ Thanks for taking the time to contribute!  This document explains the preferred 
 ## 1. Getting the code
 
 ```bash
-git clone https://github.com/your-org/wf2wf.git
+git clone https://github.com/csmcal/wf2wf.git
 cd wf2wf
 ```
 

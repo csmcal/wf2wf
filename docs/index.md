@@ -108,6 +108,14 @@ developer/versioning
 api/index
 ```
 
+```{toctree}
+:hidden:
+:maxdepth: 1
+:caption: Project
+
+CHANGELOG <https://github.com/csmcal/wf2wf/blob/main/CHANGELOG.md>
+```
+
 ---
 
 ## Sections
@@ -115,4 +123,4 @@ api/index
 * **User Guide** – step-by-step tutorials and best practices.
 * **CLI Reference** – exhaustive help for every command.
 * **Developer Guide** – IR schema, environment pipeline, contributor tips.
-* **Changelog** – project history.
+* **Changelog** – project history and release notes.

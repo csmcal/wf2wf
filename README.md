@@ -87,7 +87,7 @@ conda install -c conda-forge wf2wf
 Development install:
 
 ```bash
-git clone https://github.com/your-org/wf2wf.git && cd wf2wf
+git clone https://github.com/csmcal/wf2wf.git && cd wf2wf
 pip install -e .[dev]
 pre-commit install
 pytest -q

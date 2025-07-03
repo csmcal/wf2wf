@@ -31,6 +31,6 @@ def get_package_info():
         "author": __author__,
         "email": __email__,
         "description": __description__,
-        "url": "https://github.com/your-org/wf2wf",
+        "url": "https://github.com/csmcal/wf2wf",
         "license": "MIT",
     }

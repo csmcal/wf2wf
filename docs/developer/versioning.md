@@ -67,8 +67,8 @@ After running `bumpver update`, manually update the CHANGELOG.md:
 
 2. Update the links at the bottom:
    ```markdown
-   [Unreleased]: https://github.com/your-org/wf2wf/compare/v1.0.1...HEAD
-   [1.0.1]: https://github.com/your-org/wf2wf/compare/v1.0.0...v1.0.1
+   [Unreleased]: https://github.com/csmcal/wf2wf/compare/v1.0.1...HEAD
+   [1.0.1]: https://github.com/csmcal/wf2wf/compare/v1.0.0...v1.0.1
    ```
 
 ### Test Before Release
