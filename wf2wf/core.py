@@ -452,7 +452,7 @@ class Task:
     # Runtime helpers (non-persistent)
     # ------------------------------------------------------------------
 
-    def is_active(self, context: Dict[str, Any] | None = None) -> bool:
+    def is_active(self, context: Optional[Dict[str, Any]] = None) -> bool:
         """Evaluate the *when* expression (if any) against *context* variables."""
 
         from wf2wf.expression import evaluate as _eval  # lazy import to avoid cycles
@@ -566,14 +566,14 @@ class Workflow:
 
         return json.dumps(self.to_dict(), indent=indent, sort_keys=True)
 
-    def save_json(self, path: str | Path, *, indent: int = 2):
+    def save_json(self, path: Union[str, Path], *, indent: int = 2):
         """Write JSON representation to *path* (creates parent dirs)."""
         _p = Path(path)
         _p.parent.mkdir(parents=True, exist_ok=True)
         _p.write_text(self.to_json(indent=indent))
 
     @classmethod
-    def load_json(cls, path: str | Path):
+    def load_json(cls, path: Union[str, Path]):
         """Load Workflow from a JSON file produced by :py:meth:`save_json`."""
         import json
         from pathlib import Path as _P

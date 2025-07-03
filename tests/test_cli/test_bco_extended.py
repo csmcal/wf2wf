@@ -1,9 +1,6 @@
 import json
 import subprocess
-import time
-import os
 from pathlib import Path
-import sys
 
 import pytest
 
@@ -29,39 +26,12 @@ def minimal_bco(tmp_path):
     return path
 
 
-def _safe_read_json_with_retry(path, max_retries=5, delay=0.1):
-    """Safely read JSON file with retries for Windows file locking issues."""
-    for attempt in range(max_retries):
-        try:
-            return json.loads(path.read_text())
-        except (PermissionError, OSError) as e:
-            if attempt < max_retries - 1:
-                time.sleep(delay * (2 ** attempt))  # Exponential backoff
-                continue
-            raise e
-
-
 def _fake_openssl(cmd, *a, **kw):  # helper for monkeypatch
     if "-out" in cmd:
         out_idx = cmd.index("-out") + 1
         sig_path = Path(cmd[out_idx])
-        # Add a small delay to prevent Windows file locking issues
-        time.sleep(0.1)
-        
-        # Ensure parent directory exists
         sig_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Write with retry logic for Windows
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                sig_path.write_bytes(b"sig")
-                break
-            except (PermissionError, OSError):
-                if attempt < max_retries - 1:
-                    time.sleep(0.1 * (attempt + 1))
-                    continue
-                raise
+        sig_path.write_bytes(b"sig")
     return 0
 
 
@@ -87,57 +57,23 @@ def test_bco_sign_generates_etag_and_attestation(monkeypatch, minimal_bco):
 
     key = minimal_bco.parent / "dummy.key"
     key.write_text("stub")
-
-    # Check if we're running under coverage (which can interfere with file operations on Windows)
-    running_under_coverage = 'coverage' in sys.modules or 'pytest_cov' in sys.modules
     
     # Run the CLI command
     result = runner.invoke(cli, ["bco", "sign", str(minimal_bco), "--key", str(key)])
     
-    # Add extra delay for Windows file operations, especially under coverage
-    if os.name == 'nt':
-        delay = 1.0 if running_under_coverage else 0.5
-        time.sleep(delay)
-        
-        # Force garbage collection to close any open handles
-        import gc
-        gc.collect()
-        
-        # Force file system sync on Windows
-        try:
-            os.sync()
-        except AttributeError:
-            pass  # sync() not available on all Windows versions
-    else:
-        time.sleep(0.1)
-    
     assert result.exit_code == 0, f"CLI command failed: {result.output}\nException: {result.exception}"
 
-    # Use retry logic to read the BCO file
-    data = _safe_read_json_with_retry(minimal_bco)
+    # Check the BCO file was updated
+    data = json.loads(minimal_bco.read_text())
     assert str(data.get("etag", "")).startswith("sha256:"), "etag not updated"
     ext = data.get("extension_domain", [])
     assert any(
         e.get("namespace") == "wf2wf:provenance" for e in ext
     ), "attestation ref missing"
 
-    # Check files exist with retry logic
+    # Check files exist
     sig_file = minimal_bco.with_suffix(".sig")
     intoto_file = minimal_bco.with_suffix(".intoto.json")
-    
-    # Wait for files to be created and released with longer timeout on Windows + coverage
-    max_wait = 5.0 if (os.name == 'nt' and running_under_coverage) else 2.0
-    start_time = time.time()
-    while time.time() - start_time < max_wait:
-        try:
-            if sig_file.exists() and intoto_file.exists():
-                # Try to read them to ensure they're not locked
-                sig_file.read_bytes()
-                intoto_file.read_text()
-                break
-        except (PermissionError, OSError):
-            pass
-        time.sleep(0.1)
     
     assert sig_file.exists(), "Signature file not created"
     assert intoto_file.exists(), "Attestation file not created"

@@ -55,12 +55,12 @@ def generate(
     dst_path: Path,
     wf_before: "Any" = None,  # noqa: ANN401 – keep import-free
     wf_after: "Any" = None,
-    losses: List[Dict[str, Any]] | None = None,
-    actions: List[str] | None = None,
-    artefacts: List[Path] | None = None,
-    next_steps: list[str] | None = None,
+    losses: Optional[List[Dict[str, Any]]] = None,
+    actions: Optional[List[str]] = None,
+    artefacts: Optional[List[Path]] = None,
+    next_steps: Optional[List[str]] = None,
     extra_notes: str = "",
-    html_path: Path | bool | None = None,
+    html_path: Union[Path, bool, None] = None,
 ) -> Path:
     """Write a conversion report to *md_path* and return it.
 

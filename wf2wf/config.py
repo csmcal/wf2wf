@@ -12,7 +12,7 @@ Access via wf2wf.config.get('section.key', default).
 
 from pathlib import Path
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Union, Optional
 
 try:
     import tomllib  # Python ≥3.11
@@ -65,7 +65,7 @@ def reload() -> None:
 reload()
 
 
-def get(key: str, default: Any | None = None) -> Any:
+def get(key: str, default: Optional[Any] = None) -> Any:
     """Dotted-key lookup with *default* fallback."""
     cur: Any = CONFIG
     for part in key.split("."):

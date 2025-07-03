@@ -983,7 +983,7 @@ if click:
             artefact_list = [output_path] + extra_artefacts
 
             # HTML generation option
-            html_opt: Path | bool | None = None
+            html_opt: Union[Path, bool, None] = None
             env_html = os.environ.get("WF2WF_REPORT_HTML")
             if env_html is not None:
                 html_opt = (
@@ -1264,55 +1264,6 @@ if click:
         import shutil
         import subprocess
         import tempfile
-        import time
-
-        def _safe_file_move(src, dst):
-            """Safely move a file with Windows-specific handling."""
-            if platform.system() == 'Windows':
-                # On Windows, ensure the source file is fully written and closed
-                time.sleep(0.1)
-                
-                # Try multiple times if file is locked
-                max_attempts = 5
-                for attempt in range(max_attempts):
-                    try:
-                        # Force close any open handles by explicitly calling gc
-                        import gc
-                        gc.collect()
-                        
-                        # Use copy + delete instead of move for better reliability on Windows
-                        shutil.copy2(src, dst)
-                        
-                        # Verify the copy was successful before deleting
-                        if Path(dst).exists() and Path(dst).stat().st_size > 0:
-                            try:
-                                os.unlink(src)
-                            except (PermissionError, OSError):
-                                # If we can't delete the temp file, that's OK
-                                pass
-                            break
-                        else:
-                            # Fallback to regular move
-                            shutil.move(src, dst)
-                            break
-                    except (PermissionError, OSError) as e:
-                        if attempt < max_attempts - 1:
-                            # Exponential backoff with jitter
-                            wait_time = 0.1 * (2 ** attempt) + (attempt * 0.05)
-                            time.sleep(wait_time)
-                            continue
-                        else:
-                            # Last resort: try a simple copy and ignore the temp file
-                            try:
-                                shutil.copy2(src, dst)
-                                break
-                            except Exception:
-                                raise e
-                
-                # Additional delay after operation
-                time.sleep(0.05)
-            else:
-                shutil.move(src, dst)
 
         data = json.loads(bco_file.read_text())
         if not str(data.get("etag", "")).startswith("sha256:"):
@@ -1326,11 +1277,8 @@ if click:
             ) as tmp:
                 json.dump(data, tmp, indent=2)
                 tmp.flush()
-                # Ensure data is written to disk before moving (Windows compatibility)
-                if hasattr(os, 'fsync'):
-                    os.fsync(tmp.fileno())
                 
-            _safe_file_move(tmp.name, bco_file)
+            shutil.move(tmp.name, bco_file)
                 
             if verbose:
                 click.echo(f"Updated etag to sha256:{digest}")
@@ -1409,11 +1357,8 @@ if click:
         ) as tmp2:
             _json.dump(data, tmp2, indent=2)
             tmp2.flush()
-            # Ensure data is written to disk before moving (Windows compatibility)
-            if hasattr(os, 'fsync'):
-                os.fsync(tmp2.fileno())
                 
-        _safe_file_move(tmp2.name, bco_file)
+        shutil.move(tmp2.name, bco_file)
 
         if verbose:
             click.echo(f"Provenance attestation written to {att_path}")
