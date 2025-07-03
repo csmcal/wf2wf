@@ -44,6 +44,7 @@ dev = [
   "pytest-cov",
   "pre-commit",
   "ruff",
+  "bumpver",
 ]
 html = ["markdown>=3.5"]
 docs = [
