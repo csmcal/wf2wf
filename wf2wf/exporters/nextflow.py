@@ -11,7 +11,7 @@ It generates main.nf files, module files, and nextflow.config files with:
 
 import re
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, Union
 
 from wf2wf.core import Workflow, Task, ParameterSpec
 from wf2wf.loss import (
@@ -32,7 +32,7 @@ def _param_identifier(param: Any) -> str:
     return str(param)
 
 
-def from_workflow(wf: Workflow, out_file: str | Path, **opts: Any):
+def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any):
     """Convert a wf2wf Workflow to Nextflow DSL2.
 
     Args:

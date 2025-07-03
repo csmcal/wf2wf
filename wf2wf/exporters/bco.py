@@ -13,7 +13,7 @@ Usage:
 """
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
 import json
 from datetime import datetime, timezone
 import tarfile
@@ -161,7 +161,7 @@ def _make_error_domain() -> Dict[str, Any]:
 # -----------------------------------------------------------------------------
 
 
-def from_workflow(wf: Workflow, out_file: str | Path, **opts: Any):  # noqa: N802 – public API name
+def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any):  # noqa: N802 – public API name
     """Export *wf* to a BioCompute Object JSON document.
 
     Args:

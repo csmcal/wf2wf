@@ -13,10 +13,13 @@ Enhanced features supported:
 - BCO integration for regulatory compliance
 """
 
-import yaml
+from __future__ import annotations
+
 import json
+import os
+import yaml
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from wf2wf.core import (
     Workflow,
@@ -49,7 +52,7 @@ _GLOBAL_SCHEMA_REGISTRY: Dict[str, Dict[str, Any]] = {}
 # -----------------------------------------------------------------------------
 
 
-def from_workflow(wf: Workflow, out_file: str | Path, **opts: Any) -> None:
+def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any) -> None:
     """Export a wf2wf workflow to CWL v1.2 format with full feature preservation.
 
     Args:
@@ -362,8 +365,8 @@ def _generate_workflow_inputs_enhanced(wf: Workflow) -> Dict[str, Any]:
         elif isinstance(value, float):
             input_def["type"] = "float"
         elif isinstance(value, str):
-            # Check if it looks like a file path
-            if "." in value and ("/" in value or "\\" in value):
+            # Check if it looks like a file path (platform-agnostic)
+            if "." in value and (os.sep in value or (os.altsep and os.altsep in value)):
                 input_def["type"] = "File"
             else:
                 input_def["type"] = "string"

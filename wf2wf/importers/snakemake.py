@@ -19,7 +19,7 @@ import textwrap
 import yaml
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Union
 from collections import defaultdict
 
 from wf2wf.core import Workflow, Task, ResourceSpec, EnvironmentSpec
@@ -30,7 +30,7 @@ from wf2wf.core import Workflow, Task, ResourceSpec, EnvironmentSpec
 # ---------------------------------------------------------------------------
 
 
-def to_workflow(path: str | Path, **opts: Any) -> Workflow:
+def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
     """Convert Snakefile at *path* into a Workflow IR object.
 
     Parameters
@@ -342,7 +342,7 @@ def to_workflow(path: str | Path, **opts: Any) -> Workflow:
     return wf
 
 
-def to_dag_info(*, snakefile_path: str | Path, **kwargs) -> Dict[str, Any]:
+def to_dag_info(*, snakefile_path: Union[str, Path], **kwargs) -> Dict[str, Any]:
     """Legacy function for backward compatibility.
 
     Converts Snakefile to the old dag_info format by first creating a Workflow

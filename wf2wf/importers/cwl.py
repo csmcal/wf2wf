@@ -13,6 +13,8 @@ Enhanced features supported:
 - BCO integration for regulatory compliance
 """
 
+from __future__ import annotations
+
 import json
 import yaml
 import subprocess
@@ -36,7 +38,7 @@ from wf2wf.loss import apply as loss_apply
 from wf2wf.loss import compute_checksum
 
 
-def to_workflow(path: str | Path, **opts: Any) -> Workflow:
+def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
     """Import a CWL workflow file and convert to wf2wf IR with full feature preservation.
 
     Args:

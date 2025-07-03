@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import yaml
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
 from wf2wf.core import Workflow, Task, ResourceSpec, ParameterSpec
 from wf2wf.loss import (
@@ -23,7 +23,7 @@ from wf2wf.loss import (
 )
 
 
-def from_workflow(wf: Workflow, out_file: str | Path, **opts: Any):
+def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any):
     """Convert Workflow IR to Snakemake format.
 
     Parameters

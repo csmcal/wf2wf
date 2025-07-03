@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Union
 
 from wf2wf.core import Workflow, Task, ResourceSpec, EnvironmentSpec
 
 
-def to_workflow(path: str | Path, **opts: Any) -> Workflow:
+def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
     """Convert DAGMan file at *path* into a Workflow IR object.
 
     Parameters

@@ -11,9 +11,11 @@ Features supported:
 - Workflow annotations and metadata
 """
 
+from __future__ import annotations
+
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from wf2wf.core import (
     Workflow,
@@ -26,7 +28,7 @@ from wf2wf.core import (
 )
 
 
-def to_workflow(path: str | Path, **opts: Any) -> Workflow:
+def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
     """Import a Galaxy workflow file and convert to wf2wf IR.
 
     Args:

@@ -12,7 +12,7 @@ Features supported:
 """
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Union
 
 from wf2wf.core import Workflow, Task, ResourceSpec, EnvironmentSpec
 
@@ -27,7 +27,7 @@ from wf2wf.loss import (
 )
 
 
-def from_workflow(wf: Workflow, out_file: str | Path, **opts: Any) -> None:
+def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any) -> None:
     """Export a wf2wf workflow to WDL format.
 
     Args:

@@ -11,12 +11,12 @@ It parses main.nf files, module files, and nextflow.config files to extract:
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional, Union
 
 from wf2wf.core import Workflow, Task, ResourceSpec, EnvironmentSpec
 
 
-def to_workflow(path: str | Path, **opts: Any) -> Workflow:
+def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
     """Convert a Nextflow workflow to wf2wf IR.
 
     Args:
