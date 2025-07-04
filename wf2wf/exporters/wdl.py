@@ -363,15 +363,16 @@ def _generate_wdl_runtime(
     resources: ResourceSpec, environment: EnvironmentSpec
 ) -> Dict[str, str]:
     """Generate WDL runtime specification."""
+    from wf2wf.environ import format_container_for_target_format, get_environment_metadata
 
     runtime = {}
 
     # Add CPU specification
-    if resources.cpu > 1:
+    if resources.cpu and resources.cpu > 1:
         runtime["cpu"] = str(resources.cpu)
 
     # Add memory specification
-    if resources.mem_mb > 0:
+    if resources.mem_mb and resources.mem_mb > 0:
         if resources.mem_mb >= 1024:
             memory_gb = resources.mem_mb / 1024
             runtime["memory"] = f"{memory_gb:.1f} GB"
@@ -379,28 +380,26 @@ def _generate_wdl_runtime(
             runtime["memory"] = f"{resources.mem_mb} MB"
 
     # Add disk specification
-    if resources.disk_mb > 0:
+    if resources.disk_mb and resources.disk_mb > 0:
         disk_gb = resources.disk_mb / 1024
         runtime["disks"] = f"local-disk {disk_gb:.0f} HDD"
 
     # Add GPU specification (if supported)
-    if resources.gpu > 0:
+    if resources.gpu and resources.gpu > 0:
         runtime["gpu"] = str(resources.gpu)
 
     # Add Docker/SIF container
     if environment.container:
-        container = environment.container
-        if container.startswith("docker://"):
-            container = container[9:]  # Remove 'docker://' prefix
+        container = format_container_for_target_format(environment.container, "wdl")
         runtime["docker"] = container
 
     # SBOM/SIF extra
-    sbom_path = environment.env_vars.get("WF2WF_SBOM") if environment else None
-    sif_path = environment.env_vars.get("WF2WF_SIF") if environment else None
-    if sbom_path:
-        runtime["wf2wf_sbom"] = sbom_path
-    if sif_path:
-        runtime["wf2wf_sif"] = sif_path
+    if environment:
+        metadata = get_environment_metadata(environment.env_vars)
+        if metadata["sbom_path"]:
+            runtime["wf2wf_sbom"] = metadata["sbom_path"]
+        if metadata["sif_path"]:
+            runtime["wf2wf_sif"] = metadata["sif_path"]
 
     return runtime
 

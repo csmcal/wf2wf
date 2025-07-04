@@ -25,6 +25,7 @@ import string
 import shutil
 import time
 import itertools
+import textwrap
 
 import yaml
 
@@ -41,6 +42,18 @@ __all__ = [
     "convert_to_sif",
     "build_or_reuse_env_image",
     "prune_cache",
+    "is_docker_available",
+    "check_docker_image_exists",
+    "build_docker_image_from_conda_env",
+    "push_docker_image",
+    "build_and_push_conda_env_images",
+    "convert_docker_images_to_apptainer",
+    "normalize_container_spec",
+    "extract_sbom_path",
+    "extract_sif_path",
+    "extract_sbom_digest",
+    "format_container_for_target_format",
+    "get_environment_metadata",
 ]
 
 
@@ -48,6 +61,296 @@ _DEFAULT_CACHE_DIR = Path.home() / ".cache" / "wf2wf" / "envs"
 # Allow overriding cache directory (helps test isolation and CI sandboxing)
 _CACHE_DIR = Path(os.getenv("WF2WF_CACHE_DIR", str(_DEFAULT_CACHE_DIR))).expanduser()
 _INDEX_FILE = _CACHE_DIR / "env_index.json"
+
+
+def is_docker_available() -> bool:
+    """Check if Docker is both installed and the daemon is running."""
+    if not shutil.which("docker"):
+        return False
+    
+    try:
+        subprocess.run(
+            ["docker", "info"], 
+            stdout=subprocess.DEVNULL, 
+            stderr=subprocess.DEVNULL, 
+            timeout=5
+        )
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def check_docker_image_exists(image_url: str, *, verbose: bool = False) -> bool:
+    """Check if a Docker image exists in a remote registry using docker manifest inspect."""
+    if not is_docker_available():
+        if verbose:
+            print("Docker not available, cannot check image existence")
+        return False
+    
+    try:
+        subprocess.run(
+            ["docker", "manifest", "inspect", image_url],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
+def build_docker_image_from_conda_env(
+    env_yaml_path: Path,
+    image_url: str,
+    *,
+    verbose: bool = False,
+    debug: bool = False,
+    dry_run: bool = False,
+) -> bool:
+    """
+    Build a Docker image from a conda environment YAML file.
+    
+    Args:
+        env_yaml_path: Path to the conda environment YAML file
+        image_url: Full Docker image URL (registry/repo:tag)
+        verbose: Enable verbose output
+        debug: Enable debug output
+        dry_run: If True, only show what would be done without actually building
+        
+    Returns:
+        True if build was successful, False otherwise
+    """
+    if not is_docker_available():
+        print("❌ Docker not available. Cannot build image.")
+        return False
+    
+    if dry_run:
+        print(f"DRY RUN: Would build Docker image {image_url} from {env_yaml_path}")
+        return True
+    
+    print(f"Building Docker image: {image_url}")
+    
+    # Create temporary build context
+    with tempfile.TemporaryDirectory() as build_context:
+        build_context_path = Path(build_context)
+        
+        if debug:
+            print(f"DEBUG: Using build context: {build_context_path}")
+        
+        # Copy env file to build context
+        shutil.copy(env_yaml_path, build_context_path)
+        
+        # Generate Dockerfile
+        dockerfile_content = f"""
+FROM continuumio/miniconda3:latest
+
+# Copy the environment file
+COPY {env_yaml_path.name} /tmp/environment.yml
+
+# Create the conda environment
+RUN conda env create -f /tmp/environment.yml
+
+# Make RUN commands use the new environment
+SHELL ["conda", "run", "-n", "{env_yaml_path.stem}", "/bin/bash", "-c"]
+
+# The code to run when container is started
+ENTRYPOINT ["conda", "run", "-n", "{env_yaml_path.stem}"]
+"""
+        
+        dockerfile_path = build_context_path / "Dockerfile"
+        dockerfile_path.write_text(textwrap.dedent(dockerfile_content))
+        
+        if debug:
+            print(f"DEBUG: Generated Dockerfile at {dockerfile_path}")
+            print(f"DEBUG: Dockerfile contents:\n{dockerfile_path.read_text()}")
+        
+        # Build the image
+        try:
+            build_cmd = ["docker", "build", "-t", image_url, "."]
+            if debug:
+                print(f"DEBUG: Build command: {' '.join(build_cmd)}")
+            
+            proc = subprocess.Popen(
+                build_cmd,
+                cwd=build_context_path,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            
+            if verbose or debug:
+                for line in iter(proc.stdout.readline, ""):
+                    prefix = "DEBUG: " if debug else "    "
+                    print(f"{prefix}{line.strip()}")
+            else:
+                proc.communicate()  # Wait for completion without showing output
+            
+            proc.wait()
+            if proc.returncode != 0:
+                print(f"❌ Docker build failed for {image_url}")
+                return False
+            
+            print(f"✅ Docker build successful: {image_url}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Unexpected error during Docker build: {e}")
+            if debug:
+                import traceback
+                print(f"DEBUG: Full traceback:\n{traceback.format_exc()}")
+            return False
+
+
+def push_docker_image(
+    image_url: str,
+    *,
+    verbose: bool = False,
+    debug: bool = False,
+    dry_run: bool = False,
+) -> bool:
+    """
+    Push a Docker image to a registry.
+    
+    Args:
+        image_url: Full Docker image URL (registry/repo:tag)
+        verbose: Enable verbose output
+        debug: Enable debug output
+        dry_run: If True, only show what would be done without actually pushing
+        
+    Returns:
+        True if push was successful, False otherwise
+    """
+    if not is_docker_available():
+        print("❌ Docker not available. Cannot push image.")
+        return False
+    
+    if dry_run:
+        print(f"DRY RUN: Would push Docker image {image_url}")
+        return True
+    
+    print(f"Pushing Docker image: {image_url}")
+    
+    try:
+        push_cmd = ["docker", "push", image_url]
+        if debug:
+            print(f"DEBUG: Push command: {' '.join(push_cmd)}")
+        
+        proc = subprocess.Popen(
+            push_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        
+        if verbose or debug:
+            for line in iter(proc.stdout.readline, ""):
+                prefix = "DEBUG: " if debug else "    "
+                print(f"{prefix}{line.strip()}")
+        else:
+            proc.communicate()  # Wait for completion without showing output
+        
+        proc.wait()
+        if proc.returncode != 0:
+            print(f"❌ Docker push failed for {image_url}")
+            print(f"Please ensure you are logged in to the registry and have push permissions.")
+            return False
+        
+        print(f"✅ Docker push successful: {image_url}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Unexpected error during Docker push: {e}")
+        if debug:
+            import traceback
+            print(f"DEBUG: Full traceback:\n{traceback.format_exc()}")
+        return False
+
+
+def build_and_push_conda_env_images(
+    conda_envs: Dict[str, Dict[str, Any]],
+    docker_registry: str,
+    workflow_name: str = "workflow",
+    *,
+    verbose: bool = False,
+    debug: bool = False,
+    dry_run: bool = False,
+) -> bool:
+    """
+    Build and push Docker images for multiple conda environments.
+    
+    Args:
+        conda_envs: Dictionary mapping env paths to env info (with 'hash' key)
+        docker_registry: Docker registry URL
+        workflow_name: Name to use for the repository
+        verbose: Enable verbose output
+        debug: Enable debug output
+        dry_run: If True, only show what would be done without actually building/pushing
+        
+    Returns:
+        True if all operations were successful, False otherwise
+    """
+    if not conda_envs:
+        if verbose:
+            print("No conda environments found to build.")
+        return True
+    
+    if verbose:
+        print(f"Building Docker images for {len(conda_envs)} conda environments")
+        print(f"Registry: {docker_registry}")
+    
+    # Sanitize workflow name for Docker repository
+    repo_name = "".join(c for c in workflow_name.lower() if c.isalnum() or c in "-_")
+    if not repo_name:
+        repo_name = "workflow"
+    
+    success_count = 0
+    total_count = len(conda_envs)
+    
+    for original_yaml_path, env_info in conda_envs.items():
+        env_hash = env_info["hash"]
+        image_name = f"{docker_registry}/{repo_name}"
+        image_tag = env_hash
+        full_image_url = f"{image_name}:{image_tag}"
+        env_info["docker_image_url"] = full_image_url
+        
+        print(f"Processing environment '{Path(original_yaml_path).name}':")
+        print(f"  Target image: {full_image_url}")
+        
+        if debug:
+            print(f"DEBUG: Environment hash: {env_hash}")
+            print(f"DEBUG: Repository name: {repo_name}")
+        
+        # Check if image already exists
+        if check_docker_image_exists(full_image_url, verbose=verbose):
+            print("  ✔ Image already exists in registry. Skipping build.")
+            success_count += 1
+            continue
+        
+        # Build the image
+        if not build_docker_image_from_conda_env(
+            Path(original_yaml_path),
+            full_image_url,
+            verbose=verbose,
+            debug=debug,
+            dry_run=dry_run,
+        ):
+            return False
+        
+        # Push the image
+        if not push_docker_image(
+            full_image_url,
+            verbose=verbose,
+            debug=debug,
+            dry_run=dry_run,
+        ):
+            return False
+        
+        success_count += 1
+    
+    if verbose:
+        print(f"✅ Successfully processed {success_count}/{total_count} environments")
+    
+    return success_count == total_count
 
 
 def generate_lock_hash(env_yaml: Path) -> str:
@@ -217,11 +520,164 @@ class OCIBuilder:
         raise NotImplementedError
 
 
+def _prompt_tool_start(tool_name: str, interactive: bool) -> str:
+    """Prompt the user for action when tool is not available. Returns 'start', 'dry_run', or 'abort'."""
+    import click
+    try:
+        from wf2wf import prompt as _prompt
+    except ImportError:
+        def _prompt(*args, **kwargs):
+            return "dry_run"
+    if not interactive:
+        click.echo(f"⚠ {tool_name} is not available. Skipping container build (dry run).", err=True)
+        return "dry_run"
+    
+    click.echo(f"⚠ {tool_name} is not available or not running.")
+    click.echo(f"{tool_name} is required for container operations.")
+    
+    # Check if tool is installed and running
+    if tool_name.lower() == "docker":
+        tool_installed = is_docker_available()
+    else:
+        tool_installed = shutil.which(tool_name.lower()) is not None
+    
+    if tool_installed:
+        click.echo(f"\n{tool_name} is installed but not running.")
+        click.echo("To start:")
+        if tool_name.lower() == "docker":
+            click.echo("  • macOS: Start Docker Desktop application")
+            click.echo("  • Linux: sudo systemctl start docker")
+            click.echo("  • Windows: Start Docker Desktop application")
+        elif tool_name.lower() == "podman":
+            click.echo("  • Linux: sudo systemctl start podman")
+            click.echo("  • Or run: podman machine start (for rootless)")
+        elif tool_name.lower() == "buildah":
+            click.echo("  • Linux: sudo systemctl start buildah")
+        elif tool_name.lower() == "apptainer":
+            click.echo("  • Linux: module load apptainer or install via your package manager")
+        
+        if _prompt.ask(f"Would you like to attempt starting {tool_name}?", default=True):
+            return "start"
+        elif _prompt.ask("Would you like to proceed in dry-run mode (no real container build)?", default=True):
+            return "dry_run"
+        else:
+            return "abort"
+    else:
+        click.echo(f"\n{tool_name} is not installed.")
+        click.echo("To install:")
+        if tool_name.lower() == "docker":
+            click.echo("  • Visit https://docs.docker.com/get-docker/")
+        elif tool_name.lower() == "podman":
+            click.echo("  • Linux: sudo dnf install podman or sudo apt install podman")
+            click.echo("  • macOS: brew install podman")
+        elif tool_name.lower() == "buildah":
+            click.echo("  • Linux: sudo dnf install buildah or sudo apt install buildah")
+        elif tool_name.lower() == "apptainer":
+            click.echo("  • Visit https://apptainer.org/docs/admin/main/installation.html")
+        
+        if _prompt.ask("Would you like to proceed in dry-run mode (no real container build)?", default=True):
+            return "dry_run"
+        else:
+            return "abort"
+
+def _attempt_start_tool(tool_name: str) -> bool:
+    """Attempt to start the specified tool daemon. Returns True if successful, False otherwise."""
+    import subprocess
+    import time
+    
+    try:
+        if tool_name.lower() == "docker":
+            # Check if Docker is already running
+            if is_docker_available():
+                return True  # Already running
+            
+            # Try to start Docker daemon
+            start_commands = [
+                ["sudo", "systemctl", "start", "docker"],
+                ["sudo", "service", "docker", "start"],
+                ["open", "-a", "Docker"],  # macOS
+            ]
+            
+            for cmd in start_commands:
+                try:
+                    if shutil.which(cmd[0]):
+                        subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+                        # Wait a moment for daemon to start
+                        time.sleep(3)
+                        # Verify it's running
+                        if is_docker_available():
+                            return True
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+                    continue
+                    
+        elif tool_name.lower() == "podman":
+            # Try to start Podman
+            if shutil.which("podman"):
+                # Check if Podman is already running
+                try:
+                    subprocess.run(["podman", "info"], check=True, capture_output=True, timeout=5)
+                    return True  # Already running
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                    pass
+            
+            # Try to start Podman
+            start_commands = [
+                ["sudo", "systemctl", "start", "podman"],
+                ["podman", "machine", "start"],
+                ["podman", "system", "connection", "default", "podman-machine-default-rootless"],
+            ]
+            
+            for cmd in start_commands:
+                try:
+                    if shutil.which(cmd[0]):
+                        subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+                        # Wait a moment for daemon to start
+                        time.sleep(3)
+                        # Verify it's running
+                        subprocess.run(["podman", "info"], check=True, capture_output=True, timeout=5)
+                        return True
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+                    continue
+                    
+        elif tool_name.lower() == "buildah":
+            # Try to start Buildah
+            if shutil.which("buildah"):
+                # Check if Buildah is already working
+                try:
+                    subprocess.run(["buildah", "version"], check=True, capture_output=True, timeout=5)
+                    return True  # Already working
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                    pass
+            
+            # Try to start Buildah
+            start_commands = [
+                ["sudo", "systemctl", "start", "buildah"],
+                ["sudo", "service", "buildah", "start"],
+            ]
+            
+            for cmd in start_commands:
+                try:
+                    if shutil.which(cmd[0]):
+                        subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+                        # Wait a moment for daemon to start
+                        time.sleep(3)
+                        # Verify it's working
+                        subprocess.run(["buildah", "version"], check=True, capture_output=True, timeout=5)
+                        return True
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+                    continue
+                    
+    except Exception:
+        pass
+    
+    return False
+
 class DockerBuildxBuilder(OCIBuilder):
     """Tiny wrapper around `docker buildx build` (dry-run by default)."""
 
-    def __init__(self, *, dry_run: bool = True):
+    def __init__(self, *, dry_run: bool = True, interactive: bool = False):
         self.dry_run = dry_run or (os.environ.get("WF2WF_ENVIRON_DRYRUN") == "1")
+        self.interactive = interactive
 
     def build(
         self,
@@ -239,12 +695,10 @@ class DockerBuildxBuilder(OCIBuilder):
         dockerfile.write_text(
             "FROM scratch\n# placeholder layer for conda-pack tar\nADD env.tar.gz /opt/env\n"
         )
-        # Symlinks pointing outside the build context are ignored by BuildKit; copy instead.
         env_tar_path = context_dir / "env.tar.gz"
         try:
             shutil.copy2(tarball, env_tar_path)
         except Exception:
-            # Fallback: read/write to handle cross-device copies
             env_tar_path.write_bytes(tarball.read_bytes())
 
         cmd = [
@@ -261,17 +715,10 @@ class DockerBuildxBuilder(OCIBuilder):
         if push:
             cmd.append("--push")
         else:
-            # Ensure the image ends up in the local daemon so we can query the
-            # digest with `docker images`.  Without --push/--load the result
-            # remains in the BuildKit cache only, making the digest
-            # inaccessible from the CLI.
             cmd.append("--load")
         for k, v in labels.items():
             cmd += ["--label", f"{k}={v}"]
         cmd.append(str(context_dir))
-
-        # Remote cache flags (BuildKit): expect build_cache like
-        #  "registry.example.com/cache:wf2wf"
         if build_cache:
             cmd += [
                 "--cache-from",
@@ -279,14 +726,25 @@ class DockerBuildxBuilder(OCIBuilder):
                 "--cache-to",
                 f"type=registry,ref={build_cache},mode=max",
             ]
-
-        if self.dry_run or not shutil.which("docker"):
-            # Simulate digest
+        if self.dry_run or not is_docker_available():
+            if not is_docker_available():
+                should_proceed = _prompt_tool_start("Docker", self.interactive)
+                if should_proceed == "start":
+                    # Try to start the tool daemon
+                    if _attempt_start_tool("Docker"):
+                        click.echo("✅ Docker started successfully. Proceeding with real container build.")
+                        self.dry_run = False
+                    else:
+                        click.echo("❌ Failed to start Docker. Proceeding in dry-run mode.")
+                        self.dry_run = True
+                elif should_proceed == "dry_run":
+                    # User chose dry-run mode
+                    self.dry_run = True
+                else: # should_proceed == "abort"
+                    raise click.ClickException("Docker not available. Aborting as requested.")
             fake_digest = hashlib.sha256((tag + str(tarball)).encode()).hexdigest()
             return f"sha256:{fake_digest}"
-
         subprocess.check_call(cmd)
-        # Resolve digest via Docker inspect (works after --load as well)
         try:
             insp = subprocess.check_output(
                 [
@@ -299,8 +757,7 @@ class DockerBuildxBuilder(OCIBuilder):
             )
             ref = insp.decode().strip()
             digest = ref.split("@", 1)[1] if "@" in ref else tag
-        except subprocess.CalledProcessError:
-            # As a last resort fall back to the tag – valid for local scanning
+        except subprocess.CalledProcessError as e:
             digest = tag
         return digest
 
@@ -313,10 +770,10 @@ class DockerBuildxBuilder(OCIBuilder):
 class BuildahBuilder(OCIBuilder):
     """Wrapper around *buildah* / *podman build* for sites that prefer it."""
 
-    def __init__(self, *, tool: Optional[str] = None, dry_run: bool = True):
-        # *tool* allows forcing "podman" instead of "buildah".
+    def __init__(self, *, tool: Optional[str] = None, dry_run: bool = True, interactive: bool = False):
         self.tool = tool or (shutil.which("buildah") and "buildah" or "podman")
         self.dry_run = dry_run or (os.environ.get("WF2WF_ENVIRON_DRYRUN") == "1")
+        self.interactive = interactive
 
     def build(
         self,
@@ -328,42 +785,43 @@ class BuildahBuilder(OCIBuilder):
         build_cache: Optional[str] = None,
         platform: str = "linux/amd64",
     ) -> str:  # noqa: D401
-        if not self.tool:
-            raise RuntimeError(
-                "Neither buildah nor podman is available on PATH; cannot build images"
-            )
-
+        if not self.tool or not shutil.which(self.tool):
+            tool_name = self.tool or "buildah/podman"
+            should_proceed = _prompt_tool_start(tool_name, self.interactive)
+            if should_proceed == "start":
+                # Try to start the tool daemon
+                if _attempt_start_tool(tool_name):
+                    click.echo(f"✅ {tool_name} started successfully. Proceeding with real container build.")
+                    self.dry_run = False
+                else:
+                    click.echo(f"❌ Failed to start {tool_name}. Proceeding in dry-run mode.")
+                    self.dry_run = True
+            elif should_proceed == "dry_run":
+                # User chose dry-run mode
+                self.dry_run = True
+            else: # should_proceed == "abort"
+                raise click.ClickException(f"{tool_name} not available. Aborting as requested.")
         labels = labels or {}
         context_dir = Path(tempfile.mkdtemp(prefix="wf2wf_img_"))
         dockerfile = context_dir / "Containerfile"
         dockerfile.write_text("FROM scratch\nADD env.tar.gz /opt/env\n")
-        # Symlinks pointing outside the build context are ignored by BuildKit; copy instead.
         env_tar_path = context_dir / "env.tar.gz"
         try:
             shutil.copy2(tarball, env_tar_path)
         except Exception:
-            # Fallback: read/write to handle cross-device copies
             env_tar_path.write_bytes(tarball.read_bytes())
-
         cmd = [self.tool, "build", "-f", str(dockerfile), "-t", tag]
         for k, v in labels.items():
             cmd += ["--label", f"{k}={v}"]
         cmd.append(str(context_dir))
-
         if push:
-            # For buildah: build and push in one step via --push; Podman needs separate push.
             if self.tool == "buildah":
                 cmd.append("--push")
-
         if self.dry_run or not shutil.which(self.tool):
             return f"sha256:{hashlib.sha256((tag + str(tarball)).encode()).hexdigest()}"
-
         subprocess.check_call(cmd)
-
         if push and self.tool == "podman":
             subprocess.check_call(["podman", "push", tag])
-
-        # Resolve digest via Docker inspect (works after --load as well)
         try:
             insp = subprocess.check_output(
                 [
@@ -377,7 +835,6 @@ class BuildahBuilder(OCIBuilder):
             ref = insp.decode().strip()
             digest = ref.split("@", 1)[1] if "@" in ref else tag
         except subprocess.CalledProcessError:
-            # As a last resort fall back to the tag – valid for local scanning
             digest = tag
         return digest
 
@@ -391,6 +848,7 @@ def build_oci_image(
     platform: str = "linux/amd64",
     build_cache: Optional[str] = None,
     dry_run: bool = True,
+    interactive: bool = False,
 ) -> tuple[str, str]:
     """High-level helper that picks a builder backend and returns (tag, digest)."""
 
@@ -399,9 +857,9 @@ def build_oci_image(
     labels = {"org.wf2wf.lock.sha256": hashlib.sha256(tarball.read_bytes()).hexdigest()}
 
     if backend == "buildx":
-        builder = DockerBuildxBuilder(dry_run=dry_run)
+        builder = DockerBuildxBuilder(dry_run=dry_run, interactive=interactive)
     elif backend == "buildah":
-        builder = BuildahBuilder(dry_run=dry_run)
+        builder = BuildahBuilder(dry_run=dry_run, interactive=interactive)
     else:
         raise ValueError(f"Unsupported backend '{backend}'")
 
@@ -563,6 +1021,244 @@ def convert_to_sif(
     return sif_path
 
 
+def convert_docker_images_to_apptainer(
+    conda_envs: Dict[str, Dict[str, Any]],
+    sif_dir: Union[str, Path],
+    *,
+    verbose: bool = False,
+    debug: bool = False,
+    dry_run: bool = False,
+) -> bool:
+    """
+    Convert Docker images to Apptainer SIF files for multiple conda environments.
+    
+    Args:
+        conda_envs: Dictionary mapping env paths to env info (with 'hash' and 'docker_image_url' keys)
+        sif_dir: Directory to store SIF files
+        verbose: Enable verbose output
+        debug: Enable debug output
+        dry_run: If True, only show what would be done without actually converting
+        
+    Returns:
+        True if all conversions were successful, False otherwise
+    """
+    print("--- Starting Apptainer Conversion Phase ---")
+    
+    # Check for apptainer/singularity executable
+    apptainer_cmd = shutil.which("apptainer") or shutil.which("singularity")
+    if not apptainer_cmd:
+        print(
+            "WARNING: 'apptainer' or 'singularity' command not found. "
+            "Container conversion to SIF format will be skipped. "
+            "To enable SIF conversion, install Apptainer: "
+            "'conda install -c conda-forge apptainer' or "
+            "'pip install apptainer' or install SingularityCE."
+        )
+        return False
+    
+    if verbose:
+        print(f"INFO: Using {Path(apptainer_cmd).name} for container conversion")
+    
+    sif_path = Path(sif_dir)
+    sif_path.mkdir(parents=True, exist_ok=True)
+    print(f"Storing .sif files in: {sif_path.resolve()}")
+    
+    if not conda_envs:
+        if verbose:
+            print("INFO: No conda environments found for conversion")
+        return True
+    
+    if verbose:
+        print(f"INFO: Converting {len(conda_envs)} Docker images to Apptainer format")
+    
+    success_count = 0
+    total_count = len(conda_envs)
+    
+    for env_info in conda_envs.values():
+        docker_image_url = env_info.get("docker_image_url")
+        if not docker_image_url:
+            if debug:
+                print(f"DEBUG: Skipping environment without Docker image URL: {env_info}")
+            continue
+        
+        sif_filename = f"{env_info['hash']}.sif"
+        target_sif_path = sif_path / sif_filename
+        env_info["apptainer_sif_path"] = str(target_sif_path)
+        
+        print(f"Processing image '{docker_image_url}':")
+        print(f"  Target .sif file: {target_sif_path}")
+        
+        if debug:
+            print(f"DEBUG: Environment hash: {env_info['hash']}")
+            print(f"DEBUG: SIF filename: {sif_filename}")
+        
+        if target_sif_path.exists():
+            print("  ✔ .sif file already exists. Skipping conversion.")
+            if debug:
+                print(f"DEBUG: Existing file size: {target_sif_path.stat().st_size} bytes")
+            success_count += 1
+            continue
+        
+        if dry_run:
+            print(f"DRY RUN: Would convert {docker_image_url} to {target_sif_path}")
+            success_count += 1
+            continue
+        
+        print(f"  Converting with '{Path(apptainer_cmd).name}'...")
+        try:
+            # Command: apptainer build target.sif docker://user/image:tag
+            build_cmd = [
+                apptainer_cmd,
+                "build",
+                "--force",
+                str(target_sif_path),
+                f"docker://{docker_image_url}",
+            ]
+            if debug:
+                print(f"DEBUG: Apptainer command: {' '.join(build_cmd)}")
+            
+            proc = subprocess.Popen(
+                build_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            if verbose or debug:
+                for line in iter(proc.stdout.readline, ""):
+                    prefix = "DEBUG: " if debug else "    "
+                    print(f"{prefix}{line.strip()}")
+            else:
+                proc.communicate()  # Wait for completion without showing output
+            
+            proc.wait()
+            if proc.returncode != 0:
+                print(f"  ✗ ERROR: Apptainer build failed for {docker_image_url}. See output above.")
+                # Don't exit, just warn and continue. The Docker image can still be used.
+            else:
+                print("  ✔ Conversion successful.")
+                if debug and target_sif_path.exists():
+                    print(f"DEBUG: Created SIF file size: {target_sif_path.stat().st_size} bytes")
+                success_count += 1
+                
+        except Exception as e:
+            print(f"  ✗ ERROR: An unexpected error occurred during Apptainer conversion: {e}")
+            if debug:
+                import traceback
+                print(f"DEBUG: Full traceback:\n{traceback.format_exc()}")
+    
+    if verbose:
+        print(f"✅ Successfully converted {success_count}/{total_count} images")
+    
+    print("--- Apptainer Conversion Phase Complete ---\n")
+    return success_count == total_count
+
+
+# ---------------------------------------------------------------------------
+# Environment utility functions for exporters
+# ---------------------------------------------------------------------------
+
+def normalize_container_spec(container_spec: str) -> str:
+    """
+    Normalize container specification by removing docker:// prefix.
+    
+    Args:
+        container_spec: Container specification (e.g., "docker://image:tag" or "image:tag")
+        
+    Returns:
+        Normalized container specification without docker:// prefix
+    """
+    if container_spec.startswith("docker://"):
+        return container_spec[9:]  # Remove docker:// prefix
+    return container_spec
+
+
+def extract_sbom_path(env_vars: Optional[Dict[str, str]]) -> Optional[str]:
+    """
+    Extract SBOM path from environment variables.
+    
+    Args:
+        env_vars: Environment variables dictionary
+        
+    Returns:
+        SBOM path if present, None otherwise
+    """
+    if not env_vars:
+        return None
+    return env_vars.get("WF2WF_SBOM")
+
+
+def extract_sif_path(env_vars: Optional[Dict[str, str]]) -> Optional[str]:
+    """
+    Extract SIF path from environment variables.
+    
+    Args:
+        env_vars: Environment variables dictionary
+        
+    Returns:
+        SIF path if present, None otherwise
+    """
+    if not env_vars:
+        return None
+    return env_vars.get("WF2WF_SIF")
+
+
+def extract_sbom_digest(env_vars: Optional[Dict[str, str]]) -> Optional[str]:
+    """
+    Extract SBOM digest from environment variables.
+    
+    Args:
+        env_vars: Environment variables dictionary
+        
+    Returns:
+        SBOM digest if present, None otherwise
+    """
+    if not env_vars:
+        return None
+    return env_vars.get("WF2WF_SBOM_DIGEST")
+
+
+def format_container_for_target_format(
+    container_spec: str, 
+    target_format: str
+) -> str:
+    """
+    Format container specification for a specific target format.
+    
+    Args:
+        container_spec: Container specification
+        target_format: Target format (e.g., "docker", "singularity", "cwl", "wdl", etc.)
+        
+    Returns:
+        Formatted container specification for the target format
+    """
+    normalized = normalize_container_spec(container_spec)
+    
+    # Format-specific handling
+    if target_format.lower() in ["cwl", "wdl", "nextflow", "snakemake"]:
+        # These formats typically expect just the image name without docker:// prefix
+        return normalized
+    elif target_format.lower() in ["dagman", "galaxy"]:
+        # These formats might need the full specification
+        return container_spec
+    else:
+        # Default to normalized form
+        return normalized
+
+
+def get_environment_metadata(env_vars: Optional[Dict[str, str]]) -> Dict[str, Optional[str]]:
+    """
+    Extract all environment-related metadata from environment variables.
+    
+    Args:
+        env_vars: Environment variables dictionary
+        
+    Returns:
+        Dictionary containing SBOM path, SIF path, and SBOM digest
+    """
+    return {
+        "sbom_path": extract_sbom_path(env_vars),
+        "sif_path": extract_sif_path(env_vars),
+        "sbom_digest": extract_sbom_digest(env_vars),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Registry probing & image cache (Phase 2 §9.2.3 – step 2)
 # ---------------------------------------------------------------------------
@@ -583,7 +1279,7 @@ def _save_index(data: Dict[str, Any]):
 
 
 def _image_exists_locally(tag_or_digest: str) -> bool:
-    if not shutil.which("docker"):
+    if not is_docker_available():
         return False
     try:
         out = subprocess.check_output(
@@ -652,6 +1348,7 @@ def build_or_reuse_env_image(
     dry_run: bool = True,
     build_cache: Optional[str] = None,
     cache_dir: Optional[Path] = None,
+    interactive: bool = False,
 ) -> Dict[str, str]:
     """High-level helper: build image for *env_yaml* unless identical hash already indexed.
 
@@ -699,6 +1396,7 @@ def build_or_reuse_env_image(
         push=push,
         build_cache=build_cache,
         dry_run=dry_run,
+        interactive=interactive,
     )
 
     entry = {"tag": tag, "digest": digest}

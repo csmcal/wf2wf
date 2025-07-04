@@ -31,7 +31,6 @@ authors = [
 license = {text = "MIT"}
 
 dependencies = [
-  "snakemake>=6.0",
   "click>=8.1",
   "jsonschema>=4",
   "pyyaml>=6",
@@ -62,7 +61,7 @@ docs = [
 ]
 
 [project.scripts]
-wf2wf = "wf2wf.cli:simple_main"
+wf2wf = "wf2wf.cli:cli"
 
 [tool.setuptools.packages.find]
 # Only include the actual Python package and skip the conda-forge recipe directory

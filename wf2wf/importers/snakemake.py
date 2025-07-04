@@ -19,10 +19,10 @@ import textwrap
 import yaml
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, Union
+from typing import Any, Dict, Union, List
 from collections import defaultdict
 
-from wf2wf.core import Workflow, Task, ResourceSpec, EnvironmentSpec
+from wf2wf.core import Workflow, Task, ResourceSpec, EnvironmentSpec, ParameterSpec
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +51,10 @@ def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
         Enable verbose output (default: False).
     debug : bool, optional
         Enable debug output (default: False).
+    parse_only : bool, optional
+        Parse Snakefile without requiring snakemake executable (default: False).
+        This mode has limitations: no wildcard expansion, no job instantiation,
+        no dependency resolution, and no actual workflow execution plan.
 
     Returns
     -------
@@ -65,9 +69,11 @@ def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
     config = opts.get("config", {})
     verbose = opts.get("verbose", False)
     debug = opts.get("debug", False)
+    parse_only = opts.get("parse_only", False)
 
-    if not shutil.which("snakemake"):
-        raise RuntimeError("The 'snakemake' executable was not found in your PATH.")
+    # Check for snakemake executable unless parse_only mode is enabled
+    if not parse_only and not shutil.which("snakemake"):
+        raise RuntimeError("The 'snakemake' executable was not found in your PATH. Please install snakemake: 'pip install snakemake' or 'conda install snakemake'")
 
     # Use the Snakefile's directory as working directory by default so that
     # relative input/output paths resolve even when the caller is in a
@@ -88,6 +94,68 @@ def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
             print(f"  Found {len(rule_templates['rules'])} rule templates.")
     except Exception as e:
         raise RuntimeError(f"Failed to read or parse the Snakefile: {e}")
+
+    # --- Parse-only mode: Create basic workflow from rule templates ---
+    if parse_only:
+        if verbose:
+            print("INFO: Using parse-only mode (no snakemake executable required)")
+            print("WARNING: Parse-only mode has limitations:")
+            print("  - No wildcard expansion")
+            print("  - No job instantiation")
+            print("  - No dependency resolution")
+            print("  - No actual workflow execution plan")
+            print("  - Limited resource and environment detection")
+
+        # Build config
+        final_config = {}
+        if config:
+            final_config.update(config)
+
+        # Load config from Snakefile's configfile directive
+        parsed_config_path = rule_templates.get("directives", {}).get("configfile")
+        if parsed_config_path:
+            snakefile_dir = snakefile_path.parent
+            full_config_path = snakefile_dir / parsed_config_path
+            if full_config_path.exists():
+                try:
+                    with open(full_config_path, "r") as f:
+                        final_config.update(yaml.safe_load(f))
+                    if verbose:
+                        print(f"  Loaded config from Snakefile directive: {full_config_path}")
+                except Exception as e:
+                    print(f"WARNING: Could not load config file from Snakefile directive at {full_config_path}: {e}")
+            else:
+                if verbose:
+                    print(f"WARNING: Config file from Snakefile directive not found: {full_config_path}")
+
+        # Load config from CLI --configfile argument
+        if configfile and Path(configfile).exists():
+            try:
+                with open(configfile, "r") as f:
+                    final_config.update(yaml.safe_load(f))
+                if verbose:
+                    print(f"  Loaded/overwrote config from CLI argument: {configfile}")
+            except Exception as e:
+                print(f"WARNING: Could not load config file from CLI at {configfile}: {e}")
+
+        wf.config = final_config
+
+        # Create tasks from rule templates
+        if verbose:
+            print("INFO: Creating tasks from rule templates...")
+
+        for rule_name, rule_details in rule_templates["rules"].items():
+            task = _create_task_from_rule_template(rule_name, rule_details, verbose=verbose, debug=debug)
+            wf.add_task(task)
+
+        if verbose:
+            print(f"  Created {len(wf.tasks)} tasks from rule templates")
+
+        return wf
+
+    # --- Full mode: Use snakemake executable for complete workflow analysis ---
+    if verbose:
+        print("INFO: Using full mode with snakemake executable")
 
     # --- Step 2: Get execution graph from `snakemake --dag` ---
     if verbose:
@@ -216,9 +284,26 @@ def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
         # Get rule template
         template = rule_templates["rules"].get(rule_name, {})
 
-        # Build task inputs/outputs
-        inputs = dryrun_details.get("inputs", [])
-        outputs = dryrun_details.get("outputs", [])
+        # Build task inputs/outputs with transfer mode detection
+        inputs = []
+        for inp in dryrun_details.get("inputs", []):
+            if isinstance(inp, str):
+                # Detect transfer mode based on file path patterns
+                transfer_mode = _detect_transfer_mode(inp, is_input=True)
+                inputs.append(inp if transfer_mode == "auto" else 
+                            ParameterSpec(id=inp, type="File", transfer_mode=transfer_mode))
+            else:
+                inputs.append(inp)
+        
+        outputs = []
+        for out in dryrun_details.get("outputs", []):
+            if isinstance(out, str):
+                # Detect transfer mode based on file path patterns
+                transfer_mode = _detect_transfer_mode(out, is_input=False)
+                outputs.append(out if transfer_mode == "auto" else 
+                            ParameterSpec(id=out, type="File", transfer_mode=transfer_mode))
+            else:
+                outputs.append(out)
 
         # Build command/script
         command = None
@@ -790,3 +875,215 @@ def _sanitize_condor_job_name(name: str) -> str:
     """Return a HTCondor-friendly job name by replacing unsafe characters."""
 
     return re.sub(r"[^a-zA-Z0-9_.-]", "_", name)
+
+
+def _detect_transfer_mode(filepath: str, is_input: bool = True) -> str:
+    """Detect appropriate transfer mode for a file based on path patterns.
+    
+    Parameters
+    ----------
+    filepath : str
+        Path to the file
+    is_input : bool
+        Whether this is an input file (True) or output file (False)
+        
+    Returns
+    -------
+    str
+        Transfer mode: "auto", "shared", "never", or "always"
+    """
+    # Convert to lowercase for pattern matching
+    path_lower = filepath.lower()
+    
+    # Patterns indicating shared/networked storage
+    shared_patterns = [
+        '/nfs/', '/mnt/', '/shared/', '/data/', '/storage/',
+        '/lustre/', '/gpfs/', '/beegfs/', '/ceph/',
+        'gs://', 's3://', 'azure://', 'http://', 'https://', 'ftp://',
+        '/scratch/', '/work/', '/project/', '/group/',
+    ]
+    
+    # Patterns indicating local temporary files that shouldn't be transferred
+    local_patterns = [
+        '/tmp/', '/var/tmp/', '.tmp', 'temp_', 'tmp_',
+        '/dev/', '/proc/', '/sys/',
+        '.log', '.err', '.out',  # Log files typically local
+    ]
+    
+    # Patterns indicating reference data that should be on shared storage
+    reference_patterns = [
+        '.genome', '.fa', '.fasta', '.fna', '.faa',
+        '.gtf', '.gff', '.gff3', '.bed', '.sam', '.bam',
+        'reference/', 'ref/', 'genome/', 'annotation/',
+        '.idx', '.index', '.dict',  # Index files
+    ]
+    
+    # Check for shared storage patterns
+    if any(pattern in path_lower for pattern in shared_patterns):
+        return "shared"
+    
+    # Check for local temporary patterns
+    if any(pattern in path_lower for pattern in local_patterns):
+        return "never"
+    
+    # For input files: check if it looks like reference data
+    if is_input and any(pattern in path_lower for pattern in reference_patterns):
+        return "shared"
+    
+    # For outputs in certain directories, assume they might be on shared storage
+    if not is_input:
+        output_shared_patterns = [
+            'results/', 'output/', 'analysis/', 'processed/',
+        ]
+        if any(pattern in path_lower for pattern in output_shared_patterns):
+            return "shared"
+    
+    # Default to auto for everything else
+    return "auto"
+
+
+def _create_task_from_rule_template(rule_name: str, rule_details: Dict[str, Any], verbose: bool = False, debug: bool = False) -> Task:
+    """Create a task from a rule template in parse-only mode."""
+    
+    task = Task(id=rule_name, label=rule_name)
+    
+    # Extract inputs
+    inputs = []
+    if rule_details.get("input"):
+        input_str = rule_details["input"]
+        # Parse comma-separated inputs, handling quotes
+        input_list = _parse_snakemake_list(input_str)
+        for inp in input_list:
+            if inp.strip():
+                # Detect transfer mode based on file path patterns
+                transfer_mode = _detect_transfer_mode(inp.strip(), is_input=True)
+                inputs.append(inp.strip() if transfer_mode == "auto" else 
+                            ParameterSpec(id=inp.strip(), type="File", transfer_mode=transfer_mode))
+    
+    # Extract outputs
+    outputs = []
+    if rule_details.get("output"):
+        output_str = rule_details["output"]
+        # Parse comma-separated outputs, handling quotes
+        output_list = _parse_snakemake_list(output_str)
+        for out in output_list:
+            if out.strip():
+                # Detect transfer mode based on file path patterns
+                transfer_mode = _detect_transfer_mode(out.strip(), is_input=False)
+                outputs.append(out.strip() if transfer_mode == "auto" else 
+                            ParameterSpec(id=out.strip(), type="File", transfer_mode=transfer_mode))
+    
+    # Extract command/script
+    command = None
+    script = None
+    
+    if rule_details.get("shell"):
+        command = rule_details["shell"]
+    elif rule_details.get("script"):
+        script = rule_details["script"]
+    elif rule_details.get("run"):
+        # For run blocks, store the code in meta and use a placeholder command
+        command = f"# run block for rule {rule_name}"
+        task.meta = {"run_block": rule_details["run"]}
+    else:
+        command = f"echo 'No command defined for rule {rule_name}'"
+    
+    task.command = command
+    if script:
+        task.script = script
+    
+    # Extract resources
+    if rule_details.get("resources"):
+        resources = ResourceSpec()
+        for key, value in rule_details["resources"].items():
+            if key == "mem_mb":
+                resources.memory_mb = int(value)
+            elif key == "disk_mb":
+                resources.disk_mb = int(value)
+            elif key == "cpus":
+                resources.cpus = int(value)
+            elif key == "time_min":
+                resources.time_min = int(value)
+            elif key == "gpu":
+                resources.gpu = int(value)
+            elif key == "gpu_mem_mb":
+                resources.gpu_mem_mb = int(value)
+            else:
+                # Store other resources in meta
+                if "resources" not in task.meta:
+                    task.meta["resources"] = {}
+                task.meta["resources"][key] = value
+        
+        if any([resources.memory_mb, resources.disk_mb, resources.cpus, resources.time_min, resources.gpu, resources.gpu_mem_mb]):
+            task.resources = resources
+    
+    # Extract environment
+    if rule_details.get("conda"):
+        conda_env = rule_details["conda"]
+        if not task.environment:
+            task.environment = EnvironmentSpec()
+        task.environment.conda_env = conda_env
+    
+    if rule_details.get("container"):
+        container = rule_details["container"]
+        if not task.environment:
+            task.environment = EnvironmentSpec()
+        task.environment.container = container
+    
+    # Extract retries
+    if rule_details.get("retries"):
+        task.retries = rule_details["retries"]
+    
+    # Store rule details in meta
+    task.meta.update({
+        "rule_name": rule_name,
+        "rule_details": rule_details,
+        "parse_only_mode": True,
+        "limitations": [
+            "No wildcard expansion",
+            "No job instantiation", 
+            "No dependency resolution",
+            "Limited resource detection"
+        ]
+    })
+    
+    # Set inputs and outputs
+    task.inputs = inputs
+    task.outputs = outputs
+    
+    if debug:
+        print(f"DEBUG: Created task '{rule_name}' with {len(inputs)} inputs, {len(outputs)} outputs")
+    
+    return task
+
+
+def _parse_snakemake_list(list_str: str) -> List[str]:
+    """Parse a Snakemake list string (comma-separated, possibly quoted)."""
+    if not list_str:
+        return []
+    
+    # Simple parsing - split by comma and strip whitespace
+    # This is a basic implementation that could be enhanced for complex cases
+    items = []
+    current_item = ""
+    in_quotes = False
+    quote_char = None
+    
+    for char in list_str:
+        if char in ['"', "'"] and not in_quotes:
+            in_quotes = True
+            quote_char = char
+        elif char == quote_char and in_quotes:
+            in_quotes = False
+            quote_char = None
+        elif char == ',' and not in_quotes:
+            items.append(current_item.strip())
+            current_item = ""
+        else:
+            current_item += char
+    
+    # Add the last item
+    if current_item.strip():
+        items.append(current_item.strip())
+    
+    return items

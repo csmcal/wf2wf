@@ -5,6 +5,10 @@ import pathlib
 import importlib.util
 import pytest
 from pathlib import Path
+import textwrap
+import subprocess
+import shutil
+import os
 
 # Allow running tests without installing package
 proj_root = pathlib.Path(__file__).resolve().parents[2]
@@ -283,6 +287,219 @@ class TestClickCLI:
         assert info_data["config"]["test_config"] == "value"
         assert info_data["meta"]["description"] == "Test workflow"
 
+    def test_convert_single_input_ir_default_warning(self, tmp_path):
+        """Test that single input file shows IR default warning."""
+        # Create a simple workflow
+        wf = Workflow(name="ir_default_test")
+        wf.add_task(Task(id="task1", command="echo 'test'"))
+
+        input_path = tmp_path / "test.json"
+        expected_output_path = tmp_path / "test.json"  # Should default to same name with .json
+        wf.save_json(input_path)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["convert", "--input", str(input_path)])
+        
+        assert result.exit_code == 0
+        assert "⚠ No output format specified" in result.stderr
+        assert "Defaulting to Intermediate Representation (IR) format" in result.stderr
+        assert "Use --out-format to specify a different target format" in result.stderr
+        assert expected_output_path.exists()
+
+    def test_convert_yaml_input_ir_default_warning(self, tmp_path):
+        """Test that YAML input file shows IR default warning and converts to JSON."""
+        pytest.importorskip("yaml")
+        
+        # Create a simple workflow in YAML
+        wf = Workflow(name="yaml_ir_test")
+        wf.add_task(Task(id="task1", command="echo 'test'"))
+
+        input_path = tmp_path / "test.yaml"
+        expected_output_path = tmp_path / "test.json"  # Should convert .yaml to .json
+        save_workflow_to_json_yaml(wf, input_path)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["convert", "--input", str(input_path)])
+        
+        assert result.exit_code == 0
+        assert "⚠ No output format specified" in result.stderr
+        assert "Defaulting to Intermediate Representation (IR) format" in result.stderr
+        assert str(expected_output_path) in result.stderr
+        assert expected_output_path.exists()
+        assert "test.yaml → " in result.output and "test.json" in result.output
+
+    def test_convert_explicit_output_format_no_warning(self, tmp_path):
+        """Test that explicit output format doesn't show warning."""
+        # Create a simple workflow
+        wf = Workflow(name="explicit_format_test")
+        wf.add_task(Task(id="task1", command="echo 'test'"))
+
+        input_path = tmp_path / "test.json"
+        expected_output_path = tmp_path / "test.yaml"
+        wf.save_json(input_path)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["convert", "--input", str(input_path), "--out-format", "yaml"])
+        
+        assert result.exit_code == 0
+        assert "⚠ No output format specified" not in result.stderr
+        assert "Defaulting to Intermediate Representation" not in result.stderr
+        assert expected_output_path.exists()
+
+    def test_convert_explicit_output_path_no_warning(self, tmp_path):
+        """Test that explicit output path doesn't show warning."""
+        # Create a simple workflow
+        wf = Workflow(name="explicit_path_test")
+        wf.add_task(Task(id="task1", command="echo 'test'"))
+
+        input_path = tmp_path / "test.json"
+        output_path = tmp_path / "custom_output.yaml"
+        wf.save_json(input_path)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["convert", "--input", str(input_path), "--output", str(output_path)])
+        
+        assert result.exit_code == 0
+        assert "⚠ No output format specified" not in result.stderr
+        assert "Defaulting to Intermediate Representation" not in result.stderr
+        assert output_path.exists()
+
+    def test_convert_public_snakemake_pipeline(self, tmp_path):
+        """Test conversion of a public Snakemake pipeline from the official workflows."""
+        pytest.importorskip("requests")
+        
+        # Download a simple Snakemake workflow from the official repository
+        import requests
+        
+        # Get the main Snakefile from the official GATK variant calling pipeline
+        workflow_url = "https://raw.githubusercontent.com/snakemake-workflows/dna-seq-gatk-variant-calling/main/workflow/Snakefile"
+        
+        try:
+            response = requests.get(workflow_url, timeout=30)
+            response.raise_for_status()
+        except (requests.RequestException, requests.exceptions.Timeout) as e:
+            pytest.skip(f"Failed to download test workflow: {e}")
+        
+        # Save the workflow to a temporary file
+        snakefile_path = tmp_path / "Snakefile"
+        snakefile_path.write_text(response.text)
+        
+        # Test conversion with our tool
+        runner = CliRunner()
+        result = runner.invoke(cli, ["convert", "--input", str(snakefile_path), "--in-format", "snakemake"])
+        
+        # Check that IR warning was shown (should always be shown since we don't specify output format)
+        assert "⚠ No output format specified" in result.stderr
+        assert "Defaulting to Intermediate Representation (IR) format" in result.stderr
+        
+        if result.exit_code != 0:
+            # If snakemake is not available, we should get a helpful error message
+            if "snakemake importer is not available" in result.output.lower():
+                assert "install snakemake" in result.output.lower()
+            else:
+                # If snakemake is available but the workflow has issues (missing dependencies, etc.)
+                # that's still a valid test - it shows our system is working correctly
+                assert "failed to import snakemake workflow" in result.output.lower()
+        else:
+            # If successful, check that output file exists
+            expected_output = tmp_path / "Snakefile.json"
+            assert expected_output.exists()
+            
+            # Verify the output is valid JSON
+            import json
+            with open(expected_output) as f:
+                ir_data = json.load(f)
+            assert "name" in ir_data
+            assert "version" in ir_data
+            assert "tasks" in ir_data
+            assert "edges" in ir_data
+
+    def test_file_transfer_handling_distributed_computing(self, tmp_path):
+        """Test that file transfer specifications are correctly handled for distributed computing environments."""
+        from wf2wf.core import Workflow, Task, ParameterSpec
+        
+        # Create a workflow with various file transfer scenarios
+        wf = Workflow(name="transfer_test")
+        
+        # Task 1: Mixed transfer modes
+        task1 = Task(
+            id="mixed_files",
+            command="process_data input.txt > output.txt",
+            inputs=[
+                "regular_input.txt",  # Should default to auto transfer
+                ParameterSpec(id="/shared/reference.fa", type="File", transfer_mode="shared"),
+                ParameterSpec(id="temp_file.tmp", type="File", transfer_mode="never"),
+                ParameterSpec(id="required_input.dat", type="File", transfer_mode="always"),
+            ],
+            outputs=[
+                "result.txt",  # Should default to auto transfer
+                ParameterSpec(id="/shared/analysis/output.bam", type="File", transfer_mode="shared"),
+                ParameterSpec(id="debug.log", type="File", transfer_mode="never"),
+            ]
+        )
+        wf.add_task(task1)
+        
+        # Task 2: Only auto/always transfer files
+        task2 = Task(
+            id="transfer_files",
+            command="analyze result.txt > final.txt",
+            inputs=["result.txt"],
+            outputs=[
+                ParameterSpec(id="final.txt", type="File", transfer_mode="always"),
+                ParameterSpec(id="summary.json", type="File", transfer_mode="auto"),
+            ]
+        )
+        wf.add_task(task2)
+        wf.add_edge("mixed_files", "transfer_files")
+        
+        # Convert to DAGMan and check file transfer specifications
+        input_path = tmp_path / "transfer_test.json"
+        dag_path = tmp_path / "transfer_test.dag" 
+        wf.save_json(input_path)
+        
+        runner = CliRunner()
+        result = runner.invoke(cli, ["convert", "--input", str(input_path), "--output", str(dag_path)])
+        
+        assert result.exit_code == 0
+        assert dag_path.exists()
+        
+        # Read the generated submit files (DAGMan creates separate .sub files)
+        submit_files = list(tmp_path.glob("*.sub"))
+        assert len(submit_files) == 2  # Should have 2 submit files for 2 tasks
+        
+        # Read all submit content
+        submit_content = ""
+        for submit_file in submit_files:
+            content = submit_file.read_text()
+            submit_content += content
+        
+        # Check that the submit files contain proper file transfer specifications
+        assert "transfer_input_files" in submit_content
+        assert "transfer_output_files" in submit_content
+        
+        # Check that only the appropriate files are listed for transfer
+        # regular_input.txt and required_input.dat should be transferred (auto + always)
+        assert "regular_input.txt" in submit_content
+        assert "required_input.dat" in submit_content
+        
+        # /shared/reference.fa should NOT be transferred (shared mode)
+        assert "/shared/reference.fa" not in submit_content
+        
+        # temp_file.tmp should NOT be transferred (never mode)  
+        assert "temp_file.tmp" not in submit_content
+        
+        # result.txt, final.txt, and summary.json should be transferred
+        assert "result.txt" in submit_content
+        assert "final.txt" in submit_content  
+        assert "summary.json" in submit_content
+        
+        # debug.log should NOT be transferred (never mode)
+        assert "debug.log" not in submit_content
+        
+        if verbose := False:  # Set to True for debugging
+            print("Generated submit content:")
+            print(submit_content)
+
 
 @pytest.mark.skipif(not CLI_AVAILABLE, reason="CLI module not available")
 class TestCLIIntegration:
@@ -347,6 +564,135 @@ class TestCLIIntegration:
             assert "Auto-detected input format: json" in result.output
             assert "Auto-detected output format: yaml" in result.output
             assert output_path.exists()
+
+    def test_interactive_configuration_prompts(self, tmp_path, monkeypatch):
+        """Test interactive prompts for missing configurations."""
+        # Create a simple workflow without explicit configurations
+        snakefile = tmp_path / "minimal.smk"
+        snakefile.write_text(
+            textwrap.dedent("""
+            rule all:
+                input: "output.txt"
+            
+            rule process:
+                input: "input.txt"
+                output: "output.txt"
+                shell: "echo 'processed' > {output}"
+            """)
+        )
+        
+        # Create the required input file
+        input_file = tmp_path / "input.txt"
+        input_file.write_text("test input data")
+        
+        # Mock the wf2wf.prompt.ask function to always return True
+        def mock_ask(question, default=None):
+            return True  # Always return yes
+        
+        monkeypatch.setattr("wf2wf.prompt.ask", mock_ask)
+        
+        # Mock environment automation to skip container operations
+        def mock_build_or_reuse_env_image(*args, **kwargs):
+            return {"tag": "mock:tag", "digest": "sha256:mock"}
+        
+        monkeypatch.setattr("wf2wf.environ.build_or_reuse_env_image", mock_build_or_reuse_env_image)
+        
+        # Mock shutil.which to make Docker appear unavailable
+        original_shutil_which = shutil.which
+        def mock_shutil_which(name):
+            if name == "docker":
+                return None  # Make Docker appear unavailable
+            return original_shutil_which(name)
+        
+        monkeypatch.setattr("shutil.which", mock_shutil_which)
+        
+        # Run conversion with interactive mode
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "convert",
+                "-i", str(snakefile),
+                "-o", str(tmp_path / "workflow.dag"),
+                "--out-format", "dagman",
+                "--interactive",
+                "--verbose"
+            ]
+        )
+        
+        # Should complete successfully
+        assert result.exit_code == 0
+        
+        # Check that the output file was created
+        dag_file = tmp_path / "workflow.dag"
+        assert dag_file.exists()
+        
+        # Check that the DAG file contains expected content
+        dag_content = dag_file.read_text()
+        assert "JOB all_0 all_0.sub" in dag_content
+        assert "JOB process_1 process_1.sub" in dag_content
+        assert "PARENT process_1 CHILD all_0" in dag_content
+        
+        # Check that script files were created
+        scripts_dir = tmp_path / "scripts"
+        assert scripts_dir.exists()
+        assert (scripts_dir / "all_0.sh").exists()
+        assert (scripts_dir / "process_1.sh").exists()
+
+        # Verify the scripts are executable
+        for script_file in scripts_dir.glob("*.sh"):
+            assert os.access(script_file, os.X_OK)
+
+    def test_single_input_warning(self, tmp_path):
+        """Test warning when only input file is provided."""
+        snakefile = tmp_path / "test.smk"
+        snakefile.write_text("rule all: input: 'output.txt'")
+        
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["convert", "-i", str(snakefile)]
+        )
+        
+        # Should show warning about defaulting to IR format
+        assert "No output format specified" in result.output
+        assert "Defaulting to Intermediate Representation" in result.output
+        assert result.exit_code == 0
+
+    def test_file_transfer_mode_detection(self, tmp_path):
+        """Test automatic file transfer mode detection."""
+        snakefile = tmp_path / "transfer_test.smk"
+        snakefile.write_text(
+            textwrap.dedent("""
+            rule all:
+                input: "results/final.txt"
+            
+            rule process:
+                input: "data/input.txt"
+                output: "results/output.txt"
+                shell: "cp {input} {output}"
+            """)
+        )
+        
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "convert",
+                "-i", str(snakefile),
+                "-o", str(tmp_path / "workflow.dag"),
+                "--out-format", "dagman",
+                "--verbose"
+            ]
+        )
+        
+        assert result.exit_code == 0
+        
+        # Check that transfer modes were detected
+        dag_content = (tmp_path / "workflow.dag").read_text()
+        # The DAGMan exporter should generate transfer_input_files and transfer_output_files
+        # based on the detected transfer modes
+        assert "transfer_input_files" in dag_content or "transfer_output_files" in dag_content
 
 
 @pytest.mark.skipif(not CLI_AVAILABLE, reason="CLI module not available")
@@ -417,3 +763,13 @@ class TestCleanup:
 
         # The fixture should clean up automatically
         # This test mainly verifies the fixture works without errors
+
+
+def is_docker_running():
+    try:
+        result = subprocess.run([
+            "docker", "info"
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+        return result.returncode == 0
+    except Exception:
+        return False

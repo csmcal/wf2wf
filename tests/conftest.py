@@ -274,8 +274,23 @@ def _docker_container_guard(request):
     import os
 
     if shutil.which("docker") is None:
-        yield
-        return
+        return  # Skip fixture entirely if Docker is not installed
+
+    def _is_docker_daemon_running() -> bool:
+        """Check if Docker daemon is actually running."""
+        try:
+            subprocess.run(
+                ["docker", "info"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=3
+            )
+            return True
+        except Exception:
+            return False
+
+    if not _is_docker_daemon_running():
+        return  # Skip fixture entirely if Docker daemon is not running
 
     def _list_running_ids() -> set[str]:
         try:

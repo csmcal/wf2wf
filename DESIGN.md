@@ -911,3 +911,152 @@ wf2wf convert -i analysis.cwl -o pipeline.smk --out-format snakemake --fail-on-l
 ```
 
 These UX touches make loss transparency a first-class feature.
+
+### 10.9 Configuration Analysis and Interactive Mode *(added 2025-01-27)*
+
+A critical challenge in workflow conversion is handling the fundamental differences between **shared filesystem workflows** (Snakemake, CWL, Nextflow) and **distributed computing workflows** (HTCondor/DAGMan). wf2wf addresses this through intelligent configuration analysis and interactive assistance.
+
+#### 10.9.1 Configuration Differences
+
+**Shared Filesystem Workflows:**
+- Assume all files accessible on shared filesystem
+- Minimal resource specifications (rely on system defaults)
+- System-wide software or conda environments
+- Basic error handling and retry mechanisms
+
+**Distributed Computing Workflows:**
+- Require explicit file transfer specifications
+- Need explicit resource allocation (CPU, memory, disk)
+- Require container specifications for environment isolation
+- Benefit from sophisticated retry policies
+
+#### 10.9.2 Automatic Configuration Detection
+
+wf2wf automatically detects configuration gaps when converting between execution environments:
+
+```python
+def analyze_configuration_gaps(workflow: Workflow, target_format: str) -> List[ConfigIssue]:
+    """Analyze workflow for potential configuration issues."""
+    issues = []
+    
+    # Resource requirements
+    for task in workflow.tasks.values():
+        if task.resources.mem_mb == 0:
+            issues.append(ConfigIssue(
+                type="missing_memory",
+                task_id=task.id,
+                severity="warn",
+                message="Task lacks explicit memory requirements"
+            ))
+    
+    # Container specifications
+    for task in workflow.tasks.values():
+        if not task.environment.container and not task.environment.conda:
+            issues.append(ConfigIssue(
+                type="missing_container",
+                task_id=task.id,
+                severity="warn", 
+                message="Task lacks container or conda specification"
+            ))
+    
+    # Error handling
+    for task in workflow.tasks.values():
+        if task.retry == 0:
+            issues.append(ConfigIssue(
+                type="missing_retry",
+                task_id=task.id,
+                severity="info",
+                message="Task lacks retry specification"
+            ))
+    
+    return issues
+```
+
+#### 10.9.3 Interactive Mode Features
+
+When using `--interactive`, wf2wf provides guided assistance:
+
+```bash
+# Example interactive prompts
+Found 3 tasks without explicit resource requirements. 
+Distributed systems require explicit resource allocation. 
+Add default resource specifications? (y)es/(n)o/(a)lways/(q)uit: y
+
+Found 3 tasks without container or conda specifications. 
+Distributed systems typically require explicit environment isolation. 
+Add container specifications or conda environments? (y)es/(n)o/(a)lways/(q)uit: y
+
+Found 3 tasks without retry specifications. 
+Distributed systems benefit from explicit error handling. 
+Add retry specifications for failed tasks? (y)es/(n)o/(a)lways/(q)uit: y
+```
+
+#### 10.9.4 Smart Defaults
+
+wf2wf applies intelligent defaults when users approve:
+
+```python
+def apply_smart_defaults(workflow: Workflow, target_format: str):
+    """Apply intelligent defaults for missing configurations."""
+    
+    if target_format in ["dagman", "nextflow"]:
+        for task in workflow.tasks.values():
+            # Default resource specifications
+            if task.resources.mem_mb == 0:
+                task.resources.mem_mb = 4096  # 4GB default
+            if task.resources.disk_mb == 0:
+                task.resources.disk_mb = 4096  # 4GB default
+            
+            # Default retry policy
+            if task.retry == 0:
+                task.retry = 2  # 2 retries for fault tolerance
+```
+
+#### 10.9.5 Configuration Analysis Report
+
+The conversion report includes detailed configuration analysis:
+
+```markdown
+## Configuration Analysis
+
+### Potential Issues for Distributed Computing
+
+* **Memory**: 2 tasks without explicit memory requirements
+* **Containers**: 3 tasks without container/conda specifications
+* **Error Handling**: 3 tasks without retry specifications
+* **File Transfer**: 6 files with auto-detected transfer modes
+
+**Recommendations:**
+* Add explicit resource requirements for all tasks
+* Specify container images or conda environments for environment isolation
+* Configure retry policies for fault tolerance
+* Review file transfer modes for distributed execution
+```
+
+#### 10.9.6 File Transfer Mode Detection
+
+wf2wf automatically detects appropriate file transfer modes:
+
+```python
+def detect_transfer_mode(file_path: str) -> str:
+    """Detect appropriate transfer mode based on file path patterns."""
+    
+    # Shared storage patterns
+    if any(pattern in file_path for pattern in ["/shared/", "/nfs/", "/data/", "/lustre/"]):
+        return "shared"
+    
+    # Temporary/local patterns
+    if any(pattern in file_path for pattern in ["/tmp/", ".tmp", ".log", "temp_"]):
+        return "never"
+    
+    # Reference data patterns
+    if any(ext in file_path for ext in [".fa", ".fasta", ".gtf", ".bam"]):
+        return "shared"
+    
+    # Default to auto (will be transferred)
+    return "auto"
+```
+
+This configuration analysis system ensures that workflows are properly adapted for their target execution environment while maintaining transparency about what changes were made.
+
+---

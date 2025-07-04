@@ -128,7 +128,13 @@ def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
             raise ValueError(f"Unsupported CWL class: {cwl_doc.get('class')}")
 
         # Enhanced parsing with cwltool if requested
-        if use_cwltool and shutil.which("cwltool"):
+        if use_cwltool:
+            if not shutil.which("cwltool"):
+                raise RuntimeError(
+                    "The 'cwltool' executable was not found in your PATH. "
+                    "Please install cwltool: 'pip install cwltool' or 'conda install cwltool'. "
+                    "Alternatively, set use_cwltool=False to use direct parsing."
+                )
             if verbose:
                 print("Using cwltool for enhanced parsing...")
             workflow = _parse_with_cwltool(cwl_path, workflow, verbose=verbose)
@@ -972,31 +978,47 @@ def _extract_resource_requirements_enhanced(
         if req_class == "ResourceRequirement":
             # Parse CPU requirements
             if "coresMin" in req:
-                resources.cpu = max(resources.cpu, int(req["coresMin"]))
+                cpu_min = int(req["coresMin"])
+                if resources.cpu is None:
+                    resources.cpu = cpu_min
+                else:
+                    resources.cpu = max(resources.cpu, cpu_min)
             if "coresMax" in req:
-                resources.cpu = max(
-                    resources.cpu, int(req["coresMax"])
-                )  # Use coresMax for CPU
-                resources.threads = int(req["coresMax"])
+                cpu_max = int(req["coresMax"])
+                if resources.cpu is None:
+                    resources.cpu = cpu_max
+                else:
+                    resources.cpu = max(resources.cpu, cpu_max)  # Use coresMax for CPU
+                resources.threads = cpu_max
 
             # Parse memory requirements (convert to MB)
             if "ramMin" in req:
                 ram_min = req["ramMin"]
                 if isinstance(ram_min, str) and ram_min.endswith("G"):
-                    resources.mem_mb = max(
-                        resources.mem_mb, int(float(ram_min[:-1]) * 1024)
-                    )
+                    mem_min = int(float(ram_min[:-1]) * 1024)
                 elif isinstance(ram_min, (int, float)):
-                    resources.mem_mb = max(resources.mem_mb, int(ram_min))
+                    mem_min = int(ram_min)
+                else:
+                    continue
+                
+                if resources.mem_mb is None:
+                    resources.mem_mb = mem_min
+                else:
+                    resources.mem_mb = max(resources.mem_mb, mem_min)
 
             if "ramMax" in req:
                 ram_max = req["ramMax"]
                 if isinstance(ram_max, str) and ram_max.endswith("G"):
-                    resources.mem_mb = max(
-                        resources.mem_mb, int(float(ram_max[:-1]) * 1024)
-                    )
+                    mem_max = int(float(ram_max[:-1]) * 1024)
                 elif isinstance(ram_max, (int, float)):
-                    resources.mem_mb = max(resources.mem_mb, int(ram_max))
+                    mem_max = int(ram_max)
+                else:
+                    continue
+                
+                if resources.mem_mb is None:
+                    resources.mem_mb = mem_max
+                else:
+                    resources.mem_mb = max(resources.mem_mb, mem_max)
 
             # Parse disk requirements (convert to MB and add them together)
             total_disk_mb = 0
@@ -1025,7 +1047,10 @@ def _extract_resource_requirements_enhanced(
 
             # Use the maximum of current disk_mb and total calculated disk
             if total_disk_mb > 0:
-                resources.disk_mb = max(resources.disk_mb, total_disk_mb)
+                if resources.disk_mb is None:
+                    resources.disk_mb = total_disk_mb
+                else:
+                    resources.disk_mb = max(resources.disk_mb, total_disk_mb)
 
         elif req_class == "ToolTimeLimit":
             # Parse time limits

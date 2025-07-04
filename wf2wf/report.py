@@ -132,6 +132,60 @@ def generate(
         """)
         md_content += "\n"
 
+    # Configuration Analysis
+    if wf_after is not None:
+        md_content += "## Configuration Analysis\n\n"
+        
+        # Analyze resource specifications
+        tasks_without_memory = []
+        tasks_without_disk = []
+        tasks_without_containers = []
+        tasks_without_retry = []
+        auto_transfer_files = []
+        
+        for task in wf_after.tasks.values():
+            if task.resources.mem_mb == 0:
+                tasks_without_memory.append(task.id)
+            if task.resources.disk_mb == 0:
+                tasks_without_disk.append(task.id)
+            if not task.environment.container and not task.environment.conda:
+                tasks_without_containers.append(task.id)
+            if task.retry == 0:
+                tasks_without_retry.append(task.id)
+            
+            # Check file transfer modes
+            for param in task.inputs + task.outputs:
+                if hasattr(param, 'transfer_mode') and param.transfer_mode == "auto":
+                    auto_transfer_files.append(f"{task.id}.{param.id}")
+        
+        config_issues = []
+        if tasks_without_memory:
+            config_issues.append(f"**Memory**: {len(tasks_without_memory)} tasks without explicit memory requirements")
+        if tasks_without_disk:
+            config_issues.append(f"**Disk**: {len(tasks_without_disk)} tasks without explicit disk requirements")
+        if tasks_without_containers:
+            config_issues.append(f"**Containers**: {len(tasks_without_containers)} tasks without container/conda specifications")
+        if tasks_without_retry:
+            config_issues.append(f"**Error Handling**: {len(tasks_without_retry)} tasks without retry specifications")
+        if auto_transfer_files:
+            config_issues.append(f"**File Transfer**: {len(auto_transfer_files)} files with auto-detected transfer modes")
+        
+        if config_issues:
+            md_content += "### Potential Issues for Distributed Computing\n\n"
+            for issue in config_issues:
+                md_content += f"* {issue}\n"
+            md_content += "\n"
+            
+            md_content += textwrap.dedent("""
+            **Recommendations:**
+            * Add explicit resource requirements for all tasks
+            * Specify container images or conda environments for environment isolation
+            * Configure retry policies for fault tolerance
+            * Review file transfer modes for distributed execution
+            """)
+        else:
+            md_content += "### Configuration Status\n\n✅ All tasks have appropriate configurations for distributed computing.\n\n"
+
     # Artefacts
     if artefacts:
         md_content += "## Generated Artefacts\n\n"

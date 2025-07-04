@@ -223,16 +223,7 @@ def prepare_conda_setup_jobs(dag_info, conda_prefix, verbose=False, debug=False)
         )
 
 
-def _generate_dockerfile(env_yaml_path, build_context_dir):
-    """Generates a simple Dockerfile for a given conda environment file."""
-    dockerfile_content = f"""
-FROM continuumio/miniconda3:latest
-COPY {env_yaml_path.name} /tmp/environment.yaml
-RUN conda env create -f /tmp/environment.yaml
-"""
-    dockerfile_path = build_context_dir / "Dockerfile"
-    dockerfile_path.write_text(textwrap.dedent(dockerfile_content))
-    return dockerfile_path
+
 
 
 def build_and_push_docker_images(dag_info, docker_registry, verbose=False, debug=False):
@@ -240,150 +231,25 @@ def build_and_push_docker_images(dag_info, docker_registry, verbose=False, debug
     Builds and pushes Docker images for conda environments if they don't exist in the remote registry.
     Modifies dag_info in-place.
     """
+    from wf2wf.environ import build_and_push_conda_env_images
+    
     print("\n--- Starting Docker Image Build Phase ---")
+    
     conda_envs = dag_info.get("conda_envs", {})
-    if not conda_envs:
-        print("No conda environments found to build.")
-        return
-
-    if verbose:
-        print(f"INFO: Building Docker images for {len(conda_envs)} conda environments")
-        print(f"  Registry: {docker_registry}")
-
-    for original_yaml_path, env_info in conda_envs.items():
-        env_hash = env_info["hash"]
-        # Construct the image name and tag
-        # Use a sanitized version of the snakefile name as the repo name for consistency
-        repo_name = _sanitize_condor_job_name(
-            Path(dag_info.get("snakefile", "workflow")).stem
-        )
-        image_name = f"{docker_registry}/{repo_name}"
-        image_tag = env_hash
-        full_image_url = f"{image_name}:{image_tag}"
-        env_info["docker_image_url"] = full_image_url
-
-        print(f"Processing environment '{original_yaml_path.name}':")
-        print(f"  Target image: {full_image_url}")
-
-        if debug:
-            print(f"DEBUG: Environment hash: {env_hash}")
-            print(f"DEBUG: Repository name: {repo_name}")
-
-        # 1. Check if image exists remotely
-        try:
-            if verbose:
-                print("  Checking for remote manifest...")
-            # Use docker manifest inspect to check remote without pulling
-            subprocess.run(
-                ["docker", "manifest", "inspect", full_image_url],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            if debug:
-                print("DEBUG: Manifest found, image exists")
-            print("  ✔ Image already exists in registry. Skipping build.")
-            continue
-        except subprocess.CalledProcessError as e:
-            if verbose:
-                print("  Image not found in registry. Proceeding with build and push.")
-            if debug:
-                print(f"DEBUG: Manifest check failed with code {e.returncode}")
-
-        # 2. Create build context
-        with tempfile.TemporaryDirectory() as build_context:
-            build_context_path = Path(build_context)
-            if debug:
-                print(f"DEBUG: Using build context: {build_context_path}")
-
-            # Copy env file to build context
-            shutil.copy(original_yaml_path, build_context_path)
-            # Generate Dockerfile
-            dockerfile_path = _generate_dockerfile(
-                original_yaml_path, build_context_path
-            )
-
-            if debug:
-                print(f"DEBUG: Generated Dockerfile at {dockerfile_path}")
-                with open(dockerfile_path, "r") as f:
-                    print(f"DEBUG: Dockerfile contents:\n{f.read()}")
-
-            # 3. Build the image
-            print("  Building Docker image...")
-            try:
-                build_cmd = ["docker", "build", "-t", full_image_url, "."]
-                if debug:
-                    print(f"DEBUG: Build command: {' '.join(build_cmd)}")
-
-                proc = subprocess.Popen(
-                    build_cmd,
-                    cwd=build_context_path,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                )
-                if verbose or debug:
-                    for line in iter(proc.stdout.readline, ""):
-                        prefix = "DEBUG: " if debug else "    "
-                        print(f"{prefix}{line.strip()}")
-                else:
-                    proc.communicate()  # Wait for completion without showing output
-
-                proc.wait()
-                if proc.returncode != 0:
-                    print(
-                        f"  ✗ ERROR: Docker build failed for {full_image_url}. See output above."
-                    )
-                    sys.exit(1)
-                print("  ✔ Build successful.")
-            except Exception as e:
-                print(
-                    f"  ✗ ERROR: An unexpected error occurred during docker build: {e}"
-                )
-                if debug:
-                    import traceback
-
-                    print(f"DEBUG: Full traceback:\n{traceback.format_exc()}")
-                sys.exit(1)
-
-            # 4. Push the image
-            print("  Pushing image to registry...")
-            try:
-                push_cmd = ["docker", "push", full_image_url]
-                if debug:
-                    print(f"DEBUG: Push command: {' '.join(push_cmd)}")
-
-                proc = subprocess.Popen(
-                    push_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                )
-                if verbose or debug:
-                    for line in iter(proc.stdout.readline, ""):
-                        prefix = "DEBUG: " if debug else "    "
-                        print(f"{prefix}{line.strip()}")
-                else:
-                    proc.communicate()  # Wait for completion without showing output
-
-                proc.wait()
-                if proc.returncode != 0:
-                    print(f"  ✗ ERROR: Docker push failed for {full_image_url}.")
-                    print(
-                        f"  Please ensure you are logged in to '{docker_registry}' and have push permissions."
-                    )
-                    sys.exit(1)
-                print("  ✔ Push successful.")
-            except Exception as e:
-                print(
-                    f"  ✗ ERROR: An unexpected error occurred during docker push: {e}"
-                )
-                if debug:
-                    import traceback
-
-                    print(f"DEBUG: Full traceback:\n{traceback.format_exc()}")
-                sys.exit(1)
-
+    workflow_name = Path(dag_info.get("snakefile", "workflow")).stem
+    
+    success = build_and_push_conda_env_images(
+        conda_envs=conda_envs,
+        docker_registry=docker_registry,
+        workflow_name=workflow_name,
+        verbose=verbose,
+        debug=debug,
+        dry_run=False,
+    )
+    
+    if not success:
+        sys.exit(1)
+    
     print("--- Docker Image Build Phase Complete ---\n")
 
 
@@ -392,104 +258,20 @@ def convert_docker_to_apptainer(dag_info, sif_dir, verbose=False, debug=False):
     Converts Docker images (that were just built) to local Apptainer .sif files.
     Modifies dag_info in-place.
     """
-    print("--- Starting Apptainer Conversion Phase ---")
-    # Check for apptainer/singularity executable
-    apptainer_cmd = shutil.which("apptainer") or shutil.which("singularity")
-    if not apptainer_cmd:
-        print(
-            "WARNING: 'apptainer' or 'singularity' command not found. Skipping conversion."
-        )
-        return
-
-    if verbose:
-        print(f"INFO: Using {Path(apptainer_cmd).name} for container conversion")
-
-    sif_path = Path(sif_dir)
-    sif_path.mkdir(parents=True, exist_ok=True)
-    print(f"Storing .sif files in: {sif_path.resolve()}")
-
+    from wf2wf.environ import convert_docker_images_to_apptainer
+    
     conda_envs = dag_info.get("conda_envs", {})
-    if not conda_envs:
-        if verbose:
-            print("INFO: No conda environments found for conversion")
-        return
-
-    if verbose:
-        print(f"INFO: Converting {len(conda_envs)} Docker images to Apptainer format")
-
-    for env_info in conda_envs.values():
-        docker_image_url = env_info.get("docker_image_url")
-        if not docker_image_url:
-            if debug:
-                print(
-                    f"DEBUG: Skipping environment without Docker image URL: {env_info}"
-                )
-            continue
-
-        sif_filename = f"{env_info['hash']}.sif"
-        target_sif_path = sif_path / sif_filename
-        env_info["apptainer_sif_path"] = str(target_sif_path)
-
-        print(f"Processing image '{docker_image_url}':")
-        print(f"  Target .sif file: {target_sif_path}")
-
-        if debug:
-            print(f"DEBUG: Environment hash: {env_info['hash']}")
-            print(f"DEBUG: SIF filename: {sif_filename}")
-
-        if target_sif_path.exists():
-            print("  ✔ .sif file already exists. Skipping conversion.")
-            if debug:
-                print(
-                    f"DEBUG: Existing file size: {target_sif_path.stat().st_size} bytes"
-                )
-            continue
-
-        print(f"  Converting with '{Path(apptainer_cmd).name}'...")
-        try:
-            # Command: apptainer build target.sif docker://user/image:tag
-            build_cmd = [
-                apptainer_cmd,
-                "build",
-                "--force",
-                str(target_sif_path),
-                f"docker://{docker_image_url}",
-            ]
-            if debug:
-                print(f"DEBUG: Apptainer command: {' '.join(build_cmd)}")
-
-            proc = subprocess.Popen(
-                build_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-            )
-            if verbose or debug:
-                for line in iter(proc.stdout.readline, ""):
-                    prefix = "DEBUG: " if debug else "    "
-                    print(f"{prefix}{line.strip()}")
-            else:
-                proc.communicate()  # Wait for completion without showing output
-
-            proc.wait()
-            if proc.returncode != 0:
-                print(
-                    f"  ✗ ERROR: Apptainer build failed for {docker_image_url}. See output above."
-                )
-                # Don't exit, just warn and continue. The Docker image can still be used.
-            else:
-                print("  ✔ Conversion successful.")
-                if debug and target_sif_path.exists():
-                    print(
-                        f"DEBUG: Created SIF file size: {target_sif_path.stat().st_size} bytes"
-                    )
-        except Exception as e:
-            print(
-                f"  ✗ ERROR: An unexpected error occurred during Apptainer conversion: {e}"
-            )
-            if debug:
-                import traceback
-
-                print(f"DEBUG: Full traceback:\n{traceback.format_exc()}")
-
-    print("--- Apptainer Conversion Phase Complete ---\n")
+    
+    success = convert_docker_images_to_apptainer(
+        conda_envs=conda_envs,
+        sif_dir=sif_dir,
+        verbose=verbose,
+        debug=debug,
+        dry_run=False,
+    )
+    
+    if not success:
+        print("WARNING: Some Apptainer conversions failed, but continuing...")
 
 
 def generate_job_scripts(dag_info, output_dir="scripts", verbose=False, debug=False):
@@ -1696,6 +1478,57 @@ def _generate_submit_content(
             f"error = logs/{job_name}.err",
             f"log = logs/{job_name}.log",
             "",
+        ]
+    )
+
+    # File transfer specifications
+    if task.inputs or task.outputs:
+        lines.append("# File transfers")
+        
+        # Generate transfer_input_files from task inputs
+        if task.inputs:
+            input_files = []
+            for inp in task.inputs:
+                if isinstance(inp, str):
+                    # Default to auto transfer for string inputs
+                    input_files.append(inp)
+                else:
+                    # Handle ParameterSpec objects - respect transfer_mode
+                    transfer_mode = getattr(inp, 'transfer_mode', 'auto')
+                    if transfer_mode in ['auto', 'always']:
+                        input_files.append(getattr(inp, 'id', str(inp)))
+                    # Skip files with transfer_mode 'never' or 'shared'
+            
+            if input_files:
+                # Filter out empty strings and deduplicate
+                input_files = list(set(f for f in input_files if f and f.strip()))
+                if input_files:
+                    lines.append(f"transfer_input_files = {','.join(input_files)}")
+        
+        # Generate transfer_output_files from task outputs  
+        if task.outputs:
+            output_files = []
+            for out in task.outputs:
+                if isinstance(out, str):
+                    # Default to auto transfer for string outputs
+                    output_files.append(out)
+                else:
+                    # Handle ParameterSpec objects - respect transfer_mode
+                    transfer_mode = getattr(out, 'transfer_mode', 'auto')
+                    if transfer_mode in ['auto', 'always']:
+                        output_files.append(getattr(out, 'id', str(out)))
+                    # Skip files with transfer_mode 'never' or 'shared'
+            
+            if output_files:
+                # Filter out empty strings and deduplicate
+                output_files = list(set(f for f in output_files if f and f.strip()))
+                if output_files:
+                    lines.append(f"transfer_output_files = {','.join(output_files)}")
+        
+        lines.append("")
+
+    lines.extend(
+        [
             "# Job settings",
         ]
     )

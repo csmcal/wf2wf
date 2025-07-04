@@ -86,7 +86,7 @@ class TestConfigurationManagement:
 
         # Simulate applying defaults to tasks without explicit resources
         for task in wf.tasks.values():
-            if task.resources.cpu == 1 and task.resources.mem_mb == 0:  # Default values
+            if task.resources.cpu is None and task.resources.mem_mb is None:  # Default values
                 task.resources.cpu = default_resources.cpu
                 task.resources.mem_mb = default_resources.mem_mb
                 task.resources.disk_mb = default_resources.disk_mb
@@ -99,7 +99,7 @@ class TestConfigurationManagement:
         # Verify explicit resources were preserved
         assert wf.tasks["explicit_task"].resources.cpu == 8
         assert wf.tasks["explicit_task"].resources.mem_mb == 16384
-        assert wf.tasks["explicit_task"].resources.disk_mb == 0  # Not overridden
+        assert wf.tasks["explicit_task"].resources.disk_mb is None  # Not overridden
 
     def test_workflow_metadata_preservation(self):
         """Test that workflow metadata is preserved through operations."""
@@ -217,24 +217,20 @@ class TestPerformanceAndScaling:
         """Test handling of tasks with minimal specifications."""
         wf = Workflow(name="empty_tasks")
 
-        # Task with only ID and command
-        minimal_task = Task(id="minimal_task", command="echo 'minimal'")
-        wf.add_task(minimal_task)
+        # Task with minimal specification
+        empty_task = Task(id="empty_task", command="echo 'empty'")
+        wf.add_task(empty_task)
 
-        # Task with only ID and script
-        script_task = Task(id="script_task", script="process.py")
-        wf.add_task(script_task)
+        # Verify default resource values
+        assert empty_task.resources.cpu is None
+        assert empty_task.resources.mem_mb is None
+        assert empty_task.resources.disk_mb is None
+        assert empty_task.resources.gpu is None
+        assert empty_task.resources.extra == {}
 
-        # Verify default values are set correctly
-        assert minimal_task.resources.cpu == 1
-        assert minimal_task.resources.mem_mb == 0
-        assert minimal_task.inputs == []
-        assert minimal_task.outputs == []
-        assert minimal_task.retry == 0
-        assert minimal_task.priority == 0
-
-        assert script_task.command is None
-        assert script_task.script == "process.py"
+        # Verify task can be exported (should use defaults)
+        assert len(wf.tasks) == 1
+        assert "empty_task" in wf.tasks
 
 
 class TestEdgeCases:

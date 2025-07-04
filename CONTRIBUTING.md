@@ -112,3 +112,52 @@ $ ruff format wf2wf
 ```
 
 All metadata lives in `pyproject.toml`. Use `bumpver` for version management - **do not** manually edit version numbers. New features must update `CHANGELOG.md` under **Unreleased**.
+
+## 8. New Features: Configuration Analysis and Interactive Mode
+
+When contributing to wf2wf, be aware of the new configuration analysis and interactive mode features that help users convert between different workflow execution environments.
+
+### Key Concepts
+
+**Shared Filesystem vs Distributed Computing:**
+- **Shared Filesystem Workflows** (Snakemake, CWL, Nextflow): Assume all files accessible on shared filesystem, minimal resource specs
+- **Distributed Computing Workflows** (HTCondor/DAGMan): Require explicit file transfer, resource allocation, and container specifications
+
+### Configuration Analysis Features
+
+When converting workflows, wf2wf automatically detects:
+- Missing resource requirements (memory, disk, CPU)
+- Missing container/conda specifications
+- Missing retry policies for error handling
+- File transfer mode requirements
+
+### Interactive Mode
+
+The `--interactive` flag enables guided prompts:
+```bash
+wf2wf convert -i Snakefile -o workflow.dag --interactive
+```
+
+This prompts users to:
+- Add default resource specifications
+- Specify container environments
+- Configure retry policies
+- Review file transfer modes
+
+### Testing New Features
+
+When adding new configuration analysis features:
+1. Add tests in `tests/test_cli/test_unified_cli.py`
+2. Test both interactive and non-interactive modes
+3. Verify configuration analysis appears in conversion reports
+4. Test smart defaults are applied correctly
+
+### Documentation Updates
+
+New features should be documented in:
+- `README.md` - Overview and examples
+- `DESIGN.md` - Technical design and implementation
+- `docs/user_guide/file_transfers.md` - Detailed user guide
+- `CONTRIBUTING.md` - This section for contributors
+
+See the existing implementation in `wf2wf/cli.py` and `wf2wf/report.py` for examples of how to integrate new configuration analysis features.

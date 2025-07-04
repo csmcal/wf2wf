@@ -473,9 +473,19 @@ def _parse_submit_file(submit_path: Path, debug: bool = False) -> Dict[str, Any]
 
         # Transfer files (approximate input/output detection)
         elif key == "transfer_input_files":
-            submit_info["input"] = [f.strip() for f in value.split(",") if f.strip()]
+            # Create ParameterSpec objects with explicit transfer mode
+            from wf2wf.core import ParameterSpec
+            submit_info["input"] = [
+                ParameterSpec(id=f.strip(), type="File", transfer_mode="always")
+                for f in value.split(",") if f.strip()
+            ]
         elif key == "transfer_output_files":
-            submit_info["output"] = [f.strip() for f in value.split(",") if f.strip()]
+            # Create ParameterSpec objects with explicit transfer mode
+            from wf2wf.core import ParameterSpec
+            submit_info["output"] = [
+                ParameterSpec(id=f.strip(), type="File", transfer_mode="always")
+                for f in value.split(",") if f.strip()
+            ]
 
         # Environment variables
         elif key == "environment":

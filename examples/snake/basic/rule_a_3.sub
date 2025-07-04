@@ -1,0 +1,20 @@
+# Submit description for rule_a_3
+executable = /Users/cmcallester/cMcAl/UWM/Pool/condor-tools/dag-tools/wf2wf/examples/snake/basic/scripts/rule_a_3.sh
+
+# Resource requirements
+request_cpus = 1
+request_memory = 2048MB
+request_disk = 4096MB
+
+# I/O and logging
+output = logs/rule_a_3.out
+error = logs/rule_a_3.err
+log = logs/rule_a_3.log
+
+# Job settings
+universe = vanilla
+should_transfer_files = YES
+when_to_transfer_output = ON_EXIT
+
+# Submit the job
+queue

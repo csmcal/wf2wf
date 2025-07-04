@@ -311,6 +311,7 @@ def _generate_rule(
     debug: bool = False,
 ) -> List[str]:
     """Generate Snakemake rule for a task."""
+    from wf2wf.environ import format_container_for_target_format, get_environment_metadata
 
     lines = []
 
@@ -355,21 +356,16 @@ def _generate_rule(
     # Container
     if include_containers and task.environment.container:
         # Convert different container formats
-        container = task.environment.container
-        if container.startswith("docker://"):
-            container = container[9:]  # Remove docker:// prefix
+        container = format_container_for_target_format(task.environment.container, "snakemake")
         lines.append(f'    container: "{container}"')
 
     # SBOM / SIF provenance comments for reproducibility
-    sbom_path = (
-        task.environment.env_vars.get("WF2WF_SBOM") if task.environment else None
-    )
-    sif_path = task.environment.env_vars.get("WF2WF_SIF") if task.environment else None
-
-    if sbom_path:
-        lines.append(f'    # wf2wf_sbom: "{sbom_path}"')
-    if sif_path:
-        lines.append(f'    # wf2wf_sif: "{sif_path}"')
+    if task.environment:
+        metadata = get_environment_metadata(task.environment.env_vars)
+        if metadata["sbom_path"]:
+            lines.append(f'    # wf2wf_sbom: "{metadata["sbom_path"]}"')
+        if metadata["sif_path"]:
+            lines.append(f'    # wf2wf_sif: "{metadata["sif_path"]}"')
 
     # Priority (if non-zero)
     if task.priority != 0:
@@ -417,13 +413,13 @@ def _has_non_default_resources(resources: ResourceSpec) -> bool:
     """Check if resource spec has non-default values."""
 
     return (
-        resources.cpu != 1
-        or resources.mem_mb > 0
-        or resources.disk_mb > 0
-        or resources.gpu > 0
-        or resources.gpu_mem_mb > 0
-        or resources.time_s > 0
-        or resources.threads != 1
+        (resources.cpu and resources.cpu != 1)
+        or (resources.mem_mb and resources.mem_mb > 0)
+        or (resources.disk_mb and resources.disk_mb > 0)
+        or (resources.gpu and resources.gpu > 0)
+        or (resources.gpu_mem_mb and resources.gpu_mem_mb > 0)
+        or (resources.time_s and resources.time_s > 0)
+        or (resources.threads and resources.threads != 1)
         or resources.extra
     )
 
@@ -433,10 +429,10 @@ def _generate_resource_spec(resources: ResourceSpec) -> List[str]:
 
     lines = ["    resources:"]
 
-    if resources.cpu != 1:
+    if resources.cpu and resources.cpu != 1:
         lines.append(f"        cpus={resources.cpu},")
 
-    if resources.mem_mb > 0:
+    if resources.mem_mb and resources.mem_mb > 0:
         # Convert MB to GB for readability if >= 1GB
         if resources.mem_mb >= 1024:
             mem_gb = resources.mem_mb / 1024
@@ -447,7 +443,7 @@ def _generate_resource_spec(resources: ResourceSpec) -> List[str]:
         else:
             lines.append(f"        mem_mb={resources.mem_mb},")
 
-    if resources.disk_mb > 0:
+    if resources.disk_mb and resources.disk_mb > 0:
         # Convert MB to GB for readability if >= 1GB
         if resources.disk_mb >= 1024:
             disk_gb = resources.disk_mb / 1024
@@ -458,10 +454,10 @@ def _generate_resource_spec(resources: ResourceSpec) -> List[str]:
         else:
             lines.append(f"        disk_mb={resources.disk_mb},")
 
-    if resources.gpu > 0:
+    if resources.gpu and resources.gpu > 0:
         lines.append(f"        gpu={resources.gpu},")
 
-    if resources.time_s > 0:
+    if resources.time_s and resources.time_s > 0:
         # Convert seconds to hours/minutes for readability
         if resources.time_s >= 3600:
             hours = resources.time_s / 3600
@@ -472,7 +468,7 @@ def _generate_resource_spec(resources: ResourceSpec) -> List[str]:
             minutes = resources.time_s / 60
             lines.append(f"        runtime={int(minutes)},")
 
-    if resources.threads != 1:
+    if resources.threads and resources.threads != 1:
         lines.append(f"        threads={resources.threads},")
 
     # Add extra resources

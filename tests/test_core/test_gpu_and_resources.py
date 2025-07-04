@@ -305,20 +305,21 @@ class TestResourceDefaults:
     def test_resource_spec_defaults(self):
         """Test ResourceSpec default values."""
         resources = ResourceSpec()
-        assert resources.cpu == 1
-        assert resources.mem_mb == 0
-        assert resources.disk_mb == 0
-        assert resources.gpu == 0
-        assert resources.gpu_mem_mb == 0
-        assert resources.threads == 1
+        assert resources.cpu is None
+        assert resources.mem_mb is None
+        assert resources.disk_mb is None
+        assert resources.gpu is None
+        assert resources.gpu_mem_mb is None
+        assert resources.time_s is None
+        assert resources.threads is None
         assert resources.extra == {}
 
     def test_task_default_resources(self):
         """Test Task with default resource specification."""
         task = Task(id="default_task", command="echo 'default'")
-        assert task.resources.cpu == 1
-        assert task.resources.mem_mb == 0
-        assert task.resources.gpu == 0
+        assert task.resources.cpu is None
+        assert task.resources.mem_mb is None
+        assert task.resources.gpu is None
 
     def test_workflow_with_default_and_custom_resources(self):
         """Test workflow mixing default and custom resource specifications."""
@@ -336,8 +337,8 @@ class TestResourceDefaults:
         )
         wf.add_task(custom_task)
 
-        assert wf.tasks["default_task"].resources.cpu == 1
-        assert wf.tasks["default_task"].resources.gpu == 0
+        assert wf.tasks["default_task"].resources.cpu is None
+        assert wf.tasks["default_task"].resources.gpu is None
         assert wf.tasks["custom_task"].resources.cpu == 8
         assert wf.tasks["custom_task"].resources.gpu == 1
 

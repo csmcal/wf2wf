@@ -282,20 +282,21 @@ def _generate_galaxy_tool_step(
     # ------------------------------------------------------------------
 
     if task.environment and task.environment.container:
-        step["container"] = task.environment.container
+        from wf2wf.environ import format_container_for_target_format, get_environment_metadata
+        
+        container = format_container_for_target_format(task.environment.container, "galaxy")
+        step["container"] = container
 
     # ------------------------------------------------------------------
     # SBOM / SIF provenance for reproducibility
     # ------------------------------------------------------------------
 
     if task.environment and task.environment.env_vars:
-        sbom_path = task.environment.env_vars.get("WF2WF_SBOM")
-        sif_path = task.environment.env_vars.get("WF2WF_SIF")
-
-        if sbom_path:
-            step["wf2wf_sbom"] = str(sbom_path)
-        if sif_path:
-            step["wf2wf_sif"] = str(sif_path)
+        metadata = get_environment_metadata(task.environment.env_vars)
+        if metadata["sbom_path"]:
+            step["wf2wf_sbom"] = str(metadata["sbom_path"])
+        if metadata["sif_path"]:
+            step["wf2wf_sif"] = str(metadata["sif_path"])
 
     # Add original Galaxy metadata if available
     if preserve_metadata and task.meta:

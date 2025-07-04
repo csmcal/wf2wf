@@ -710,12 +710,10 @@ def _generate_environment_requirement(env: EnvironmentSpec) -> Optional[Dict[str
     """Generate CWL environment requirement from EnvironmentSpec."""
 
     if env.container:
+        from wf2wf.environ import format_container_for_target_format
+        
         # Extract Docker image from container spec
-        if env.container.startswith("docker://"):
-            docker_image = env.container[9:]  # Remove 'docker://' prefix
-        else:
-            docker_image = env.container
-
+        docker_image = format_container_for_target_format(env.container, "cwl")
         return {"class": "DockerRequirement", "dockerPull": docker_image}
 
     elif env.conda:

@@ -225,6 +225,8 @@ def _generate_module_file(task: Task) -> str:
 
 def _generate_process_definition(task: Task) -> str:
     """Generate Nextflow process definition from Task."""
+    from wf2wf.environ import format_container_for_target_format, get_environment_metadata
+    
     process_name = _sanitize_process_name(task.id).upper()
 
     lines = [
@@ -274,25 +276,19 @@ def _generate_process_definition(task: Task) -> str:
 
     # Add container or conda environment
     if task.environment.container:
-        container = task.environment.container
-        # Remove docker:// prefix if present
-        if container.startswith("docker://"):
-            container = container[9:]
+        container = format_container_for_target_format(task.environment.container, "nextflow")
         lines.append(f"    container '{container}'")
 
     if task.environment.conda:
         lines.append(f"    conda '{task.environment.conda}'")
 
     # SBOM / SIF provenance comments
-    sbom_path = (
-        task.environment.env_vars.get("WF2WF_SBOM") if task.environment else None
-    )
-    sif_path = task.environment.env_vars.get("WF2WF_SIF") if task.environment else None
-
-    if sbom_path:
-        lines.append(f"    // wf2wf_sbom: {sbom_path}")
-    if sif_path:
-        lines.append(f"    // wf2wf_sif: {sif_path}")
+    if task.environment:
+        metadata = get_environment_metadata(task.environment.env_vars)
+        if metadata["sbom_path"]:
+            lines.append(f"    // wf2wf_sbom: {metadata['sbom_path']}")
+        if metadata["sif_path"]:
+            lines.append(f"    // wf2wf_sif: {metadata['sif_path']}")
 
     # Add error handling
     if task.retry > 0:

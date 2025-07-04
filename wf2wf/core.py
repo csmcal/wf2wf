@@ -280,6 +280,9 @@ class ParameterSpec:
     # CWL Step-specific expression support
     value_from: Optional[str] = None  # CWL valueFrom expression
 
+    # File transfer mode for distributed computing environments
+    transfer_mode: str = "auto"  # auto, always, never, shared
+
     # ------------------------------------------------------------------
     # Post-initialisation normalisation
     # ------------------------------------------------------------------
@@ -364,15 +367,26 @@ class ResourceSpec:
         * gpu_mem -> MB (int) per GPU
     """
 
-    cpu: int = 1
-    mem_mb: int = 0
-    disk_mb: int = 0
-    gpu: int = 0
-    gpu_mem_mb: int = 0
-    time_s: int = 0  # wall-clock limit
-    threads: int = 1
+    cpu: Optional[int] = None
+    mem_mb: Optional[int] = None
+    disk_mb: Optional[int] = None
+    gpu: Optional[int] = None
+    gpu_mem_mb: Optional[int] = None
+    time_s: Optional[int] = None  # wall-clock limit (not typically specified in workflows)
+    threads: Optional[int] = None
     # Arbitrary extra site-specific attributes (e.g. HTCondor +WantGPULab)
     extra: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ResourceProfile:
+    """A named resource profile with metadata and resource specifications."""
+    
+    name: str
+    description: str
+    environment: str = "cluster"  # shared, cluster, cloud, hpc
+    priority: str = "normal"  # low, normal, high, urgent
+    resources: ResourceSpec = field(default_factory=ResourceSpec)
 
 
 @dataclass

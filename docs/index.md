@@ -55,6 +55,8 @@ user_guide/environments
 user_guide/registry_auth
 user_guide/examples
 user_guide/faq
+user_guide/file_transfers
+user_guide/conversion_best_practices
 user_guide/troubleshooting
 user_guide/loss_report
 ```

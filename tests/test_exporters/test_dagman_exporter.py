@@ -386,9 +386,9 @@ class TestDAGManInlineSubmit:
         dag_content = dag_path.read_text()
 
         # Check default values are used
-        # CPU uses ResourceSpec default (1) since task.resources.cpu is 1 by default
-        assert "request_cpus = 1" in dag_content
-        # Memory and disk use exporter defaults since task resources are None/0
+        # CPU uses exporter default (2) since task.resources.cpu is None
+        assert "request_cpus = 2" in dag_content
+        # Memory and disk use exporter defaults since task resources are None
         assert "request_memory = 8192MB" in dag_content  # 8GB converted to MB
         assert "request_disk = 10240MB" in dag_content  # 10GB converted to MB
 

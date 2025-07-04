@@ -57,6 +57,8 @@ wf2wf convert -i pipeline.smk -o pipeline.dag --auto-env build --interactive --r
 - **🐳 Automated Environment Builds** – Optional Conda-to-OCI pipeline (micromamba → conda-pack → buildx/buildah) with digest-pinned image references, SBOMs and Apptainer conversion.
 - **⚖ Regulatory & Provenance Support** – BioCompute Object generation, schema validation and side-car provenance for FDA submissions.
 - **🧪 Aiming for Quality** – high test coverage, semantic versioning, graceful degradation when optional external tools are missing.
+- **🔧 Smart Configuration Analysis** – Automatic detection and warnings for missing resource requirements, containers, error handling, and file transfer modes when converting between shared filesystem and distributed computing workflows.
+- **💬 Interactive Mode** – Guided prompts to help users address configuration gaps and optimize workflows for target execution environments.
 
 ### Information-loss workflow
 
@@ -71,6 +73,29 @@ wf2wf convert -i pipeline.smk -o pipeline.dag --auto-env build --interactive --r
 * `reapplied` – successfully restored from a side-car when converting back to a richer format
 
 Use `--fail-on-loss` to abort if any *lost/lost again* entries remain.
+
+### Configuration Analysis
+
+When converting between different workflow execution environments, `wf2wf` automatically detects potential issues:
+
+```console
+## Configuration Analysis
+
+### Potential Issues for Distributed Computing
+
+* **Memory**: 2 tasks without explicit memory requirements
+* **Containers**: 3 tasks without container/conda specifications
+* **Error Handling**: 3 tasks without retry specifications
+* **File Transfer**: 6 files with auto-detected transfer modes
+
+**Recommendations:**
+* Add explicit resource requirements for all tasks
+* Specify container images or conda environments for environment isolation
+* Configure retry policies for fault tolerance
+* Review file transfer modes for distributed execution
+```
+
+Use `--interactive` to get guided prompts for addressing these issues automatically.
 
 ---
 
@@ -168,6 +193,73 @@ wf2wf convert -i assembly.wdl -o assembly.cwl --out-format cwl --fail-on-loss
 ```
 
 More recipes live in the `examples/` directory.
+
+---
+
+## 🔄 Workflow Conversion Differences
+
+When converting between different workflow execution environments, several key differences need to be addressed:
+
+### Shared Filesystem vs Distributed Computing
+
+**Shared Filesystem Workflows** (Snakemake, CWL, Nextflow):
+- Assume all files are accessible on a shared filesystem
+- Often have minimal resource specifications
+- Rely on system-wide software or conda environments
+- Basic error handling and retry mechanisms
+
+**Distributed Computing Workflows** (HTCondor/DAGMan):
+- Require explicit file transfer specifications
+- Need explicit resource allocation (CPU, memory, disk)
+- Require container specifications for environment isolation
+- Benefit from sophisticated retry policies and error handling
+
+### Key Conversion Challenges
+
+| Challenge | Shared → Distributed | Distributed → Shared |
+|-----------|---------------------|---------------------|
+| **File Transfer** | Add `transfer_input_files`/`transfer_output_files` | Remove transfer specifications |
+| **Resources** | Add `request_cpus`, `request_memory`, `request_disk` | Convert to engine-specific resource formats |
+| **Containers** | Specify Docker/Singularity images | Map to conda environments or system packages |
+| **Error Handling** | Add retry policies and error strategies | Convert to engine-specific error handling |
+| **Scatter/Gather** | Expand to explicit job definitions | Map to wildcards or engine-specific parallelization |
+
+### Interactive Configuration Assistance
+
+Use `--interactive` mode to get guided assistance:
+
+```bash
+# Interactive conversion with configuration prompts
+wf2wf convert -i Snakefile -o workflow.dag --interactive
+
+# Example prompts you'll see:
+# Found 3 tasks without explicit resource requirements. 
+# Distributed systems require explicit resource allocation. 
+# Add default resource specifications? (y)es/(n)o/(a)lways/(q)uit: y
+```
+
+### Automatic Configuration Analysis
+
+The conversion report includes detailed analysis:
+
+```markdown
+## Configuration Analysis
+
+### Potential Issues for Distributed Computing
+
+* **Memory**: 2 tasks without explicit memory requirements
+* **Containers**: 3 tasks without container/conda specifications  
+* **Error Handling**: 3 tasks without retry specifications
+* **File Transfer**: 6 files with auto-detected transfer modes
+
+**Recommendations:**
+* Add explicit resource requirements for all tasks
+* Specify container images or conda environments for environment isolation
+* Configure retry policies for fault tolerance
+* Review file transfer modes for distributed execution
+```
+
+See [File Transfer Handling](docs/user_guide/file_transfers.md) for detailed information about file transfer modes and best practices.
 
 ---
 ## 🤝 Contributing

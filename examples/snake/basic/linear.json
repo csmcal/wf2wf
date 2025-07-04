@@ -1,0 +1,222 @@
+{
+  "bco_spec": null,
+  "config": {},
+  "cwl_version": null,
+  "doc": null,
+  "documentation": null,
+  "edges": [
+    {
+      "child": "all_0",
+      "parent": "rule_c_1"
+    },
+    {
+      "child": "rule_c_1",
+      "parent": "rule_b_2"
+    },
+    {
+      "child": "rule_b_2",
+      "parent": "rule_a_3"
+    }
+  ],
+  "hints": [],
+  "inputs": [],
+  "intent": [],
+  "label": null,
+  "loss_map": [],
+  "meta": {},
+  "name": "linear",
+  "outputs": [],
+  "provenance": null,
+  "requirements": [],
+  "tasks": {
+    "all_0": {
+      "command": "echo 'No command defined for rule all'",
+      "doc": null,
+      "documentation": null,
+      "environment": {
+        "conda": null,
+        "container": null,
+        "env_vars": {},
+        "modules": [],
+        "workdir": null
+      },
+      "hints": [],
+      "id": "all_0",
+      "inputs": [],
+      "intent": [],
+      "label": null,
+      "meta": {
+        "is_containerized": false,
+        "is_run": false,
+        "is_script": false,
+        "is_shell": false,
+        "log_files": [],
+        "reason": "",
+        "rule_name": "all",
+        "run_block_code": null,
+        "wildcards_dict": {}
+      },
+      "outputs": [],
+      "params": {},
+      "priority": 0,
+      "provenance": null,
+      "requirements": [],
+      "resources": {
+        "cpu": 1,
+        "disk_mb": 4096,
+        "extra": {},
+        "gpu": 0,
+        "gpu_mem_mb": 0,
+        "mem_mb": 2048,
+        "threads": 1,
+        "time_s": 7200
+      },
+      "retry": 0,
+      "scatter": null,
+      "script": null,
+      "when": null
+    },
+    "rule_a_3": {
+      "command": "echo ",
+      "doc": null,
+      "documentation": null,
+      "environment": {
+        "conda": null,
+        "container": null,
+        "env_vars": {},
+        "modules": [],
+        "workdir": null
+      },
+      "hints": [],
+      "id": "rule_a_3",
+      "inputs": [],
+      "intent": [],
+      "label": null,
+      "meta": {
+        "is_containerized": false,
+        "is_run": false,
+        "is_script": false,
+        "is_shell": true,
+        "log_files": [],
+        "reason": "",
+        "rule_name": "rule_a",
+        "run_block_code": null,
+        "wildcards_dict": {}
+      },
+      "outputs": [],
+      "params": {},
+      "priority": 0,
+      "provenance": null,
+      "requirements": [],
+      "resources": {
+        "cpu": 1,
+        "disk_mb": 4096,
+        "extra": {},
+        "gpu": 0,
+        "gpu_mem_mb": 0,
+        "mem_mb": 2048,
+        "threads": 1,
+        "time_s": 7200
+      },
+      "retry": 0,
+      "scatter": null,
+      "script": null,
+      "when": null
+    },
+    "rule_b_2": {
+      "command": "cat {input} > {output}; echo ",
+      "doc": null,
+      "documentation": null,
+      "environment": {
+        "conda": null,
+        "container": null,
+        "env_vars": {},
+        "modules": [],
+        "workdir": null
+      },
+      "hints": [],
+      "id": "rule_b_2",
+      "inputs": [],
+      "intent": [],
+      "label": null,
+      "meta": {
+        "is_containerized": false,
+        "is_run": false,
+        "is_script": false,
+        "is_shell": true,
+        "log_files": [],
+        "reason": "",
+        "rule_name": "rule_b",
+        "run_block_code": null,
+        "wildcards_dict": {}
+      },
+      "outputs": [],
+      "params": {},
+      "priority": 0,
+      "provenance": null,
+      "requirements": [],
+      "resources": {
+        "cpu": 1,
+        "disk_mb": 4096,
+        "extra": {},
+        "gpu": 0,
+        "gpu_mem_mb": 0,
+        "mem_mb": 2048,
+        "threads": 1,
+        "time_s": 7200
+      },
+      "retry": 0,
+      "scatter": null,
+      "script": null,
+      "when": null
+    },
+    "rule_c_1": {
+      "command": "cat {input} > {output}; echo ",
+      "doc": null,
+      "documentation": null,
+      "environment": {
+        "conda": null,
+        "container": null,
+        "env_vars": {},
+        "modules": [],
+        "workdir": null
+      },
+      "hints": [],
+      "id": "rule_c_1",
+      "inputs": [],
+      "intent": [],
+      "label": null,
+      "meta": {
+        "is_containerized": false,
+        "is_run": false,
+        "is_script": false,
+        "is_shell": true,
+        "log_files": [],
+        "reason": "",
+        "rule_name": "rule_c",
+        "run_block_code": null,
+        "wildcards_dict": {}
+      },
+      "outputs": [],
+      "params": {},
+      "priority": 0,
+      "provenance": null,
+      "requirements": [],
+      "resources": {
+        "cpu": 1,
+        "disk_mb": 4096,
+        "extra": {},
+        "gpu": 0,
+        "gpu_mem_mb": 0,
+        "mem_mb": 2048,
+        "threads": 1,
+        "time_s": 7200
+      },
+      "retry": 0,
+      "scatter": null,
+      "script": null,
+      "when": null
+    }
+  },
+  "version": "1.0"
+}
