@@ -26,60 +26,41 @@ from wf2wf.core import (
     Workflow,
     Task,
     Edge,
-    ResourceSpec,
-    EnvironmentSpec,
     ParameterSpec,
     ScatterSpec,
     RequirementSpec,
     ProvenanceSpec,
     DocumentationSpec,
+    EnvironmentSpecificValue,
+    CheckpointSpec,
+    LoggingSpec,
+    SecuritySpec,
+    NetworkingSpec,
+    MetadataSpec,
 )
-from wf2wf.loss import apply as loss_apply
-from wf2wf.loss import compute_checksum
+from wf2wf.importers.base import BaseImporter
 
 
-def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
-    """Import a CWL workflow file and convert to wf2wf IR with full feature preservation.
+class CWLImporter(BaseImporter):
+    """CWL importer using shared base infrastructure."""
+    
+    def _parse_source(self, path: Path, **opts: Any) -> Dict[str, Any]:
+        """Parse CWL file and extract all information."""
+        use_cwltool = opts.get("use_cwltool", False)
+        preserve_metadata = opts.get("preserve_metadata", True)
+        extract_provenance = opts.get("extract_provenance", True)
+        debug = opts.get("debug", False)
+        verbose = self.verbose
 
-    Args:
-        path: Path to the CWL workflow file (.cwl)
-        **opts: Additional options:
-            - use_cwltool: bool = False - Use cwltool for complex parsing
-            - preserve_metadata: bool = True - Preserve all CWL metadata
-            - extract_provenance: bool = True - Extract provenance information
-            - verbose: bool = False - Enable verbose output
-            - debug: bool = False - Enable debug output
+        if verbose:
+            print(f"Parsing CWL file: {path}")
 
-    Returns:
-        Workflow: The converted workflow in wf2wf IR format with full CWL features
-
-    Raises:
-        RuntimeError: If the CWL file cannot be parsed or converted
-        FileNotFoundError: If the CWL file doesn't exist
-    """
-    cwl_path = Path(path).resolve()
-    if not cwl_path.exists():
-        raise FileNotFoundError(f"CWL file not found: {cwl_path}")
-
-    use_cwltool = opts.get("use_cwltool", False)
-    preserve_metadata = opts.get("preserve_metadata", True)
-    extract_provenance = opts.get("extract_provenance", True)
-    verbose = opts.get("verbose", False)
-    debug = opts.get("debug", False)
-
-    if verbose:
-        print(f"Importing CWL workflow with enhanced features: {cwl_path}")
-
-    try:
         # Load CWL document
-        cwl_doc = _load_cwl_document(cwl_path)
+        cwl_doc = _load_cwl_document(path)
 
-        # -------------------------------------------------------------
-        # Direct class or $graph multi-document
-        # -------------------------------------------------------------
-
+        # Parse based on document structure
         if "$graph" in cwl_doc:
-            # Build mapping of id ➜ object
+            # Multi-document with $graph
             graph_list = cwl_doc["$graph"]
             if not isinstance(graph_list, list):
                 raise ValueError("$graph must be a list of CWL objects")
@@ -89,19 +70,17 @@ def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
                 obj_id = obj.get("id") or obj.get("label")
                 if not obj_id:
                     raise ValueError("Each object in $graph must have an 'id' field")
-                # Strip leading '#' if present
                 graph_map[obj_id.lstrip("#")] = obj
 
-            # Use the first Workflow object as entry point by default
             root_wf_obj = next(
                 (o for o in graph_list if o.get("class") == "Workflow"), None
             )
             if root_wf_obj is None:
                 raise ValueError("$graph does not contain a top-level Workflow object")
 
-            workflow = _parse_cwl_workflow(
+            parsed_data = _parse_cwl_workflow_data(
                 root_wf_obj,
-                cwl_path,
+                path,
                 preserve_metadata=preserve_metadata,
                 extract_provenance=extract_provenance,
                 verbose=verbose,
@@ -109,20 +88,18 @@ def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
                 graph_objects=graph_map,
             )
 
-        # Single document Workflow
         elif cwl_doc.get("class") == "Workflow":
-            workflow = _parse_cwl_workflow(
+            parsed_data = _parse_cwl_workflow_data(
                 cwl_doc,
-                cwl_path,
+                path,
                 preserve_metadata=preserve_metadata,
                 extract_provenance=extract_provenance,
                 verbose=verbose,
                 debug=debug,
             )
         elif cwl_doc.get("class") == "CommandLineTool":
-            # Convert single tool to single-step workflow
-            workflow = _convert_tool_to_workflow(
-                cwl_doc, cwl_path, preserve_metadata=preserve_metadata, verbose=verbose
+            parsed_data = _convert_tool_to_workflow_data(
+                cwl_doc, path, preserve_metadata=preserve_metadata, verbose=verbose
             )
         else:
             raise ValueError(f"Unsupported CWL class: {cwl_doc.get('class')}")
@@ -137,52 +114,88 @@ def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
                 )
             if verbose:
                 print("Using cwltool for enhanced parsing...")
-            workflow = _parse_with_cwltool(cwl_path, workflow, verbose=verbose)
+            parsed_data = _parse_with_cwltool(path, parsed_data, verbose=verbose)
 
-        if verbose:
-            print(
-                f"Successfully imported CWL workflow with {len(workflow.tasks)} tasks"
-            )
-            print(
-                f"Enhanced features: {len(workflow.requirements)} requirements, "
-                f"{len(workflow.inputs)} inputs, {len(workflow.outputs)} outputs"
-            )
-
-        # ------------------------------------------------------------------
-        # Reinject loss-map if sidecar exists
-        # ------------------------------------------------------------------
-        loss_path = cwl_path.with_suffix(".loss.json")
-        if loss_path.exists():
-            try:
-                with open(loss_path) as fh:
-                    doc = json.load(fh)
-                    if doc.get("source_checksum") and doc[
-                        "source_checksum"
-                    ] != compute_checksum(workflow):
-                        if verbose:
-                            print(
-                                f"Skipping loss-map from {loss_path} (checksum mismatch)"
-                            )
-                    else:
-                        entries = doc.get("entries", [])
-                        workflow.loss_map.extend(entries)
-                        loss_apply(workflow, entries)  # best-effort reinjection
-                        if verbose:
-                            print(
-                                f"Applied {len(entries)} loss-map entries from {loss_path}"
-                            )
-            except Exception as _e:
-                if verbose:
-                    print(f"Warning: could not apply loss-map ({_e})")
-
+        return parsed_data
+    
+    def _create_basic_workflow(self, parsed_data: Dict[str, Any]) -> Workflow:
+        """Create basic workflow from parsed CWL data."""
+        workflow_name = parsed_data.get("name", "cwl_workflow")
+        version = parsed_data.get("version", "1.0")
+        label = parsed_data.get("label")
+        doc = parsed_data.get("doc")
+        
+        # Create workflow with CWL-specific execution model
+        workflow = Workflow(
+            name=workflow_name,
+            version=version,
+            label=label,
+            doc=doc,
+            execution_model=EnvironmentSpecificValue("shared_filesystem", ["shared_filesystem"]),
+            cwl_version=parsed_data.get("cwl_version"),
+            bco_spec=parsed_data.get("bco_spec"),
+            provenance=parsed_data.get("provenance"),
+            documentation=parsed_data.get("documentation"),
+            intent=parsed_data.get("intent", []),
+            inputs=parsed_data.get("inputs", []),
+            outputs=parsed_data.get("outputs", []),
+            requirements=parsed_data.get("requirements", EnvironmentSpecificValue([], [])),
+            hints=parsed_data.get("hints", EnvironmentSpecificValue([], [])),
+        )
+        
+        # Add metadata
+        if parsed_data.get("metadata"):
+            workflow.metadata = parsed_data["metadata"]
+        
+        # Add tasks to workflow
+        for task in parsed_data.get("tasks", []):
+            workflow.add_task(task)
+        
         return workflow
+    
+    def _extract_tasks(self, parsed_data: Dict[str, Any]) -> List[Task]:
+        """Extract tasks from parsed CWL data."""
+        return parsed_data.get("tasks", [])
+    
+    def _extract_edges(self, parsed_data: Dict[str, Any]) -> List[Edge]:
+        """Extract edges from parsed CWL data."""
+        return parsed_data.get("edges", [])
+    
+    def _get_source_format(self) -> str:
+        """Get the source format name."""
+        return "cwl"
 
-    except Exception as e:
-        if debug:
-            import traceback
 
-            traceback.print_exc()
-        raise RuntimeError(f"Failed to import CWL workflow: {e}")
+def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
+    """Convert CWL file at *path* into a Workflow IR object using shared infrastructure.
+
+    Parameters
+    ----------
+    path : Union[str, Path]
+        Path to the .cwl file.
+    use_cwltool : bool, optional
+        Use cwltool for enhanced parsing (default: False).
+    preserve_metadata : bool, optional
+        Preserve all CWL metadata (default: True).
+    extract_provenance : bool, optional
+        Extract provenance information (default: True).
+    verbose : bool, optional
+        Enable verbose output (default: False).
+    debug : bool, optional
+        Enable debug output (default: False).
+    interactive : bool, optional
+        Enable interactive mode (default: False).
+
+    Returns
+    -------
+    Workflow
+        Populated IR instance.
+    """
+    importer = CWLImporter(
+        interactive=opts.get("interactive", False),
+        verbose=opts.get("verbose", False)
+    )
+    return importer.import_workflow(path, **opts)
 
 
 def _load_cwl_document(cwl_path: Path) -> Dict[str, Any]:
@@ -199,12 +212,11 @@ def _load_cwl_document(cwl_path: Path) -> Dict[str, Any]:
             return yaml.safe_load(content)
         except yaml.YAMLError as ye:
             raise RuntimeError(f"Failed to parse CWL YAML: {ye}")
-
     except Exception as e:
-        raise RuntimeError(f"Failed to load CWL document: {e}")
+        raise RuntimeError(f"Failed to read CWL file: {e}")
 
 
-def _parse_cwl_workflow(
+def _parse_cwl_workflow_data(
     cwl_doc: Dict[str, Any],
     cwl_path: Path,
     preserve_metadata: bool = True,
@@ -212,126 +224,80 @@ def _parse_cwl_workflow(
     verbose: bool = False,
     debug: bool = False,
     graph_objects: Optional[Dict[str, Any]] = None,
-) -> Workflow:
-    """Parse a CWL workflow document into enhanced wf2wf IR."""
-
-    # Extract workflow metadata
-    workflow_name = cwl_doc.get("label", cwl_path.stem)
-    workflow_version = "1.0"  # Default version
-
-    # Create workflow with enhanced features
-    workflow = Workflow(
-        name=workflow_name,
-        version=workflow_version,
-        label=cwl_doc.get("label"),
-        doc=cwl_doc.get("doc"),
-        cwl_version=cwl_doc.get("cwlVersion", "v1.2"),
-    )
-
-    # Extract provenance information
-    if extract_provenance and preserve_metadata:
-        workflow.provenance = _extract_provenance_spec(cwl_doc)
-
-    # Extract documentation
+) -> Dict[str, Any]:
+    """Parse CWL workflow document into structured data."""
+    
+    # Extract basic workflow information
+    workflow_name = cwl_doc.get("label") or cwl_doc.get("id", "cwl_workflow")
+    if workflow_name.startswith("#"):
+        workflow_name = workflow_name[1:]
+    
+    # Extract CWL version
+    cwl_version = cwl_doc.get("cwlVersion", "v1.2")
+    
+    # Extract inputs and outputs
+    inputs = _parse_parameter_specs(cwl_doc.get("inputs", {}), "input")
+    outputs = _parse_parameter_specs(cwl_doc.get("outputs", {}), "output")
+    
+    # Extract requirements and hints
+    requirements = _parse_requirements(cwl_doc.get("requirements", []))
+    hints = _parse_requirements(cwl_doc.get("hints", []))
+    
+    # Extract metadata
+    metadata = None
     if preserve_metadata:
-        workflow.documentation = _extract_documentation_spec(cwl_doc)
-
-    # Extract intent (ontology IRIs)
-    if "intent" in cwl_doc:
-        workflow.intent = (
-            cwl_doc["intent"]
-            if isinstance(cwl_doc["intent"], list)
-            else [cwl_doc["intent"]]
+        metadata = MetadataSpec(
+            source_format="cwl",
+            source_file=str(cwl_path),
+            source_version=cwl_version,
+            format_specific={"cwl_document": cwl_doc},
         )
-
-    # Parse workflow requirements and hints
-    workflow.requirements = _parse_requirements(cwl_doc.get("requirements", []))
-    workflow.hints = _parse_requirements(cwl_doc.get("hints", []))
-
-    # Parse workflow inputs with enhanced parameter specifications
-    workflow.inputs = _parse_parameter_specs(cwl_doc.get("inputs", {}), "input")
-
-    # Parse workflow outputs with enhanced parameter specifications
-    workflow.outputs = _parse_parameter_specs(cwl_doc.get("outputs", {}), "output")
-
-    # Store original CWL metadata for backward compatibility
-    workflow.meta = {
-        "source_format": "cwl",
-        "cwl_version": cwl_doc.get("cwlVersion", "v1.2"),
-        "cwl_class": cwl_doc.get("class"),
-        "original_cwl_doc": cwl_doc if preserve_metadata else {},
-    }
-
-    # Preserve expressionLib if present
-    if "expressionLib" in cwl_doc:
-        workflow.meta["expressionLib"] = cwl_doc["expressionLib"]
-
-    # Parse workflow inputs as config for backward compatibility
-    workflow.config = _parse_workflow_inputs_legacy(cwl_doc.get("inputs", {}))
-
-    # Parse steps with enhanced features
+    
+    # Extract provenance
+    provenance = None
+    if extract_provenance:
+        provenance = _extract_provenance_spec(cwl_doc)
+    
+    # Extract documentation
+    documentation = None
+    if preserve_metadata:
+        documentation = _extract_documentation_spec(cwl_doc)
+    
+    # Parse steps
     steps = cwl_doc.get("steps", {})
-    if not steps:
-        # Handle empty workflows gracefully
-        if verbose:
-            print(
-                "Warning: CWL workflow has no steps defined - creating empty workflow"
-            )
-        return workflow
-
-    tasks = {}
+    tasks = []
     edges = []
-
+    
     for step_name, step_def in steps.items():
-        if verbose:
-            print(f"Processing step with enhanced features: {step_name}")
-
-        # Parse the step with enhanced features
-        task, step_edges = _parse_cwl_step_enhanced(
+        task, step_edges = _parse_cwl_step(
             step_name,
             step_def,
             cwl_path,
-            preserve_metadata=preserve_metadata,
             verbose=verbose,
             debug=debug,
             graph_objects=graph_objects,
         )
-
-        tasks[task.id] = task
+        tasks.append(task)
         edges.extend(step_edges)
-
-    # Add tasks and edges to workflow
-    for task in tasks.values():
-        workflow.add_task(task)
-
-    for edge in edges:
-        workflow.add_edge(edge.parent, edge.child)
-
-    return workflow
-
-
-def _parse_workflow_inputs(inputs: Union[Dict, List]) -> Dict[str, Any]:
-    """Parse CWL workflow inputs into config dictionary."""
-    config = {}
-
-    if isinstance(inputs, dict):
-        for input_name, input_def in inputs.items():
-            if isinstance(input_def, dict):
-                default_value = input_def.get("default")
-                if default_value is not None:
-                    config[input_name] = default_value
-            else:
-                # Simple type definition
-                config[input_name] = None
-    elif isinstance(inputs, list):
-        for input_def in inputs:
-            if isinstance(input_def, dict) and "id" in input_def:
-                input_name = input_def["id"]
-                default_value = input_def.get("default")
-                if default_value is not None:
-                    config[input_name] = default_value
-
-    return config
+    
+    return {
+        "name": workflow_name,
+        "version": "1.0",
+        "label": cwl_doc.get("label"),
+        "doc": cwl_doc.get("doc"),
+        "cwl_version": cwl_version,
+        "inputs": inputs,
+        "outputs": outputs,
+        "requirements": EnvironmentSpecificValue(requirements, ["shared_filesystem"]),
+        "hints": EnvironmentSpecificValue(hints, ["shared_filesystem"]),
+        "provenance": provenance,
+        "documentation": documentation,
+        "intent": cwl_doc.get("intent", []),
+        "bco_spec": cwl_doc.get("bco_spec"),
+        "metadata": metadata,
+        "tasks": tasks,
+        "edges": edges,
+    }
 
 
 def _parse_cwl_step(
@@ -340,46 +306,114 @@ def _parse_cwl_step(
     cwl_path: Path,
     verbose: bool = False,
     debug: bool = False,
+    graph_objects: Optional[Dict[str, Any]] = None,
 ) -> tuple[Task, List[Edge]]:
-    """Parse a single CWL workflow step into a Task and edges."""
-
-    # Get the tool reference
-    run_ref = step_def.get("run")
-    if not run_ref:
-        raise ValueError(f"Step {step_name} has no 'run' reference")
-
-    # Load the tool definition
-    tool_def = _load_tool_definition(run_ref, cwl_path, verbose=verbose)
-
+    """Parse a CWL step definition into a Task and its dependencies."""
+    
+    # Load tool definition
+    tool_def = _load_tool_definition(
+        step_def.get("run"), cwl_path, graph_objects, verbose=verbose
+    )
+    
+    # Extract basic task information
+    task_id = step_name
+    label = step_def.get("label", step_name)
+    doc = step_def.get("doc", "")
+    
+    # Extract command
+    command = _extract_command_from_tool(tool_def)
+    
+    # Extract resources
+    cpu = EnvironmentSpecificValue(1, ["shared_filesystem"])
+    mem_mb = EnvironmentSpecificValue(4096, ["shared_filesystem"])
+    disk_mb = EnvironmentSpecificValue(4096, ["shared_filesystem"])
+    gpu = EnvironmentSpecificValue(0, ["shared_filesystem"])
+    
+    resource_reqs = _extract_resource_requirements(tool_def)
+    if resource_reqs:
+        if "cpu" in resource_reqs:
+            cpu = resource_reqs["cpu"]
+        if "mem_mb" in resource_reqs:
+            mem_mb = resource_reqs["mem_mb"]
+        if "disk_mb" in resource_reqs:
+            disk_mb = resource_reqs["disk_mb"]
+        if "gpu" in resource_reqs:
+            gpu = resource_reqs["gpu"]
+    
+    # Extract environment
+    conda = EnvironmentSpecificValue(None, ["shared_filesystem"])
+    container = EnvironmentSpecificValue(None, ["shared_filesystem"])
+    workdir = EnvironmentSpecificValue(None, ["shared_filesystem"])
+    env_vars = EnvironmentSpecificValue({}, ["shared_filesystem"])
+    modules = EnvironmentSpecificValue([], ["shared_filesystem"])
+    
+    env_spec = _extract_environment_spec(tool_def)
+    if env_spec:
+        if "conda" in env_spec:
+            conda = env_spec["conda"]
+        if "container" in env_spec:
+            container = env_spec["container"]
+        if "workdir" in env_spec:
+            workdir = env_spec["workdir"]
+        if "env_vars" in env_spec:
+            env_vars = env_spec["env_vars"]
+        if "modules" in env_spec:
+            modules = env_spec["modules"]
+    
+    # Extract inputs and outputs
+    inputs = _extract_step_inputs(step_def, tool_def)
+    outputs = _extract_step_outputs(step_def, tool_def)
+    
+    # Extract conditional execution
+    when = EnvironmentSpecificValue(None, ["shared_filesystem"])
+    if "when" in step_def:
+        when = EnvironmentSpecificValue(step_def["when"], ["shared_filesystem"])
+    
+    # Extract scatter
+    scatter = EnvironmentSpecificValue(None, ["shared_filesystem"])
+    if "scatter" in step_def:
+        scatter_spec = _parse_scatter_spec(step_def)
+        if scatter_spec:
+            scatter = EnvironmentSpecificValue(scatter_spec, ["shared_filesystem"])
+    
+    # Extract requirements and hints
+    requirements = EnvironmentSpecificValue([], ["shared_filesystem"])
+    hints = EnvironmentSpecificValue([], ["shared_filesystem"])
+    
+    step_reqs = _parse_requirements(step_def.get("requirements", []))
+    if step_reqs:
+        requirements = EnvironmentSpecificValue(step_reqs, ["shared_filesystem"])
+    
+    step_hints = _parse_requirements(step_def.get("hints", []))
+    if step_hints:
+        hints = EnvironmentSpecificValue(step_hints, ["shared_filesystem"])
+    
     # Create task
-    task = Task(id=step_name)
-
-    # Extract command from tool
-    if tool_def.get("class") == "CommandLineTool":
-        task.command = _extract_command_from_tool(tool_def)
-    else:
-        task.command = f"# CWL step: {step_name}"
-
-    # Extract resource requirements
-    task.resources = _extract_resource_requirements(tool_def)
-
-    # Extract environment (Docker/container)
-    task.environment = _extract_environment_spec(tool_def)
-
-    # Store CWL-specific metadata
-    task.meta = {
-        "cwl_step": step_name,
-        "cwl_run": run_ref,
-        "cwl_tool_class": tool_def.get("class"),
-        "cwl_doc": tool_def.get("doc", ""),
-        "cwl_label": tool_def.get("label", ""),
-        "step_inputs": step_def.get("in", {}),
-        "step_outputs": step_def.get("out", []),
-    }
-
-    # Parse step dependencies from inputs
+    task = Task(
+        id=task_id,
+        label=label,
+        doc=doc,
+        command=command,
+        inputs=inputs,
+        outputs=outputs,
+        when=when,
+        scatter=scatter,
+        cpu=cpu,
+        mem_mb=mem_mb,
+        disk_mb=disk_mb,
+        gpu=gpu,
+        conda=conda,
+        container=container,
+        workdir=workdir,
+        env_vars=env_vars,
+        modules=modules,
+        requirements=requirements,
+        hints=hints,
+    )
+    
+    # Extract dependencies
     edges = _parse_step_dependencies(step_name, step_def)
-
+    
     return task, edges
 
 
@@ -389,857 +423,345 @@ def _load_tool_definition(
     graph_objects: Optional[Dict[str, Any]] = None,
     verbose: bool = False,
 ) -> Dict[str, Any]:
-    """Load a tool definition, either from file or inline."""
-
+    """Load tool definition from run reference."""
+    
     if isinstance(run_ref, dict):
-        # Inline tool definition
         return run_ref
-    elif isinstance(run_ref, str):
-        # Reference to ID inside $graph
-        if graph_objects is not None:
-            key = run_ref.lstrip("#")
-            if key in graph_objects:
-                return graph_objects[key]
-
-        # External file reference
-        if run_ref.startswith("http://") or run_ref.startswith("https://"):
-            raise NotImplementedError("HTTP tool references not yet supported")
-
-        # Relative path from workflow file
+    
+    if isinstance(run_ref, str):
+        # Check if it's in the graph
+        if graph_objects and run_ref in graph_objects:
+            return graph_objects[run_ref]
+        
+        # Try to load from file
         tool_path = cwl_path.parent / run_ref
-        if not tool_path.exists():
-            # Try absolute path
-            tool_path = Path(run_ref)
-            if not tool_path.exists():
-                raise FileNotFoundError(f"Tool definition not found: {run_ref}")
-
+        if tool_path.exists():
+            return _load_cwl_document(tool_path)
+        
         if verbose:
-            print(f"Loading tool definition: {tool_path}")
-
-        return _load_cwl_document(tool_path)
-    else:
-        raise ValueError(f"Invalid run reference: {run_ref}")
+            print(f"Warning: Could not load tool definition for {run_ref}")
+    
+    return {}
 
 
-def _extract_command_from_tool(tool_def: Dict[str, Any]) -> str:
-    """Extract command string from CWL CommandLineTool."""
-
-    base_command = tool_def.get("baseCommand", [])
+def _extract_command_from_tool(tool_def: Dict[str, Any]) -> EnvironmentSpecificValue[str]:
+    """Extract the shell command string from a CWL CommandLineTool definition."""
+    base_cmd = tool_def.get("baseCommand", [])
+    if isinstance(base_cmd, str):
+        base_cmd = [base_cmd]
     arguments = tool_def.get("arguments", [])
-
-    # Convert baseCommand to list if it's a string
-    if isinstance(base_command, str):
-        base_command = [base_command]
-
-    # Build command parts
-    command_parts = list(base_command)
-
-    # Add arguments
-    for arg in arguments:
-        if isinstance(arg, str):
-            command_parts.append(arg)
-        elif isinstance(arg, dict):
-            # Handle complex argument objects
-            value = arg.get("valueFrom", arg.get("value", ""))
-            if value:
-                command_parts.append(str(value))
-
-    return " ".join(command_parts) if command_parts else "# CWL CommandLineTool"
+    if isinstance(arguments, str):
+        arguments = [arguments]
+    # Concatenate baseCommand and arguments into a single shell command string
+    cmd_str = " ".join([str(x) for x in base_cmd + arguments])
+    return EnvironmentSpecificValue(cmd_str, ["shared_filesystem"])
 
 
-def _extract_resource_requirements(tool_def: Dict[str, Any]) -> ResourceSpec:
-    """Extract resource requirements from CWL tool definition."""
-
-    resources = ResourceSpec()
-
-    # Check requirements section
-    requirements = tool_def.get("requirements", [])
-    hints = tool_def.get("hints", [])
-
-    # Combine requirements and hints
-    all_reqs = requirements + hints
-
-    for req in all_reqs:
-        if isinstance(req, dict):
-            req_class = req.get("class")
-
-            if req_class == "ResourceRequirement":
-                # Extract resource specifications
-                if "coresMin" in req:
-                    resources.cpu = req["coresMin"]
-                elif "coresMax" in req:
-                    resources.cpu = req["coresMax"]
-
-                if "ramMin" in req:
-                    resources.mem_mb = req["ramMin"]  # CWL uses MB
-                elif "ramMax" in req:
-                    resources.mem_mb = req["ramMax"]
-
-                if "tmpdirMin" in req:
-                    resources.disk_mb = req["tmpdirMin"]
-                elif "tmpdirMax" in req:
-                    resources.disk_mb = req["tmpdirMax"]
-
-                if "outdirMin" in req:
-                    # Add output directory space to disk requirement
-                    if resources.disk_mb:
-                        resources.disk_mb += req["outdirMin"]
-                    else:
-                        resources.disk_mb = req["outdirMin"]
-
+def _extract_resource_requirements(tool_def: Dict[str, Any]) -> Dict[str, EnvironmentSpecificValue]:
+    """Extract resource requirements from tool definition."""
+    resources = {}
+    
+    for req in tool_def.get("requirements", []):
+        if req.get("class") == "ResourceRequirement":
+            # Look for resource fields at the top level
+            if "coresMin" in req or "coresMax" in req:
+                cpu_val = req.get("coresMin", req.get("coresMax", 1))
+                resources["cpu"] = EnvironmentSpecificValue(int(cpu_val), ["shared_filesystem"])
+            if "ramMin" in req or "ramMax" in req:
+                ram_val = req.get("ramMin", req.get("ramMax", 4096))
+                # Convert to MB if needed
+                if isinstance(ram_val, str) and ram_val.endswith("MB"):
+                    ram_val = int(ram_val[:-2])
+                elif isinstance(ram_val, str) and ram_val.endswith("GB"):
+                    ram_val = int(float(ram_val[:-2]) * 1024)
+                resources["mem_mb"] = EnvironmentSpecificValue(int(ram_val), ["shared_filesystem"])
+            if "tmpdirMin" in req or "tmpdirMax" in req:
+                disk_val = req.get("tmpdirMin", req.get("tmpdirMax", 4096))
+                # Convert to MB if needed
+                if isinstance(disk_val, str) and disk_val.endswith("MB"):
+                    disk_val = int(disk_val[:-2])
+                elif isinstance(disk_val, str) and disk_val.endswith("GB"):
+                    disk_val = int(float(disk_val[:-2]) * 1024)
+                resources["disk_mb"] = EnvironmentSpecificValue(int(disk_val), ["shared_filesystem"])
     return resources
 
 
-def _extract_environment_spec(tool_def: Dict[str, Any]) -> Optional[EnvironmentSpec]:
-    """Extract environment specification from CWL tool definition."""
+def _extract_environment_spec(tool_def: Dict[str, Any]) -> Dict[str, EnvironmentSpecificValue]:
+    """Extract environment specifications from tool definition."""
+    env_spec = {}
+    
+    for req in tool_def.get("requirements", []):
+        if req.get("class") == "DockerRequirement":
+            if "dockerPull" in req:
+                docker_val = req["dockerPull"]
+                if not docker_val.startswith("docker://"):
+                    docker_val = f"docker://{docker_val}"
+                env_spec["container"] = EnvironmentSpecificValue(docker_val, ["shared_filesystem"])
+        
+        elif req.get("class") == "SoftwareRequirement":
+            if "packages" in req:
+                # Convert to conda environment
+                packages = req["packages"]
+                env_spec["conda"] = EnvironmentSpecificValue(str(packages), ["shared_filesystem"])
+    
+    return env_spec
 
-    requirements = tool_def.get("requirements", [])
-    hints = tool_def.get("hints", [])
 
-    # Combine requirements and hints
-    all_reqs = requirements + hints
+def _extract_step_inputs(step_def: Dict[str, Any], tool_def: Dict[str, Any]) -> List[ParameterSpec]:
+    """Extract step inputs."""
+    inputs = []
+    
+    # Get input bindings from step
+    step_inputs = step_def.get("in", {})
+    
+    # Get input definitions from tool
+    tool_inputs = tool_def.get("inputs", {})
+    
+    for input_id, input_def in tool_inputs.items():
+        # Check if this input is bound in the step
+        if input_id in step_inputs:
+            # Create parameter spec
+            param_spec = _parse_single_parameter_spec(input_id, input_def, "input")
+            if param_spec:
+                inputs.append(param_spec)
+    
+    return inputs
 
-    for req in all_reqs:
-        if isinstance(req, dict):
-            req_class = req.get("class")
 
-            if req_class == "DockerRequirement":
-                docker_pull = req.get("dockerPull")
-                if docker_pull:
-                    return EnvironmentSpec(container=f"docker://{docker_pull}")
-
-            elif req_class == "SoftwareRequirement":
-                # Handle software requirements (could map to conda)
-                packages = req.get("packages", [])
-                if packages:
-                    # Create a simple conda-like environment spec
-                    package_list = []
-                    for pkg in packages:
-                        if isinstance(pkg, dict):
-                            name = pkg.get("package")
-                            version = pkg.get("version", [""])
-                            if name:
-                                if version and version[0]:
-                                    package_list.append(f"{name}={version[0]}")
-                                else:
-                                    package_list.append(name)
-
-                    if package_list:
-                        # Store as conda environment metadata
-                        return EnvironmentSpec(conda={"dependencies": package_list})
-
-    return None
+def _extract_step_outputs(step_def: Dict[str, Any], tool_def: Dict[str, Any]) -> List[ParameterSpec]:
+    """Extract step outputs."""
+    outputs = []
+    
+    # Get output definitions from tool
+    tool_outputs = tool_def.get("outputs", {})
+    
+    for output_id, output_def in tool_outputs.items():
+        # Create parameter spec
+        param_spec = _parse_single_parameter_spec(output_id, output_def, "output")
+        if param_spec:
+            outputs.append(param_spec)
+    
+    return outputs
 
 
 def _parse_step_dependencies(step_name: str, step_def: Dict[str, Any]) -> List[Edge]:
-    """Parse step dependencies from input references."""
-
+    """Parse step dependencies."""
     edges = []
+    
+    # Check for explicit dependencies
+    for dep in step_def.get("dependencies", []):
+        edges.append(Edge(parent=dep, child=step_name))
+    
+    # Check for implicit dependencies through input bindings
     step_inputs = step_def.get("in", {})
-
-    for input_name, input_def in step_inputs.items():
-        if isinstance(input_def, dict):
-            source = input_def.get("source")
-        elif isinstance(input_def, str):
-            source = input_def
-        else:
-            continue
-
-        if source and "/" in source:
-            # Reference to another step's output: "step_name/output_name"
-            parent_step = source.split("/")[0]
+    for input_id, input_binding in step_inputs.items():
+        if isinstance(input_binding, str) and input_binding.startswith("step_"):
+            # This is a step reference
+            parent_step = input_binding
             edges.append(Edge(parent=parent_step, child=step_name))
-
+    
     return edges
 
 
-def _convert_tool_to_workflow(
+def _convert_tool_to_workflow_data(
     tool_def: Dict[str, Any],
     cwl_path: Path,
     preserve_metadata: bool = True,
     verbose: bool = False,
-) -> Workflow:
-    """Convert a single CommandLineTool to a single-step workflow with enhanced features."""
-
-    workflow_name = tool_def.get("label", cwl_path.stem)
-    workflow = Workflow(
-        name=workflow_name,
-        version="1.0",
-        label=tool_def.get("label"),
-        doc=tool_def.get("doc"),
-        cwl_version=tool_def.get("cwlVersion", "v1.2"),
+) -> Dict[str, Any]:
+    """Convert a single CommandLineTool to a single-step workflow."""
+    
+    # Extract tool information
+    tool_name = tool_def.get("label") or tool_def.get("id", "cwl_tool")
+    if tool_name.startswith("#"):
+        tool_name = tool_name[1:]
+    
+    # Create a single task from the tool
+    task, _ = _parse_cwl_step(
+        "main",
+        {"run": tool_def},
+        cwl_path,
+        verbose=verbose,
+        debug=False,
     )
-
-    # Extract enhanced metadata if requested
-    if preserve_metadata:
-        workflow.provenance = _extract_provenance_spec(tool_def)
-        workflow.documentation = _extract_documentation_spec(tool_def)
-
-    # Parse requirements and hints
-    workflow.requirements = _parse_requirements(tool_def.get("requirements", []))
-    workflow.hints = _parse_requirements(tool_def.get("hints", []))
-
-    # Parse inputs and outputs with enhanced parameter specifications
-    workflow.inputs = _parse_parameter_specs(tool_def.get("inputs", {}), "input")
-    workflow.outputs = _parse_parameter_specs(tool_def.get("outputs", {}), "output")
-
-    # Create enhanced single task from tool
-    task = Task(id="main_tool", label=tool_def.get("label"), doc=tool_def.get("doc"))
-
-    task.command = _extract_command_from_tool(tool_def)
-    task.resources = _extract_resource_requirements_enhanced(tool_def, {})
-    task.environment = _extract_environment_spec_enhanced(tool_def, {})
-
-    # Parse enhanced I/O parameters
-    if preserve_metadata:
-        task.inputs = _parse_parameter_specs(tool_def.get("inputs", {}), "input")
-        task.outputs = _parse_parameter_specs(tool_def.get("outputs", {}), "output")
-
-    # Parse requirements and hints for the task
-    task.requirements = _parse_requirements(tool_def.get("requirements", []))
-    task.hints = _parse_requirements(tool_def.get("hints", []))
-
-    # Extract provenance and documentation for the task
-    if preserve_metadata:
-        task.provenance = _extract_provenance_spec(tool_def)
-        task.documentation = _extract_documentation_spec(tool_def)
-
-    # Store enhanced metadata
-    task.meta = {
-        "cwl_tool_class": tool_def.get("class"),
-        "cwl_tool_def": tool_def if preserve_metadata else {},
-        "single_tool_conversion": True,
-        "legacy_inputs": _extract_inputs_legacy({}, tool_def),
-        "legacy_outputs": _extract_outputs_legacy({}, tool_def),
-    }
-
-    workflow.add_task(task)
-
-    # Store enhanced workflow metadata
-    workflow.meta = {
-        "source_format": "cwl",
+    
+    # Add single_tool_conversion flag to format_specific
+    format_specific = {"cwl_tool": tool_def, "single_tool_conversion": True}
+    
+    return {
+        "name": tool_name,
+        "version": "1.0",
+        "label": tool_def.get("label"),
+        "doc": tool_def.get("doc"),
         "cwl_version": tool_def.get("cwlVersion", "v1.2"),
-        "cwl_class": tool_def.get("class"),
-        "single_tool_conversion": True,
-        "original_cwl_doc": tool_def if preserve_metadata else {},
+        "inputs": _parse_parameter_specs(tool_def.get("inputs", {}), "input"),
+        "outputs": _parse_parameter_specs(tool_def.get("outputs", {}), "output"),
+        "requirements": EnvironmentSpecificValue(_parse_requirements(tool_def.get("requirements", [])), ["shared_filesystem"]),
+        "hints": EnvironmentSpecificValue(_parse_requirements(tool_def.get("hints", [])), ["shared_filesystem"]),
+        "provenance": _extract_provenance_spec(tool_def) if preserve_metadata else None,
+        "documentation": _extract_documentation_spec(tool_def) if preserve_metadata else None,
+        "intent": tool_def.get("intent", []),
+        "metadata": MetadataSpec(
+            source_format="cwl",
+            source_file=str(cwl_path),
+            source_version=tool_def.get("cwlVersion", "v1.2"),
+            format_specific=format_specific,
+        ) if preserve_metadata else None,
+        "tasks": [task],
+        "edges": [],
     }
-
-    if verbose:
-        print(f"Converted single CWL tool to enhanced workflow: {workflow_name}")
-
-    return workflow
 
 
 def _parse_with_cwltool(
-    cwl_path: Path, fallback_workflow: Workflow, verbose: bool = False
-) -> Workflow:
-    """Use cwltool to parse complex CWL workflows (if available)."""
-
-    if not shutil.which("cwltool"):
-        if verbose:
-            print("cwltool not found, using direct parsing")
-        return fallback_workflow
-
-    try:
-        # Use cwltool to get workflow graph
-        cmd = ["cwltool", "--print-pre", str(cwl_path)]
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
-
-        # Parse cwltool output (this would need more sophisticated parsing)
-        # For now, return the fallback workflow
-        if verbose:
-            print("cwltool parsing completed, using enhanced metadata")
-
-        # Could enhance the workflow with cwltool insights here
-        return fallback_workflow
-
-    except subprocess.CalledProcessError as e:
-        if verbose:
-            print(f"cwltool failed: {e}, using direct parsing")
-        return fallback_workflow
-    except Exception as e:
-        if verbose:
-            print(f"cwltool error: {e}, using direct parsing")
-        return fallback_workflow
+    cwl_path: Path, parsed_data: Dict[str, Any], verbose: bool = False
+) -> Dict[str, Any]:
+    """Use cwltool for enhanced parsing."""
+    # This is a placeholder - in a real implementation, you would use cwltool
+    # to get additional information like resolved dependencies, etc.
+    if verbose:
+        print("Enhanced parsing with cwltool not yet implemented")
+    return parsed_data
 
 
 def _extract_provenance_spec(cwl_doc: Dict[str, Any]) -> Optional[ProvenanceSpec]:
     """Extract provenance information from CWL document."""
-    provenance = ProvenanceSpec()
-
-    # Extract authors from various CWL fields
+    # Extract basic provenance information
+    authors = []
+    contributors = []
+    
+    # Look for common provenance fields
     if "author" in cwl_doc:
-        authors = cwl_doc["author"]
-        if isinstance(authors, list):
-            provenance.authors = authors
-        elif isinstance(authors, dict):
-            provenance.authors = [authors]
-        elif isinstance(authors, str):
-            provenance.authors = [{"name": authors}]
-
-    # Extract other provenance fields
-    if "version" in cwl_doc:
-        provenance.version = str(cwl_doc["version"])
-
-    if "license" in cwl_doc:
-        provenance.license = cwl_doc["license"]
-
-    if "doi" in cwl_doc:
-        provenance.doi = cwl_doc["doi"]
-
-    if "keywords" in cwl_doc:
-        keywords = cwl_doc["keywords"]
-        if isinstance(keywords, list):
-            provenance.keywords = keywords
-        elif isinstance(keywords, str):
-            provenance.keywords = [keywords]
-
-    # Set creation timestamp
-    from datetime import datetime
-
-    provenance.created = datetime.now().isoformat()
-
-    # Capture any namespaced provenance annotations (keys with ':')
-    for k, v in cwl_doc.items():
-        if ":" in k and k.split(":", 1)[0] not in {"input", "output", "steps"}:
-            # Avoid doubling known fields
-            provenance.extras[k] = v
-
-    # Capture nested namespace dictionaries, e.g. prov: {wasGeneratedBy: X}
-    for ns_key, ns_val in cwl_doc.items():
-        if isinstance(ns_val, dict):
-            # Skip known structural sections
-            if ns_key in {"requirements", "hints", "inputs", "outputs", "steps"}:
-                continue
-            # Treat each entry as ns:key
-            for inner_k, inner_v in ns_val.items():
-                flat_key = f"{ns_key}:{inner_k}"
-                if flat_key not in provenance.extras:
-                    provenance.extras[flat_key] = inner_v
-
-    return (
-        provenance
-        if any(
-            [
-                provenance.authors,
-                provenance.version,
-                provenance.license,
-                provenance.doi,
-                provenance.keywords,
-                provenance.extras,
-            ]
-        )
-        else None
+        authors.append({"name": cwl_doc["author"]})
+    
+    if "contributor" in cwl_doc:
+        contributors.append({"name": cwl_doc["contributor"]})
+    
+    # Extract from metadata
+    metadata = cwl_doc.get("metadata", {})
+    if "author" in metadata:
+        authors.append({"name": metadata["author"]})
+    
+    if "contributor" in metadata:
+        contributors.append({"name": metadata["contributor"]})
+    
+    if not authors and not contributors:
+        return None
+    
+    return ProvenanceSpec(
+        authors=authors,
+        contributors=contributors,
+        created=metadata.get("created"),
+        modified=metadata.get("modified"),
+        version=metadata.get("version"),
+        license=metadata.get("license"),
+        doi=metadata.get("doi"),
+        citations=metadata.get("citations", []),
+        keywords=metadata.get("keywords", []),
+        derived_from=metadata.get("derived_from"),
+        extras=metadata,
     )
 
 
 def _extract_documentation_spec(cwl_doc: Dict[str, Any]) -> Optional[DocumentationSpec]:
-    """Extract documentation from CWL document."""
-    doc_spec = DocumentationSpec()
-
-    doc_spec.description = cwl_doc.get("doc")
-    doc_spec.label = cwl_doc.get("label")
-    doc_spec.doc = cwl_doc.get("doc")  # CWL-style documentation
-
-    # Extract intent (ontology IRIs)
-    if "intent" in cwl_doc:
-        intent = cwl_doc["intent"]
-        if isinstance(intent, list):
-            doc_spec.intent = intent
-        elif isinstance(intent, str):
-            doc_spec.intent = [intent]
-
-    return (
-        doc_spec
-        if any([doc_spec.description, doc_spec.label, doc_spec.doc, doc_spec.intent])
-        else None
+    """Extract documentation information from CWL document."""
+    description = cwl_doc.get("doc") or cwl_doc.get("description")
+    label = cwl_doc.get("label")
+    
+    if not description and not label:
+        return None
+    
+    return DocumentationSpec(
+        description=description,
+        label=label,
+        doc=cwl_doc.get("doc"),
+        intent=cwl_doc.get("intent", []),
+        usage_notes=cwl_doc.get("usage_notes"),
+        examples=cwl_doc.get("examples", []),
     )
 
 
 def _parse_parameter_specs(
     params: Union[Dict, List], param_type: str
 ) -> List[ParameterSpec]:
-    """Parse CWL parameters into enhanced ParameterSpec objects."""
-    param_specs = []
-
-    if isinstance(params, dict):
-        for param_id, param_def in params.items():
-            param_spec = _parse_single_parameter_spec(param_id, param_def, param_type)
-            if param_spec:
-                param_specs.append(param_spec)
-    elif isinstance(params, list):
-        for param_def in params:
-            if isinstance(param_def, dict) and "id" in param_def:
-                param_spec = _parse_single_parameter_spec(
-                    param_def["id"], param_def, param_type
-                )
-                if param_spec:
-                    param_specs.append(param_spec)
-
-    return param_specs
+    """Parse parameter specifications."""
+    if isinstance(params, list):
+        # List format
+        return [_parse_single_parameter_spec(f"param_{i}", param, param_type) 
+                for i, param in enumerate(params) if param]
+    elif isinstance(params, dict):
+        # Dict format
+        return [_parse_single_parameter_spec(param_id, param_def, param_type)
+                for param_id, param_def in params.items()]
+    else:
+        return []
 
 
 def _parse_single_parameter_spec(
     param_id: str, param_def: Any, param_type: str
 ) -> Optional[ParameterSpec]:
-    """Parse a single CWL parameter into ParameterSpec."""
+    """Parse a single parameter specification."""
+    
     if isinstance(param_def, str):
-        # Simple type definition
-        return ParameterSpec(id=param_id, type=param_def)
-    elif isinstance(param_def, dict):
-        # Complex parameter definition
-        param_spec = ParameterSpec(
+        # Simple string type
+        return ParameterSpec(
             id=param_id,
-            type=param_def.get("type", "string"),
+            type=param_def,
+        )
+    elif isinstance(param_def, dict):
+        # Full parameter definition
+        param_type_spec = param_def.get("type", "string")
+        
+        return ParameterSpec(
+            id=param_id,
+            type=param_type_spec,
             label=param_def.get("label"),
             doc=param_def.get("doc"),
             default=param_def.get("default"),
+            format=param_def.get("format"),
+            secondary_files=param_def.get("secondaryFiles", []),
+            streamable=param_def.get("streamable", False),
+            load_contents=param_def.get("loadContents", False),
+            load_listing=param_def.get("loadListing"),
+            input_binding=param_def.get("inputBinding"),
+            output_binding=param_def.get("outputBinding"),
             value_from=param_def.get("valueFrom"),
         )
-
-        # File-specific attributes
-        param_spec.format = param_def.get("format")
-        param_spec.secondary_files = param_def.get("secondaryFiles", [])
-        param_spec.streamable = param_def.get("streamable", False)
-        param_spec.load_contents = param_def.get("loadContents", False)
-        param_spec.load_listing = param_def.get("loadListing")
-
-        # Binding information
-        if param_type == "input":
-            param_spec.input_binding = param_def.get("inputBinding")
-        elif param_type == "output":
-            param_spec.output_binding = param_def.get("outputBinding")
-
-        return param_spec
-
+    
     return None
 
 
 def _parse_requirements(requirements: List[Dict[str, Any]]) -> List[RequirementSpec]:
-    """Parse CWL requirements/hints into RequirementSpec objects."""
-    req_specs = []
-
+    """Parse CWL requirements."""
+    result = []
+    
     for req in requirements:
         if isinstance(req, dict) and "class" in req:
-            req_spec = RequirementSpec(
+            # Extract all fields except 'class' into data
+            req_data = {k: v for k, v in req.items() if k != "class"}
+            result.append(RequirementSpec(
                 class_name=req["class"],
-                data={k: v for k, v in req.items() if k != "class"},
-            )
-            req_specs.append(req_spec)
-
-    return req_specs
+                data=req_data
+            ))
+    
+    return result
 
 
 def _parse_scatter_spec(step_def: Dict[str, Any]) -> Optional[ScatterSpec]:
-    """Parse CWL scatter specification."""
-    if "scatter" not in step_def:
-        return None
-
-    scatter = step_def["scatter"]
-    scatter_list = scatter if isinstance(scatter, list) else [scatter]
+    """Parse scatter specification."""
+    scatter = step_def.get("scatter")
     scatter_method = step_def.get("scatterMethod", "dotproduct")
-
-    return ScatterSpec(scatter=scatter_list, scatter_method=scatter_method)
-
-
-def _parse_cwl_step_enhanced(
-    step_name: str,
-    step_def: Dict[str, Any],
-    cwl_path: Path,
-    preserve_metadata: bool = True,
-    verbose: bool = False,
-    debug: bool = False,
-    graph_objects: Optional[Dict[str, Any]] = None,
-) -> tuple[Task, List[Edge]]:
-    """Parse a single CWL workflow step into enhanced Task and edges."""
-
-    # Get the tool reference
-    run_ref = step_def.get("run")
-    if not run_ref:
-        raise ValueError(f"Step {step_name} has no 'run' reference")
-
-    # Load the tool definition
-    tool_def = _load_tool_definition(
-        run_ref, cwl_path, graph_objects=graph_objects, verbose=verbose
-    )
-
-    # Create enhanced task
-    task = Task(
-        id=step_name,
-        label=step_def.get("label") or tool_def.get("label"),
-        doc=step_def.get("doc") or tool_def.get("doc"),
-    )
-
-    # Extract command from tool
-    if tool_def.get("class") == "CommandLineTool":
-        task.command = _extract_command_from_tool(tool_def)
-    else:
-        task.command = f"# CWL step: {step_name}"
-
-    # Parse conditional execution
-    if "when" in step_def:
-        task.when = step_def["when"]
-
-    # Parse scatter operations
-    task.scatter = _parse_scatter_spec(step_def)
-
-    # Parse enhanced I/O parameters
-    if preserve_metadata:
-        # Parse tool inputs and outputs as ParameterSpec
-        tool_inputs = tool_def.get("inputs", {})
-        tool_outputs = tool_def.get("outputs", {})
-
-        task.inputs = _parse_parameter_specs(tool_inputs, "input")
-        task.outputs = _parse_parameter_specs(tool_outputs, "output")
-
-    # ------------------------------------------------------------------
-    # Merge step-level input customisations such as valueFrom (step 'in')
-    # ------------------------------------------------------------------
-    step_inputs = step_def.get("in", {})
-    if isinstance(step_inputs, dict):
-        for inp_name, inp_def in step_inputs.items():
-            # Locate ParameterSpec by matching id with tool input name
-            pspec = next((p for p in task.inputs if p.id == inp_name), None)
-            if pspec is None:
-                continue
-
-            if isinstance(inp_def, dict) and "valueFrom" in inp_def:
-                pspec.value_from = inp_def["valueFrom"]
-
-    # Extract resource requirements with enhanced parsing
-    task.resources = _extract_resource_requirements_enhanced(tool_def, step_def)
-
-    # Extract environment spec with enhanced parsing
-    task.environment = _extract_environment_spec_enhanced(tool_def, step_def)
-
-    # Parse requirements and hints
-    step_requirements = step_def.get("requirements", [])
-    tool_requirements = tool_def.get("requirements", [])
-    task.requirements = _parse_requirements(step_requirements + tool_requirements)
-
-    step_hints = step_def.get("hints", [])
-    tool_hints = tool_def.get("hints", [])
-    task.hints = _parse_requirements(step_hints + tool_hints)
-
-    # Extract provenance and documentation if available
-    if preserve_metadata:
-        task.provenance = _extract_provenance_spec(tool_def)
-        task.documentation = _extract_documentation_spec(tool_def)
-
-    # Extract intent
-    if "intent" in tool_def:
-        intent = tool_def["intent"]
-        task.intent = intent if isinstance(intent, list) else [intent]
-
-    # Legacy compatibility - populate old fields for backward compatibility
-    legacy_inputs = _extract_inputs_legacy(step_def, tool_def)
-    legacy_outputs = _extract_outputs_legacy(step_def, tool_def)
-    task.params = _extract_params_legacy(step_def)
-
-    # Store legacy inputs/outputs in meta for backward compatibility
-    task.meta["legacy_inputs"] = legacy_inputs
-    task.meta["legacy_outputs"] = legacy_outputs
-
-    # Store enhanced metadata
-    task.meta = {
-        "cwl_step_def": step_def if preserve_metadata else {},
-        "cwl_tool_def": tool_def if preserve_metadata else {},
-        "step_requirements": step_requirements,
-        "tool_requirements": tool_requirements,
-        "step_hints": step_hints,
-        "tool_hints": tool_hints,
-    }
-
-    # Parse step dependencies with enhanced edge detection
-    edges = _parse_step_dependencies_enhanced(step_name, step_def, verbose=verbose)
-
-    return task, edges
-
-
-def _extract_resource_requirements_enhanced(
-    tool_def: Dict[str, Any], step_def: Dict[str, Any]
-) -> ResourceSpec:
-    """Extract resource requirements with enhanced CWL feature support."""
-    resources = ResourceSpec()
-
-    # Check both tool and step requirements
-    all_requirements = []
-    all_requirements.extend(tool_def.get("requirements", []))
-    all_requirements.extend(step_def.get("requirements", []))
-    all_requirements.extend(tool_def.get("hints", []))
-    all_requirements.extend(step_def.get("hints", []))
-
-    for req in all_requirements:
-        if not isinstance(req, dict):
-            continue
-
-        req_class = req.get("class")
-
-        if req_class == "ResourceRequirement":
-            # Parse CPU requirements
-            if "coresMin" in req:
-                cpu_min = int(req["coresMin"])
-                if resources.cpu is None:
-                    resources.cpu = cpu_min
-                else:
-                    resources.cpu = max(resources.cpu, cpu_min)
-            if "coresMax" in req:
-                cpu_max = int(req["coresMax"])
-                if resources.cpu is None:
-                    resources.cpu = cpu_max
-                else:
-                    resources.cpu = max(resources.cpu, cpu_max)  # Use coresMax for CPU
-                resources.threads = cpu_max
-
-            # Parse memory requirements (convert to MB)
-            if "ramMin" in req:
-                ram_min = req["ramMin"]
-                if isinstance(ram_min, str) and ram_min.endswith("G"):
-                    mem_min = int(float(ram_min[:-1]) * 1024)
-                elif isinstance(ram_min, (int, float)):
-                    mem_min = int(ram_min)
-                else:
-                    continue
-                
-                if resources.mem_mb is None:
-                    resources.mem_mb = mem_min
-                else:
-                    resources.mem_mb = max(resources.mem_mb, mem_min)
-
-            if "ramMax" in req:
-                ram_max = req["ramMax"]
-                if isinstance(ram_max, str) and ram_max.endswith("G"):
-                    mem_max = int(float(ram_max[:-1]) * 1024)
-                elif isinstance(ram_max, (int, float)):
-                    mem_max = int(ram_max)
-                else:
-                    continue
-                
-                if resources.mem_mb is None:
-                    resources.mem_mb = mem_max
-                else:
-                    resources.mem_mb = max(resources.mem_mb, mem_max)
-
-            # Parse disk requirements (convert to MB and add them together)
-            total_disk_mb = 0
-
-            if "outdirMin" in req:
-                outdir_min = req["outdirMin"]
-                if isinstance(outdir_min, str) and outdir_min.endswith("G"):
-                    total_disk_mb += int(float(outdir_min[:-1]) * 1024)
-                elif isinstance(outdir_min, (int, float)):
-                    total_disk_mb += int(outdir_min)
-
-            # Parse temporary disk requirements
-            if "tmpdirMin" in req:
-                tmpdir_min = req["tmpdirMin"]
-                if isinstance(tmpdir_min, str) and tmpdir_min.endswith("G"):
-                    total_disk_mb += int(float(tmpdir_min[:-1]) * 1024)
-                elif isinstance(tmpdir_min, (int, float)):
-                    total_disk_mb += int(tmpdir_min)
-
-            if "tmpdirMax" in req:
-                tmpdir_max = req["tmpdirMax"]
-                if isinstance(tmpdir_max, str) and tmpdir_max.endswith("G"):
-                    total_disk_mb += int(float(tmpdir_max[:-1]) * 1024)
-                elif isinstance(tmpdir_max, (int, float)):
-                    total_disk_mb += int(tmpdir_max)
-
-            # Use the maximum of current disk_mb and total calculated disk
-            if total_disk_mb > 0:
-                if resources.disk_mb is None:
-                    resources.disk_mb = total_disk_mb
-                else:
-                    resources.disk_mb = max(resources.disk_mb, total_disk_mb)
-
-        elif req_class == "ToolTimeLimit":
-            # Parse time limits
-            if "timelimit" in req:
-                resources.time_s = int(req["timelimit"])
-
-        elif req_class == "NetworkAccess":
-            # Store network access requirement in extra
-            resources.extra["network_access"] = req.get("networkAccess", True)
-
-        elif req_class == "WorkReuse":
-            # Store work reuse setting in extra
-            resources.extra["work_reuse"] = req.get("enableReuse", True)
-
-    return resources
-
-
-def _extract_environment_spec_enhanced(
-    tool_def: Dict[str, Any], step_def: Dict[str, Any]
-) -> EnvironmentSpec:
-    """Extract environment spec with enhanced CWL feature support."""
-    env_spec = EnvironmentSpec()
-
-    # Check both tool and step requirements
-    all_requirements = []
-    all_requirements.extend(tool_def.get("requirements", []))
-    all_requirements.extend(step_def.get("requirements", []))
-    all_requirements.extend(tool_def.get("hints", []))
-    all_requirements.extend(step_def.get("hints", []))
-
-    for req in all_requirements:
-        if not isinstance(req, dict):
-            continue
-
-        req_class = req.get("class")
-
-        if req_class == "DockerRequirement":
-            # Docker container specification
-            if "dockerPull" in req:
-                env_spec.container = f"docker://{req['dockerPull']}"
-            elif "dockerImageId" in req:
-                env_spec.container = f"docker://{req['dockerImageId']}"
-
-        elif req_class == "SoftwareRequirement":
-            # Software packages (convert to conda environment)
-            packages = req.get("packages", [])
-            if packages:
-                # Create a minimal conda environment specification
-                conda_spec = {"name": "cwl_env", "dependencies": []}
-
-                for pkg in packages:
-                    if isinstance(pkg, dict):
-                        pkg_name = pkg.get("package")
-                        pkg_version = (
-                            pkg.get("version", [""])[0] if pkg.get("version") else ""
-                        )
-                        if pkg_name:
-                            if pkg_version:
-                                conda_spec["dependencies"].append(
-                                    f"{pkg_name}={pkg_version}"
-                                )
-                            else:
-                                conda_spec["dependencies"].append(pkg_name)
-
-                # Store as dictionary for backward compatibility with tests
-                # Tests expect conda to be a dict, not a YAML string
-                env_spec.conda = conda_spec
-
-        elif req_class == "EnvVarRequirement":
-            # Environment variables
-            env_vars = req.get("envDef", {})
-            env_spec.env_vars.update(env_vars)
-
-        elif req_class == "InitialWorkDirRequirement":
-            # Working directory setup
-            if "listing" in req:
-                # For now, just note that initial work dir is required
-                env_spec.workdir = "."  # Current directory
-
-    return env_spec
-
-
-def _parse_step_dependencies_enhanced(
-    step_name: str, step_def: Dict[str, Any], verbose: bool = False
-) -> List[Edge]:
-    """Parse step dependencies with enhanced edge detection."""
-    edges = []
-
-    # Parse step inputs to find dependencies
-    step_inputs = step_def.get("in", {})
-
-    for input_name, input_def in step_inputs.items():
-        if isinstance(input_def, dict):
-            source = input_def.get("source")
-        elif isinstance(input_def, str):
-            source = input_def
+    
+    if scatter:
+        if isinstance(scatter, str):
+            scatter_list = [scatter]
+        elif isinstance(scatter, list):
+            scatter_list = scatter
         else:
-            continue
-
-        if source:
-            # Handle multiple sources
-            sources = source if isinstance(source, list) else [source]
-
-            for src in sources:
-                if isinstance(src, str) and "/" in src:
-                    # Source is from another step: step_name/output_name
-                    parent_step = src.split("/")[0]
-                    if parent_step != step_name:  # Avoid self-dependencies
-                        edges.append(Edge(parent=parent_step, child=step_name))
-                        if verbose:
-                            print(
-                                f"  Found enhanced dependency: {parent_step} -> {step_name}"
-                            )
-
-    return edges
-
-
-def _parse_workflow_inputs_legacy(inputs: Union[Dict, List]) -> Dict[str, Any]:
-    """Parse CWL workflow inputs into config dictionary for backward compatibility."""
-    config = {}
-
-    if isinstance(inputs, dict):
-        for input_name, input_def in inputs.items():
-            if isinstance(input_def, dict):
-                default_value = input_def.get("default")
-                if default_value is not None:
-                    config[input_name] = default_value
-            else:
-                # Simple type definition
-                config[input_name] = None
-    elif isinstance(inputs, list):
-        for input_def in inputs:
-            if isinstance(input_def, dict) and "id" in input_def:
-                input_name = input_def["id"]
-                default_value = input_def.get("default")
-                if default_value is not None:
-                    config[input_name] = default_value
-
-    return config
-
-
-def _extract_inputs_legacy(
-    step_def: Dict[str, Any], tool_def: Dict[str, Any]
-) -> List[str]:
-    """Extract inputs in legacy format for backward compatibility."""
-    inputs = []
-
-    # Extract from tool inputs
-    tool_inputs = tool_def.get("inputs", {})
-    if isinstance(tool_inputs, dict):
-        inputs.extend(tool_inputs.keys())
-    elif isinstance(tool_inputs, list):
-        for inp in tool_inputs:
-            if isinstance(inp, dict) and "id" in inp:
-                inputs.append(inp["id"])
-
-    return inputs
-
-
-def _extract_outputs_legacy(
-    step_def: Dict[str, Any], tool_def: Dict[str, Any]
-) -> List[str]:
-    """Extract outputs in legacy format for backward compatibility."""
-    outputs = []
-
-    # Extract from tool outputs
-    tool_outputs = tool_def.get("outputs", {})
-    if isinstance(tool_outputs, dict):
-        outputs.extend(tool_outputs.keys())
-    elif isinstance(tool_outputs, list):
-        for out in tool_outputs:
-            if isinstance(out, dict) and "id" in out:
-                outputs.append(out["id"])
-
-    return outputs
-
-
-def _extract_params_legacy(step_def: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract parameters in legacy format for backward compatibility."""
-    params = {}
-
-    # Extract step inputs as parameters
-    step_inputs = step_def.get("in", {})
-    for input_name, input_def in step_inputs.items():
-        if isinstance(input_def, dict):
-            # Store input configuration
-            params[input_name] = input_def
-        else:
-            # Simple input reference
-            params[input_name] = input_def
-
-    return params
+            return None
+        
+        return ScatterSpec(
+            scatter=scatter_list,
+            scatter_method=scatter_method
+        )
+    
+    return None

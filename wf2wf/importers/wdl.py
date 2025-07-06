@@ -12,6 +12,8 @@ Features supported:
 - Call dependencies and workflow structure
 """
 
+from __future__ import annotations
+
 import re
 import json
 from pathlib import Path
@@ -21,74 +23,163 @@ from wf2wf.core import (
     Workflow,
     Task,
     Edge,
-    ResourceSpec,
-    EnvironmentSpec,
+    EnvironmentSpecificValue,
     ParameterSpec,
     ScatterSpec,
     ProvenanceSpec,
     DocumentationSpec,
+    CheckpointSpec,
+    LoggingSpec,
+    SecuritySpec,
+    NetworkingSpec,
+    MetadataSpec,
 )
+from wf2wf.importers.base import BaseImporter
+
+
+class WDLImporter(BaseImporter):
+    """WDL importer using shared base infrastructure."""
+    
+    def _parse_source(self, path: Path, **opts: Any) -> Dict[str, Any]:
+        """Parse WDL file and extract all information."""
+        preserve_metadata = opts.get("preserve_metadata", True)
+        debug = opts.get("debug", False)
+        verbose = self.verbose
+
+        if verbose:
+            print(f"Parsing WDL file: {path}")
+
+        # Parse WDL document
+        wdl_content = path.read_text()
+        wdl_doc = _parse_wdl_document(wdl_content, path, debug=debug)
+
+        # Basic sanity check: must contain at least one workflow or task
+        if not wdl_doc.get("workflows") and not wdl_doc.get("tasks"):
+            raise RuntimeError("Invalid or unsupported WDL content")
+
+        return {
+            "wdl_doc": wdl_doc,
+            "wdl_path": path,
+            "preserve_metadata": preserve_metadata,
+            "debug": debug,
+        }
+    
+    def _create_basic_workflow(self, parsed_data: Dict[str, Any]) -> Workflow:
+        """Create basic workflow from parsed WDL data."""
+        wdl_doc = parsed_data["wdl_doc"]
+        wdl_path = parsed_data["wdl_path"]
+        preserve_metadata = parsed_data["preserve_metadata"]
+        
+        # Get workflow name from first workflow or use filename
+        workflows = wdl_doc.get("workflows", {})
+        if workflows:
+            workflow_name = list(workflows.keys())[0]
+        else:
+            workflow_name = wdl_path.stem
+        
+        # Create workflow with WDL-specific execution model
+        workflow = Workflow(
+            name=workflow_name,
+            version=wdl_doc.get("version", "1.0"),
+            execution_model=EnvironmentSpecificValue("shared_filesystem", ["shared_filesystem"]),
+        )
+        
+        # Add metadata
+        if preserve_metadata:
+            workflow.metadata = MetadataSpec(
+                source_format="wdl",
+                source_file=str(wdl_path),
+                source_version=wdl_doc.get("version", "1.0"),
+                format_specific={"wdl_document": wdl_doc},
+            )
+        
+        return workflow
+    
+    def _extract_tasks(self, parsed_data: Dict[str, Any]) -> List[Task]:
+        """Extract tasks from parsed WDL data."""
+        wdl_doc = parsed_data["wdl_doc"]
+        wdl_path = parsed_data["wdl_path"]
+        preserve_metadata = parsed_data["preserve_metadata"]
+        verbose = self.verbose
+        
+        tasks = []
+        
+        # Convert WDL tasks to IR tasks
+        for task_name, wdl_task in wdl_doc.get("tasks", {}).items():
+            task = _convert_wdl_task_to_ir(
+                wdl_task, task_name, {}, preserve_metadata=preserve_metadata, verbose=verbose
+            )
+            tasks.append(task)
+        
+        # Convert workflow calls to tasks
+        workflows = wdl_doc.get("workflows", {})
+        for workflow_name, workflow_def in workflows.items():
+            calls = workflow_def.get("calls", {})
+            for call_name, call_def in calls.items():
+                task_id = f"{workflow_name}.{call_name}"
+                
+                # Find the task definition
+                task_def = wdl_doc.get("tasks", {}).get(call_name, {})
+                
+                task = _convert_wdl_task_to_ir(
+                    task_def, task_id, call_def, preserve_metadata=preserve_metadata, verbose=verbose
+                )
+                tasks.append(task)
+        
+        return tasks
+    
+    def _extract_edges(self, parsed_data: Dict[str, Any]) -> List[Edge]:
+        """Extract edges from parsed WDL data."""
+        wdl_doc = parsed_data["wdl_doc"]
+        edges = []
+        
+        # Extract dependencies from workflow calls
+        workflows = wdl_doc.get("workflows", {})
+        for workflow_name, workflow_def in workflows.items():
+            calls = workflow_def.get("calls", {})
+            all_calls = list(calls.items())
+            
+            for call_name, call_def in calls.items():
+                call_edges = _extract_wdl_dependencies(call_def, call_name, all_calls)
+                # Update edge parent/child to include workflow name
+                for edge in call_edges:
+                    edge.parent = f"{workflow_name}.{edge.parent}"
+                    edge.child = f"{workflow_name}.{edge.child}"
+                edges.extend(call_edges)
+        
+        return edges
+    
+    def _get_source_format(self) -> str:
+        """Get the source format name."""
+        return "wdl"
 
 
 def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
-    """Import a WDL workflow file and convert to wf2wf IR.
+    """Convert WDL file at *path* into a Workflow IR object using shared infrastructure.
 
-    Args:
-        path: Path to the WDL workflow file (.wdl)
-        **opts: Additional options:
-            - preserve_metadata: bool = True - Preserve WDL metadata
-            - verbose: bool = False - Enable verbose output
-            - debug: bool = False - Enable debug output
+    Parameters
+    ----------
+    path : Union[str, Path]
+        Path to the .wdl file.
+    preserve_metadata : bool, optional
+        Preserve WDL metadata (default: True).
+    verbose : bool, optional
+        Enable verbose output (default: False).
+    debug : bool, optional
+        Enable debug output (default: False).
+    interactive : bool, optional
+        Enable interactive mode (default: False).
 
-    Returns:
-        Workflow: The converted workflow in wf2wf IR format
-
-    Raises:
-        RuntimeError: If the WDL file cannot be parsed or converted
-        FileNotFoundError: If the WDL file doesn't exist
+    Returns
+    -------
+    Workflow
+        Populated IR instance.
     """
-    wdl_path = Path(path).resolve()
-    if not wdl_path.exists():
-        raise FileNotFoundError(f"WDL file not found: {wdl_path}")
-
-    preserve_metadata = opts.get("preserve_metadata", True)
-    verbose = opts.get("verbose", False)
-    debug = opts.get("debug", False)
-
-    if verbose:
-        print(f"Importing WDL workflow: {wdl_path}")
-
-    try:
-        # Parse WDL document
-        wdl_content = wdl_path.read_text()
-        wdl_doc = _parse_wdl_document(wdl_content, wdl_path, debug=debug)
-
-        # Basic sanity check: must contain at least one workflow or task
-        if not wdl_doc.get("workflows"):
-            raise RuntimeError("Invalid or unsupported WDL content")
-
-        # Convert to workflow IR
-        workflow = _convert_wdl_to_workflow(
-            wdl_doc,
-            wdl_path,
-            preserve_metadata=preserve_metadata,
-            verbose=verbose,
-            debug=debug,
-        )
-
-        if verbose:
-            print(
-                f"Successfully imported WDL workflow with {len(workflow.tasks)} tasks"
-            )
-
-        return workflow
-
-    except Exception as e:
-        if debug:
-            import traceback
-
-            traceback.print_exc()
-        raise RuntimeError(f"Failed to import WDL workflow: {e}")
+    importer = WDLImporter(
+        interactive=opts.get("interactive", False),
+        verbose=opts.get("verbose", False)
+    )
+    return importer.import_workflow(path, **opts)
 
 
 def _parse_wdl_document(
@@ -204,9 +295,9 @@ def _parse_wdl_workflow(
         "name": workflow_name,
         "inputs": {},
         "outputs": {},
-        "calls": [],
-        "meta": {},
-        "parameter_meta": {},
+        "calls": {},
+        "scatter": {},
+        "if": {},
     }
 
     # Extract input section
@@ -220,267 +311,121 @@ def _parse_wdl_workflow(
         workflow["outputs"] = _parse_wdl_parameters(output_match.group(1), "output")
 
     # Extract call statements
-    call_pattern = r"call\s+(\w+)(?:\s+as\s+(\w+))?(?:\s*\{([^}]*)\})?"
-    call_matches = re.finditer(call_pattern, workflow_body, re.DOTALL)
-
+    call_matches = re.finditer(r"call\s+(\w+)(?:\s+as\s+(\w+))?\s*\{([^}]*)\}", workflow_body, re.DOTALL)
     for match in call_matches:
-        call = {
-            "task": match.group(1),
-            "alias": match.group(2) or match.group(1),
-            "inputs": {},
+        task_name = match.group(1)
+        call_alias = match.group(2) or task_name
+        call_inputs = match.group(3)
+        
+        workflow["calls"][call_alias] = {
+            "task": task_name,
+            "inputs": _parse_wdl_call_inputs(call_inputs),
         }
 
-        if match.group(3):  # Call has input block
-            call["inputs"] = _parse_wdl_call_inputs(match.group(3))
-
-        workflow["calls"].append(call)
-
     # Extract scatter statements
-    scatter_pattern = r"scatter\s*\(([^)]+)\)\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}"
-    scatter_matches = re.finditer(scatter_pattern, workflow_body, re.DOTALL)
-
+    scatter_matches = re.finditer(r"scatter\s*\(([^)]+)\)\s*in\s*\{([^}]*)\}", workflow_body, re.DOTALL)
     for match in scatter_matches:
-        scatter_expr = match.group(1).strip()
+        scatter_expr = match.group(1)
         scatter_body = match.group(2)
-
-        # Parse scatter calls within the scatter block
-        scatter_calls = []
-        scatter_call_matches = re.finditer(call_pattern, scatter_body, re.DOTALL)
-
-        for call_match in scatter_call_matches:
-            call = {
-                "task": call_match.group(1),
-                "alias": call_match.group(2) or call_match.group(1),
-                "inputs": {},
+        
+        # Parse calls within scatter
+        scatter_calls = {}
+        call_matches = re.finditer(r"call\s+(\w+)(?:\s+as\s+(\w+))?\s*\{([^}]*)\}", scatter_body, re.DOTALL)
+        for call_match in call_matches:
+            task_name = call_match.group(1)
+            call_alias = call_match.group(2) or task_name
+            call_inputs = call_match.group(3)
+            
+            scatter_calls[call_alias] = {
+                "task": task_name,
+                "inputs": _parse_wdl_call_inputs(call_inputs),
                 "scatter": scatter_expr,
             }
-
-            if call_match.group(3):
-                call["inputs"] = _parse_wdl_call_inputs(call_match.group(3))
-
-            scatter_calls.append(call)
-
-        workflow["calls"].extend(scatter_calls)
-
-    # Extract meta sections
-    meta_match = re.search(r"meta\s*\{([^}]*)\}", workflow_body, re.DOTALL)
-    if meta_match:
-        workflow["meta"] = _parse_wdl_meta(meta_match.group(1))
-
-    param_meta_match = re.search(
-        r"parameter_meta\s*\{([^}]*)\}", workflow_body, re.DOTALL
-    )
-    if param_meta_match:
-        workflow["parameter_meta"] = _parse_wdl_meta(param_meta_match.group(1))
+        
+        workflow["scatter"].update(scatter_calls)
 
     return workflow
 
 
 def _parse_wdl_parameters(params_text: str, param_type: str) -> Dict[str, Any]:
-    """Parse WDL input/output parameter declarations."""
+    """Parse WDL parameter declarations."""
+    params = {}
 
-    parameters = {}
-
-    # Simple parameter parsing - could be enhanced for complex types
-    param_lines = [line.strip() for line in params_text.split("\n") if line.strip()]
-
-    for line in param_lines:
-        # Skip comments
-        if line.startswith("#"):
+    for line in params_text.split("\n"):
+        line = line.strip()
+        if not line or line.startswith("#"):
             continue
 
-        # Parse parameter declaration: Type name = default_value
-        param_match = re.match(
-            r"(\w+(?:\[.*?\])?(?:\?)?)\s+(\w+)(?:\s*=\s*(.+))?", line
-        )
-        if param_match:
-            param_type_str = param_match.group(1)
-            param_name = param_match.group(2)
-            param_default = param_match.group(3)
+        # Match parameter declarations
+        match = re.match(r"(\w+)\s+(\w+)(?:\s*=\s*(.+))?", line)
+        if match:
+            param_name = match.group(1)
+            param_type_wdl = match.group(2)
+            default_value = match.group(3) if match.group(3) else None
 
-            parameters[param_name] = {
-                "type": param_type_str,
-                "default": param_default.strip() if param_default else None,
+            params[param_name] = {
+                "type": param_type_wdl,
+                "default": default_value,
             }
 
-    return parameters
+    return params
 
 
 def _parse_wdl_runtime(runtime_text: str) -> Dict[str, Any]:
     """Parse WDL runtime section."""
-
     runtime = {}
 
-    # Parse key-value pairs in runtime section
-    runtime_lines = [line.strip() for line in runtime_text.split("\n") if line.strip()]
+    for line in runtime_text.split("\n"):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
 
-    for line in runtime_lines:
-        if ":" in line:
-            key, value = line.split(":", 1)
-            key = key.strip()
-            value = value.strip().strip("\"'")
+        # Match runtime declarations
+        match = re.match(r"(\w+)\s*:\s*(.+)", line)
+        if match:
+            key = match.group(1)
+            value = match.group(2).strip().strip('"\'')
             runtime[key] = value
 
     return runtime
 
 
 def _parse_wdl_meta(meta_text: str) -> Dict[str, Any]:
-    """Parse WDL meta or parameter_meta section."""
-
+    """Parse WDL meta section."""
     meta = {}
 
-    # Parse key-value pairs in meta section
-    meta_lines = [line.strip() for line in meta_text.split("\n") if line.strip()]
+    for line in meta_text.split("\n"):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
 
-    for line in meta_lines:
-        if ":" in line:
-            key, value = line.split(":", 1)
-            key = key.strip()
-            value = value.strip().strip("\"'")
-
-            # Try to parse as JSON if it looks like structured data
-            try:
-                if value.startswith("{") or value.startswith("["):
-                    value = json.loads(value)
-            except json.JSONDecodeError:
-                pass  # Keep as string
-
+        # Match meta declarations
+        match = re.match(r"(\w+)\s*:\s*(.+)", line)
+        if match:
+            key = match.group(1)
+            value = match.group(2).strip().strip('"\'')
             meta[key] = value
 
     return meta
 
 
 def _parse_wdl_call_inputs(inputs_text: str) -> Dict[str, str]:
-    """Parse WDL call input assignments."""
-
+    """Parse WDL call input bindings."""
     inputs = {}
 
-    # Remove the "input:" prefix if present and split by commas
-    cleaned_text = inputs_text.strip()
-    if cleaned_text.startswith("input:"):
-        cleaned_text = cleaned_text[6:].strip()
-
-    # Split by commas and parse each assignment
-    input_assignments = [
-        line.strip()
-        for line in cleaned_text.replace("\n", ",").split(",")
-        if line.strip()
-    ]
-
-    for assignment in input_assignments:
-        if "=" in assignment:
-            key, value = assignment.split("=", 1)
-            inputs[key.strip()] = value.strip()
-
-    return inputs
-
-
-def _convert_wdl_to_workflow(
-    wdl_doc: Dict[str, Any],
-    wdl_path: Path,
-    preserve_metadata: bool = True,
-    verbose: bool = False,
-    debug: bool = False,
-) -> Workflow:
-    """Convert parsed WDL document to wf2wf Workflow IR."""
-
-    # Find the main workflow (use first workflow if multiple exist)
-    main_workflow = None
-    if wdl_doc["workflows"]:
-        main_workflow_name = list(wdl_doc["workflows"].keys())[0]
-        main_workflow = wdl_doc["workflows"][main_workflow_name]
-    else:
-        # If no workflow, create one from tasks
-        main_workflow_name = wdl_path.stem
-        main_workflow = {
-            "name": main_workflow_name,
-            "inputs": {},
-            "outputs": {},
-            "calls": [],
-            "meta": {},
-            "parameter_meta": {},
-        }
-
-        # Add all tasks as calls
-        for task_name in wdl_doc["tasks"].keys():
-            main_workflow["calls"].append(
-                {"task": task_name, "alias": task_name, "inputs": {}}
-            )
-
-    # Create workflow IR
-    workflow = Workflow(
-        name=main_workflow["name"],
-        version="1.0",
-        label=main_workflow["name"],
-        doc=main_workflow.get("meta", {}).get("description", ""),
-    )
-
-    # Store WDL metadata
-    if preserve_metadata:
-        workflow.meta = {
-            "source_format": "wdl",
-            "wdl_version": wdl_doc.get("version", "1.0"),
-            "original_wdl_doc": wdl_doc if preserve_metadata else {},
-        }
-
-        # Extract provenance from meta
-        if main_workflow.get("meta"):
-            workflow.provenance = _extract_wdl_provenance(main_workflow["meta"])
-
-        # Extract documentation
-        if main_workflow.get("meta") or main_workflow.get("parameter_meta"):
-            workflow.documentation = _extract_wdl_documentation(
-                main_workflow.get("meta", {}), main_workflow.get("parameter_meta", {})
-            )
-
-    # Convert workflow inputs
-    workflow.inputs = _convert_wdl_inputs(main_workflow.get("inputs", {}))
-
-    # Convert workflow outputs
-    workflow.outputs = _convert_wdl_outputs(main_workflow.get("outputs", {}))
-
-    # Convert calls to tasks and edges
-    tasks = {}
-    edges = []
-
-    for call in main_workflow.get("calls", []):
-        task_name = call["task"]
-        call_alias = call["alias"]
-
-        if task_name not in wdl_doc["tasks"]:
-            if verbose:
-                print(f"Warning: Task '{task_name}' not found in WDL document")
+    for line in inputs_text.split("\n"):
+        line = line.strip()
+        if not line or line.startswith("#"):
             continue
 
-        wdl_task = wdl_doc["tasks"][task_name]
+        # Match input bindings
+        match = re.match(r"(\w+)\s*=\s*(.+)", line)
+        if match:
+            input_name = match.group(1)
+            input_value = match.group(2).strip().strip('"\'')
+            inputs[input_name] = input_value
 
-        # Convert WDL task to IR task
-        task = _convert_wdl_task_to_ir(
-            wdl_task,
-            call_alias,
-            call,
-            preserve_metadata=preserve_metadata,
-            verbose=verbose,
-        )
-
-        tasks[call_alias] = task
-
-        # Extract dependencies from call inputs
-        task_edges = _extract_wdl_dependencies(call, call_alias, main_workflow["calls"])
-        edges.extend(task_edges)
-
-    # Add tasks and edges to workflow
-    for task in tasks.values():
-        workflow.add_task(task)
-
-    for edge in edges:
-        try:
-            workflow.add_edge(edge.parent, edge.child)
-        except KeyError as e:
-            if verbose:
-                print(f"Warning: Could not add edge {edge.parent} -> {edge.child}: {e}")
-
-    return workflow
+    return inputs
 
 
 def _convert_wdl_task_to_ir(
@@ -491,327 +436,256 @@ def _convert_wdl_task_to_ir(
     verbose: bool = False,
 ) -> Task:
     """Convert a WDL task to IR Task."""
-
+    
+    # Extract basic information
+    task_name = wdl_task.get("name", task_id)
+    command = wdl_task.get("command", "")
+    runtime = wdl_task.get("runtime", {})
+    meta = wdl_task.get("meta", {})
+    
+    # Convert inputs and outputs
+    inputs = _convert_wdl_task_inputs(wdl_task.get("inputs", {}))
+    outputs = _convert_wdl_task_outputs(wdl_task.get("outputs", {}))
+    
+    # Convert runtime to resources
+    cpu = EnvironmentSpecificValue(1, ["shared_filesystem"])
+    mem_mb = EnvironmentSpecificValue(4096, ["shared_filesystem"])
+    disk_mb = EnvironmentSpecificValue(4096, ["shared_filesystem"])
+    time_s = EnvironmentSpecificValue(3600, ["shared_filesystem"])
+    
+    if "cpu" in runtime:
+        cpu_val = _parse_resource_value(runtime["cpu"])
+        if cpu_val is not None:
+            cpu = EnvironmentSpecificValue(int(cpu_val), ["shared_filesystem"])
+    
+    if "memory" in runtime:
+        mem_val = _parse_memory_string(runtime["memory"])
+        if mem_val is not None:
+            mem_mb = EnvironmentSpecificValue(mem_val, ["shared_filesystem"])
+    
+    if "disk" in runtime:
+        disk_val = _parse_disk_string(runtime["disk"])
+        if disk_val is not None:
+            disk_mb = EnvironmentSpecificValue(disk_val, ["shared_filesystem"])
+    
+    if "time" in runtime:
+        time_val = _parse_time_string(runtime["time"])
+        if time_val is not None:
+            time_s = EnvironmentSpecificValue(time_val, ["shared_filesystem"])
+    
+    # Extract environment
+    container = EnvironmentSpecificValue(None, ["shared_filesystem"])
+    if "docker" in runtime:
+        container = EnvironmentSpecificValue(runtime["docker"], ["shared_filesystem"])
+    
+    # Extract scatter information
+    scatter = EnvironmentSpecificValue(None, ["shared_filesystem"])
+    if "scatter" in call:
+        scatter_expr = call["scatter"]
+        scatter_spec = _convert_wdl_scatter(scatter_expr)
+        if scatter_spec:
+            scatter = EnvironmentSpecificValue(scatter_spec, ["shared_filesystem"])
+    
+    # Create task
     task = Task(
         id=task_id,
-        label=wdl_task.get("meta", {}).get("description", task_id),
-        doc=wdl_task.get("meta", {}).get("description", ""),
-        command=wdl_task.get("command", ""),
+        label=task_name,
+        doc=meta.get("description", ""),
+        command=EnvironmentSpecificValue(command, ["shared_filesystem"]) if command else EnvironmentSpecificValue(None, ["shared_filesystem"]),
+        inputs=inputs,
+        outputs=outputs,
+        scatter=scatter,
+        cpu=cpu,
+        mem_mb=mem_mb,
+        disk_mb=disk_mb,
+        time_s=time_s,
+        container=container,
     )
-
-    # Convert inputs
-    task.inputs = _convert_wdl_task_inputs(wdl_task.get("inputs", {}))
-
-    # Convert outputs
-    task.outputs = _convert_wdl_task_outputs(wdl_task.get("outputs", {}))
-
-    # Convert runtime to resources
-    task.resources = _convert_wdl_runtime_to_resources(wdl_task.get("runtime", {}))
-
-    # Convert runtime to environment
-    task.environment = _convert_wdl_runtime_to_environment(wdl_task.get("runtime", {}))
-
-    # Handle scatter operations
-    if call.get("scatter"):
-        task.scatter = _convert_wdl_scatter(call["scatter"])
-
-    # Store WDL metadata
-    if preserve_metadata:
-        task.meta = {
-            "wdl_task": wdl_task.get("name", task_id),
-            "wdl_meta": wdl_task.get("meta", {}),
-            "wdl_parameter_meta": wdl_task.get("parameter_meta", {}),
-            "wdl_runtime": wdl_task.get("runtime", {}),
-            "call_inputs": call.get("inputs", {}),
-        }
-
-        # Extract provenance
-        if wdl_task.get("meta"):
-            task.provenance = _extract_wdl_provenance(wdl_task["meta"])
-
-        # Extract documentation
-        if wdl_task.get("meta") or wdl_task.get("parameter_meta"):
-            task.documentation = _extract_wdl_documentation(
-                wdl_task.get("meta", {}), wdl_task.get("parameter_meta", {})
-            )
-
+    
     return task
 
 
-def _convert_wdl_inputs(wdl_inputs: Dict[str, Any]) -> List[ParameterSpec]:
-    """Convert WDL workflow inputs to IR parameter specs."""
-
-    inputs = []
-
-    for param_name, param_def in wdl_inputs.items():
-        default_val = param_def.get("default")
-        if (
-            isinstance(default_val, str)
-            and len(default_val) >= 2
-            and (
-                (default_val.startswith('"') and default_val.endswith('"'))
-                or (default_val.startswith("'") and default_val.endswith("'"))
-            )
-        ):
-            default_val = default_val[1:-1]
-        param_spec = ParameterSpec(
-            id=param_name,
-            type=_convert_wdl_type(param_def.get("type", "String")),
-            default=default_val,
-        )
-        inputs.append(param_spec)
-
-    return inputs
-
-
-def _convert_wdl_outputs(wdl_outputs: Dict[str, Any]) -> List[ParameterSpec]:
-    """Convert WDL workflow outputs to IR parameter specs."""
-
-    outputs = []
-
-    for param_name, param_def in wdl_outputs.items():
-        param_spec = ParameterSpec(
-            id=param_name, type=_convert_wdl_type(param_def.get("type", "String"))
-        )
-        outputs.append(param_spec)
-
-    return outputs
-
-
 def _convert_wdl_task_inputs(wdl_inputs: Dict[str, Any]) -> List[ParameterSpec]:
-    """Convert WDL task inputs to IR parameter specs."""
-
+    """Convert WDL task inputs to ParameterSpec."""
     inputs = []
-
-    for param_name, param_def in wdl_inputs.items():
-        default_val = param_def.get("default")
-        if (
-            isinstance(default_val, str)
-            and len(default_val) >= 2
-            and (
-                (default_val.startswith('"') and default_val.endswith('"'))
-                or (default_val.startswith("'") and default_val.endswith("'"))
-            )
-        ):
-            default_val = default_val[1:-1]
-        param_spec = ParameterSpec(
-            id=param_name,
-            type=_convert_wdl_type(param_def.get("type", "String")),
-            default=default_val,
-        )
-        inputs.append(param_spec)
-
+    
+    for input_name, input_def in wdl_inputs.items():
+        if isinstance(input_def, dict):
+            input_type = _convert_wdl_type(input_def.get("type", "string"))
+            inputs.append(ParameterSpec(
+                id=input_name,
+                type=input_type,
+                label=input_name,
+                default=input_def.get("default"),
+            ))
+    
     return inputs
 
 
 def _convert_wdl_task_outputs(wdl_outputs: Dict[str, Any]) -> List[ParameterSpec]:
-    """Convert WDL task outputs to IR parameter specs."""
-
+    """Convert WDL task outputs to ParameterSpec."""
     outputs = []
-
-    for param_name, param_def in wdl_outputs.items():
-        param_spec = ParameterSpec(
-            id=param_name, type=_convert_wdl_type(param_def.get("type", "String"))
-        )
-        outputs.append(param_spec)
-
+    
+    for output_name, output_def in wdl_outputs.items():
+        if isinstance(output_def, dict):
+            output_type = _convert_wdl_type(output_def.get("type", "string"))
+            outputs.append(ParameterSpec(
+                id=output_name,
+                type=output_type,
+                label=output_name,
+            ))
+    
     return outputs
 
 
 def _convert_wdl_type(wdl_type: str) -> str:
     """Convert WDL type to IR type."""
-
-    # Basic type mapping
     type_mapping = {
         "String": "string",
         "Int": "int",
         "Float": "float",
         "Boolean": "boolean",
         "File": "File",
-        "Directory": "Directory",
+        "Array": "array",
+        "Map": "record",
+        "Object": "record",
     }
-
-    # Handle optional types (Type?)
+    
+    # Handle array types
+    if wdl_type.startswith("Array[") and wdl_type.endswith("]"):
+        inner_type = wdl_type[6:-1]
+        return f"array<{_convert_wdl_type(inner_type)}>"
+    
+    # Handle optional types
     if wdl_type.endswith("?"):
         base_type = wdl_type[:-1]
-        mapped_type = type_mapping.get(base_type, base_type)
-        return f"{mapped_type}?"
-
-    # Handle array types (Array[Type])
-    array_match = re.match(r"Array\[(.+)\]", wdl_type)
-    if array_match:
-        item_type = _convert_wdl_type(array_match.group(1))
-        return f"array<{item_type}>"
-
-    return type_mapping.get(wdl_type, wdl_type)
-
-
-def _convert_wdl_runtime_to_resources(runtime: Dict[str, Any]) -> ResourceSpec:
-    """Convert WDL runtime to IR resource spec."""
-
-    resources = ResourceSpec()
-
-    # Parse CPU
-    if "cpu" in runtime:
-        try:
-            resources.cpu = int(runtime["cpu"])
-        except (ValueError, TypeError):
-            pass
-
-    # Parse memory
-    if "memory" in runtime:
-        memory_str = str(runtime["memory"])
-        memory_mb = _parse_memory_string(memory_str)
-        if memory_mb:
-            resources.mem_mb = memory_mb
-
-    # Parse disk
-    if "disks" in runtime:
-        disk_str = str(runtime["disks"])
-        disk_mb = _parse_disk_string(disk_str)
-        if disk_mb:
-            resources.disk_mb = disk_mb
-
-    # Parse GPU (if specified)
-    if "gpu" in runtime:
-        try:
-            resources.gpu = int(runtime["gpu"])
-        except (ValueError, TypeError):
-            pass
-
-    return resources
-
-
-def _convert_wdl_runtime_to_environment(runtime: Dict[str, Any]) -> EnvironmentSpec:
-    """Convert WDL runtime to IR environment spec."""
-
-    env = EnvironmentSpec()
-
-    # Parse Docker container
-    if "docker" in runtime:
-        env.container = f"docker://{runtime['docker']}"
-
-    # Parse environment variables (if any)
-    if "env" in runtime:
-        if isinstance(runtime["env"], dict):
-            env.env_vars = runtime["env"]
-
-    return env
-
-
-def _convert_wdl_scatter(scatter_expr: str) -> ScatterSpec:
-    """Convert WDL scatter expression to IR scatter spec."""
-
-    # Parse scatter expression: "item in collection"
-    scatter_match = re.match(r"(\w+)\s+in\s+(\w+)", scatter_expr.strip())
-    if scatter_match:
-        scatter_match.group(1)
-        collection_var = scatter_match.group(2)
-
-        return ScatterSpec(scatter=[collection_var], scatter_method="dotproduct")
-
-    # Fallback for more complex expressions
-    return ScatterSpec(scatter=[scatter_expr], scatter_method="dotproduct")
+        return _convert_wdl_type(base_type)
+    
+    return type_mapping.get(wdl_type, "string")
 
 
 def _parse_memory_string(memory_str: str) -> Optional[int]:
-    """Parse memory string like '4 GB' to MB."""
-
-    memory_str = memory_str.strip().replace('"', "").replace("'", "")
-
-    # Extract number and unit
-    match = re.match(r"(\d+(?:\.\d+)?)\s*([KMGT]?B?)", memory_str, re.IGNORECASE)
-    if not match:
+    """Parse memory string to MB."""
+    if not memory_str:
         return None
-
-    amount = float(match.group(1))
-    unit = match.group(2).upper()
-
-    # Convert to MB
-    if unit in ["", "B"]:
-        return int(amount / (1024 * 1024))
-    elif unit in ["KB", "K"]:
-        return int(amount / 1024)
-    elif unit in ["MB", "M"]:
-        return int(amount)
-    elif unit in ["GB", "G"]:
-        return int(amount * 1024)
-    elif unit in ["TB", "T"]:
-        return int(amount * 1024 * 1024)
-
-    return None
+    
+    memory_str = memory_str.strip()
+    
+    # Remove quotes
+    memory_str = memory_str.strip('"\'')
+    
+    if memory_str.endswith("GB"):
+        return int(float(memory_str[:-2]) * 1024)
+    elif memory_str.endswith("MB"):
+        return int(memory_str[:-2])
+    elif memory_str.endswith("KB"):
+        return int(memory_str[:-2]) // 1024
+    else:
+        # Assume MB if no unit specified
+        try:
+            return int(memory_str)
+        except ValueError:
+            return None
 
 
 def _parse_disk_string(disk_str: str) -> Optional[int]:
-    """Parse disk string like 'local-disk 100 HDD' to MB."""
-
-    # WDL disk format: "local-disk size_gb disk_type"
-    disk_parts = disk_str.strip().split()
-    if len(disk_parts) >= 2:
+    """Parse disk string to MB."""
+    if not disk_str:
+        return None
+    
+    disk_str = disk_str.strip()
+    
+    # Remove quotes
+    disk_str = disk_str.strip('"\'')
+    
+    if disk_str.endswith("GB"):
+        return int(float(disk_str[:-2]) * 1024)
+    elif disk_str.endswith("MB"):
+        return int(disk_str[:-2])
+    elif disk_str.endswith("KB"):
+        return int(disk_str[:-2]) // 1024
+    else:
+        # Assume MB if no unit specified
         try:
-            size_gb = float(disk_parts[1])
-            return int(size_gb * 1024)  # Convert GB to MB
-        except (ValueError, IndexError):
-            pass
+            return int(disk_str)
+        except ValueError:
+            return None
 
-    return None
+
+def _parse_time_string(time_str: str) -> Optional[int]:
+    """Parse time string to seconds."""
+    if not time_str:
+        return None
+    
+    time_str = time_str.strip()
+    
+    # Remove quotes
+    time_str = time_str.strip('"\'')
+    
+    if time_str.endswith("h"):
+        return int(float(time_str[:-1]) * 3600)
+    elif time_str.endswith("m"):
+        return int(float(time_str[:-1]) * 60)
+    elif time_str.endswith("s"):
+        return int(time_str[:-1])
+    else:
+        # Assume seconds if no unit specified
+        try:
+            return int(time_str)
+        except ValueError:
+            return None
+
+
+def _parse_resource_value(value_str: str) -> Any:
+    """Parse resource value string."""
+    if not value_str:
+        return None
+    
+    # Remove quotes
+    value_str = value_str.strip('"\'')
+    
+    try:
+        if "." in value_str:
+            return float(value_str)
+        else:
+            return int(value_str)
+    except ValueError:
+        return value_str
+
+
+def _convert_wdl_scatter(scatter_expr: str) -> ScatterSpec:
+    """Convert WDL scatter expression to ScatterSpec."""
+    # Extract variable name from scatter expression
+    # WDL scatter syntax: scatter (item in items)
+    match = re.match(r"\((\w+)\s+in\s+(\w+)\)", scatter_expr)
+    if match:
+        item_var = match.group(1)
+        items_var = match.group(2)
+        return ScatterSpec(
+            scatter=[items_var],
+            scatter_method="dotproduct"
+        )
+    
+    # Fallback
+    return ScatterSpec(
+        scatter=[scatter_expr],
+        scatter_method="dotproduct"
+    )
 
 
 def _extract_wdl_dependencies(
     call: Dict[str, Any], call_alias: str, all_calls: List[Dict[str, Any]]
 ) -> List[Edge]:
-    """Extract dependencies from WDL call inputs."""
-
+    """Extract dependencies from WDL call."""
     edges = []
-
-    # Look for references to other call outputs in inputs
-    for input_name, input_value in call.get("inputs", {}).items():
-        # Check if input references another call's output
-        for other_call in all_calls:
-            other_alias = other_call["alias"]
-            if other_alias != call_alias and other_alias in input_value:
-                edges.append(Edge(parent=other_alias, child=call_alias))
-
+    
+    # Check for dependencies in call inputs
+    inputs = call.get("inputs", {})
+    for input_name, input_value in inputs.items():
+        # Look for references to other calls
+        if isinstance(input_value, str):
+            for other_call_name, other_call in all_calls:
+                if other_call_name in input_value:
+                    edges.append(Edge(parent=other_call_name, child=call_alias))
+    
     return edges
-
-
-def _extract_wdl_provenance(meta: Dict[str, Any]) -> Optional[ProvenanceSpec]:
-    """Extract provenance information from WDL meta section."""
-
-    provenance = ProvenanceSpec()
-
-    if "author" in meta:
-        provenance.authors = [{"name": meta["author"]}]
-
-    if "version" in meta:
-        provenance.version = str(meta["version"])
-
-    if "description" in meta:
-        provenance.keywords = [meta["description"]]
-
-    # Return None if no provenance data found
-    if not any([provenance.authors, provenance.version, provenance.keywords]):
-        return None
-
-    return provenance
-
-
-def _extract_wdl_documentation(
-    meta: Dict[str, Any], parameter_meta: Dict[str, Any]
-) -> Optional[DocumentationSpec]:
-    """Extract documentation from WDL meta sections."""
-
-    doc = DocumentationSpec()
-
-    if "description" in meta:
-        doc.description = meta["description"]
-        doc.doc = meta["description"]
-
-    if "usage" in meta:
-        doc.usage_notes = meta["usage"]
-
-    # Return None if no documentation found
-    if not any([doc.description, doc.doc, doc.usage_notes]):
-        return None
-
-    return doc

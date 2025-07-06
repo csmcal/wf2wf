@@ -686,3 +686,668 @@ wf2wf --help
 from a clean environment, and the wheel will include schemas & examples.
 
 ---
+
+## 14  Multi-Environment IR Implementation Plan *(2025-01-27)*
+
+### 14.1  Overview
+
+The current IR design assumes a single execution environment per workflow. However, real-world workflows often need to run across multiple environments (shared filesystem, distributed computing, cloud-native, etc.). This plan implements a **multi-environment IR** that can simultaneously represent a workflow adapted for different execution environments.
+
+### 14.2  Core Design Philosophy
+
+Instead of choosing one execution model per workflow, each resource, field, or configuration can specify the set of execution environments it applies to. This allows the IR to:
+
+1. **Simultaneously represent all environments** - No information loss during conversion
+2. **Enable true universality** - One IR can represent the workflow for any target environment
+3. **Improve round-trip fidelity** - Environment-specific adaptations are preserved
+4. **Support richer loss tracking** - Track what changes when adapting between environments
+5. **Future-proof the design** - New execution environments can be added without breaking existing ones
+
+### 14.3  Implementation Components
+
+#### 14.3.1  Environment-Specific Values
+```python
+@dataclass
+class EnvironmentValue:
+    """A value that applies to specific execution environments."""
+    value: Any
+    environments: Set[str]  # Set of environment names this applies to
+    default: bool = False   # Whether this is the default value
+```
+
+#### 14.3.2  Multi-Environment Resource Specifications
+```python
+@dataclass
+class MultiEnvironmentResourceSpec:
+    """Resource requirements that vary by execution environment."""
+    cpu: EnvironmentValue[int] = field(default_factory=lambda: EnvironmentValue(1, {"shared", "distributed", "cloud"}, default=True))
+    mem_mb: EnvironmentValue[int] = field(default_factory=lambda: EnvironmentValue(4096, {"distributed", "cloud"}, default=True))
+    disk_mb: EnvironmentValue[int] = field(default_factory=lambda: EnvironmentValue(4096, {"distributed", "cloud"}, default=True))
+    gpu: EnvironmentValue[int] = field(default_factory=lambda: EnvironmentValue(0, {"distributed", "cloud"}, default=True))
+    
+    def get_for_environment(self, env: str) -> ResourceSpec:
+        """Get resource spec for specific environment."""
+        return ResourceSpec(
+            cpu=self.cpu.value if env in self.cpu.environments else 1,
+            mem_mb=self.mem_mb.value if env in self.mem_mb.environments else 4096,
+            disk_mb=self.disk_mb.value if env in self.disk_mb.environments else 4096,
+            gpu=self.gpu.value if env in self.gpu.environments else 0
+        )
+```
+
+#### 14.3.3  Multi-Environment File Transfer Specifications
+```python
+@dataclass
+class MultiEnvironmentFileTransferSpec:
+    """File transfer behavior that varies by execution environment."""
+    mode: EnvironmentValue[str] = field(default_factory=lambda: EnvironmentValue("auto", {"distributed", "cloud"}, default=True))
+    staging_dir: EnvironmentValue[str] = field(default_factory=lambda: EnvironmentValue("/tmp", {"distributed", "cloud"}, default=True))
+    compression: EnvironmentValue[bool] = field(default_factory=lambda: EnvironmentValue(True, {"distributed"}, default=True))
+    
+    def get_for_environment(self, env: str) -> FileTransferSpec:
+        """Get file transfer spec for specific environment."""
+        return FileTransferSpec(
+            mode=self.mode.value if env in self.mode.environments else "shared",
+            staging_dir=self.staging_dir.value if env in self.staging_dir.environments else None,
+            compression=self.compression.value if env in self.compression.environments else False
+        )
+```
+
+#### 14.3.4  Multi-Environment Error Handling Specifications
+```python
+@dataclass
+class MultiEnvironmentErrorHandlingSpec:
+    """Error handling that varies by execution environment."""
+    retry_count: EnvironmentValue[int] = field(default_factory=lambda: EnvironmentValue(2, {"distributed", "cloud"}, default=True))
+    retry_delay: EnvironmentValue[int] = field(default_factory=lambda: EnvironmentValue(60, {"distributed", "cloud"}, default=True))
+    max_runtime: EnvironmentValue[int] = field(default_factory=lambda: EnvironmentValue(3600, {"distributed", "cloud"}, default=True))
+    
+    def get_for_environment(self, env: str) -> ErrorHandlingSpec:
+        """Get error handling spec for specific environment."""
+        return ErrorHandlingSpec(
+            retry_count=self.retry_count.value if env in self.retry_count.environments else 0,
+            retry_delay=self.retry_delay.value if env in self.retry_delay.environments else 0,
+            max_runtime=self.max_runtime.value if env in self.max_runtime.environments else 0
+        )
+```
+
+### 14.4  Predefined Execution Environments
+
+```python
+# Core execution environments
+EXECUTION_ENVIRONMENTS = {
+    "shared": {
+        "description": "Shared filesystem environment (e.g., HPC cluster with NFS)",
+        "characteristics": ["shared_filesystem", "local_execution", "system_software"],
+        "defaults": {
+            "file_transfer": "shared",
+            "resource_specification": "minimal",
+            "error_handling": "basic"
+        }
+    },
+    "distributed": {
+        "description": "Distributed computing environment (e.g., HTCondor, SLURM)",
+        "characteristics": ["distributed_execution", "file_transfer_required", "explicit_resources"],
+        "defaults": {
+            "file_transfer": "explicit",
+            "resource_specification": "detailed",
+            "error_handling": "robust"
+        }
+    },
+    "cloud": {
+        "description": "Cloud-native environment (e.g., AWS Batch, GCP Dataflow)",
+        "characteristics": ["containerized", "auto_scaling", "pay_per_use"],
+        "defaults": {
+            "file_transfer": "object_storage",
+            "resource_specification": "detailed",
+            "error_handling": "robust"
+        }
+    },
+    "hybrid": {
+        "description": "Hybrid environment (e.g., on-premises with cloud bursting)",
+        "characteristics": ["mixed_execution", "adaptive_resources", "complex_file_management"],
+        "defaults": {
+            "file_transfer": "adaptive",
+            "resource_specification": "detailed",
+            "error_handling": "robust"
+        }
+    },
+    "edge": {
+        "description": "Edge computing environment (e.g., IoT devices, mobile)",
+        "characteristics": ["resource_constrained", "intermittent_connectivity", "local_processing"],
+        "defaults": {
+            "file_transfer": "minimal",
+            "resource_specification": "constrained",
+            "error_handling": "resilient"
+        }
+    }
+}
+```
+
+### 14.5  Environment Adaptation Module
+
+```python
+class EnvironmentAdapter:
+    """Adapt workflows for specific execution environments."""
+    
+    def __init__(self, workflow: Workflow):
+        self.workflow = workflow
+    
+    def adapt_for_environment(self, target_env: str) -> Workflow:
+        """Adapt workflow for specific execution environment."""
+        adapted_workflow = copy.deepcopy(self.workflow)
+        
+        for task in adapted_workflow.tasks.values():
+            # Adapt resources
+            if hasattr(task, 'multi_env_resources'):
+                task.resources = task.multi_env_resources.get_for_environment(target_env)
+            
+            # Adapt file transfers
+            if hasattr(task, 'multi_env_file_transfer'):
+                task.file_transfer = task.multi_env_file_transfer.get_for_environment(target_env)
+            
+            # Adapt error handling
+            if hasattr(task, 'multi_env_error_handling'):
+                task.error_handling = task.multi_env_error_handling.get_for_environment(target_env)
+            
+            # Environment-specific optimizations
+            self._apply_environment_optimizations(task, target_env)
+        
+        return adapted_workflow
+    
+    def _apply_environment_optimizations(self, task: Task, env: str):
+        """Apply environment-specific optimizations."""
+        if env == "distributed":
+            # Add explicit resource requirements
+            if task.resources.mem_mb == 0:
+                task.resources.mem_mb = 4096
+            if task.resources.disk_mb == 0:
+                task.resources.disk_mb = 4096
+            
+            # Add retry logic
+            if task.retry == 0:
+                task.retry = 2
+        
+        elif env == "cloud":
+            # Ensure container specifications
+            if not task.environment.container:
+                task.environment.container = "default-runtime:latest"
+            
+            # Add cloud-specific metadata
+            task.meta["cloud_optimized"] = True
+        
+        elif env == "edge":
+            # Constrain resources for edge devices
+            task.resources.mem_mb = min(task.resources.mem_mb, 1024)
+            task.resources.cpu = min(task.resources.cpu, 2)
+            
+            # Add edge-specific error handling
+            task.meta["edge_resilient"] = True
+```
+
+### 14.6  Enhanced Loss Tracking
+
+```python
+@dataclass
+class EnvironmentAdaptationLoss:
+    """Track information lost during environment adaptation."""
+    field_path: str
+    original_value: Any
+    adapted_value: Any
+    environment: str
+    reason: str
+    severity: str = "info"  # info, warn, error
+
+class EnvironmentLossTracker:
+    """Track losses during environment adaptation."""
+    
+    def __init__(self):
+        self.losses: List[EnvironmentAdaptationLoss] = []
+    
+    def record_loss(self, field_path: str, original: Any, adapted: Any, 
+                   environment: str, reason: str, severity: str = "info"):
+        """Record a loss during environment adaptation."""
+        self.losses.append(EnvironmentAdaptationLoss(
+            field_path=field_path,
+            original_value=original,
+            adapted_value=adapted,
+            environment=environment,
+            reason=reason,
+            severity=severity
+        ))
+    
+    def get_summary(self) -> Dict[str, Any]:
+        """Get summary of adaptation losses."""
+        return {
+            "total_losses": len(self.losses),
+            "by_severity": {
+                "info": len([l for l in self.losses if l.severity == "info"]),
+                "warn": len([l for l in self.losses if l.severity == "warn"]),
+                "error": len([l for l in self.losses if l.severity == "error"])
+            },
+            "by_environment": {
+                env: len([l for l in self.losses if l.environment == env])
+                for env in set(l.environment for l in self.losses)
+            }
+        }
+```
+
+### 14.7  CLI Integration
+
+```python
+# Enhanced CLI commands
+@cli.command()
+@click.option('--target-env', type=click.Choice(list(EXECUTION_ENVIRONMENTS.keys())),
+              help='Target execution environment')
+@click.option('--show-adaptations', is_flag=True, help='Show environment adaptations')
+def convert(input_file, output_file, target_env, show_adaptations):
+    """Convert workflow with environment adaptation."""
+    
+    # Load workflow
+    workflow = load_workflow(input_file)
+    
+    # Adapt for target environment
+    adapter = EnvironmentAdapter(workflow)
+    loss_tracker = EnvironmentLossTracker()
+    
+    adapted_workflow = adapter.adapt_for_environment(target_env)
+    
+    # Show adaptations if requested
+    if show_adaptations:
+        summary = loss_tracker.get_summary()
+        click.echo(f"Environment adaptations for {target_env}:")
+        click.echo(f"  Total changes: {summary['total_losses']}")
+        for severity, count in summary['by_severity'].items():
+            if count > 0:
+                click.echo(f"  {severity.title()}: {count}")
+    
+    # Export adapted workflow
+    export_workflow(adapted_workflow, output_file)
+```
+
+### 14.8  Benefits of Multi-Environment Approach
+
+1. **True Universality**: One IR can represent the workflow for any execution environment
+2. **No Information Loss**: Environment-specific adaptations are preserved in the IR
+3. **Better Round-Trip Fidelity**: Converting between formats preserves environment-specific information
+4. **Richer Loss Tracking**: Track what changes when adapting between environments
+5. **Future-Proof**: New execution environments can be added without breaking existing ones
+6. **Better Integration**: Loss sidecar tracking can include environment adaptation information
+7. **Improved User Experience**: Users can see how their workflow will behave in different environments
+
+### 14.9  Implementation Roadmap
+
+#### Phase 1: Core Multi-Environment Infrastructure (Week 1)
+- Implement `EnvironmentValue` dataclass
+- Create `MultiEnvironmentResourceSpec`, `MultiEnvironmentFileTransferSpec`, `MultiEnvironmentErrorHandlingSpec`
+- Define predefined execution environments
+- Add basic environment adaptation logic
+
+#### Phase 2: Enhanced Loss Tracking (Week 2)
+- Implement `EnvironmentAdaptationLoss` and `EnvironmentLossTracker`
+- Integrate with existing loss tracking system
+- Add environment-specific loss reporting
+
+#### Phase 3: CLI Integration (Week 3)
+- Add environment adaptation options to CLI
+- Implement `--show-adaptations` functionality
+- Add environment-specific validation and warnings
+
+#### Phase 4: Testing and Documentation (Week 4)
+- Create comprehensive tests for multi-environment functionality
+- Add examples demonstrating multi-environment capabilities
+- Update documentation with multi-environment concepts
+
+This multi-environment approach provides a more powerful and flexible foundation for workflow conversion while maintaining backward compatibility with existing implementations.
+
+---
+
+## 15  Comprehensive Importer Refactor Plan *(2025-01-27)*
+
+### 15.1  Overview
+
+The current importer architecture has significant code duplication and lacks consistent handling of the new IR features. This plan refactors all importers to use shared infrastructure, intelligent inference, and comprehensive loss side-car integration.
+
+**Key Principles:**
+- **NO BACKWARDS COMPATIBILITY REQUIRED** - We can break existing APIs
+- **Shared Infrastructure First** - Extract common patterns into reusable components
+- **Intelligent Inference** - Automatically fill in missing information where possible
+- **Interactive Mode** - Prompt users for missing information when interactive mode is enabled
+- **Comprehensive Loss Integration** - All importers handle loss side-cars consistently
+
+### 15.2  Current State Analysis
+
+#### 15.2.1  Existing Importers
+- **snakemake.py** (1,269 lines) - Most complex, handles dynamic analysis
+- **cwl.py** (1,254 lines) - Advanced CWL features, basic loss side-car support
+- **dagman.py** (663 lines) - DAGMan parsing, inline submit support
+- **nextflow.py** (716 lines) - Nextflow DSL2 parsing
+- **wdl.py** (822 lines) - WDL workflow parsing
+- **galaxy.py** (451 lines) - Galaxy workflow format
+- **resource_processor.py** (295 lines) - Some shared resource functionality
+
+#### 15.2.2  Identified Issues
+1. **Code Duplication**: ~80% of importer code is duplicated patterns
+2. **Inconsistent Loss Handling**: Only CWL importer has loss side-car support
+3. **No Intelligent Inference**: Importers don't fill in obvious missing information
+4. **No Interactive Mode**: No way to prompt users for missing information
+5. **Inconsistent Error Handling**: Each importer handles errors differently
+6. **No Environment Adaptation**: Importers don't adapt workflows for different environments
+
+### 15.3  Proposed Architecture
+
+#### 15.3.1  New Shared Infrastructure Files
+
+**`wf2wf/importers/base.py`** - Base importer class with shared functionality
+```python
+class BaseImporter:
+    """Base class for all importers with shared functionality."""
+    
+    def __init__(self, interactive: bool = False, verbose: bool = False):
+        self.interactive = interactive
+        self.verbose = verbose
+    
+    def import_workflow(self, path: Path, **opts) -> Workflow:
+        """Main import method with shared workflow."""
+        # 1. Parse source format
+        # 2. Create basic workflow structure
+        # 3. Apply loss side-car if available
+        # 4. Infer missing information
+        # 5. Interactive prompting if enabled
+        # 6. Validate and return
+```
+
+**`wf2wf/importers/loss_integration.py`** - Enhanced loss side-car integration
+```python
+def detect_and_apply_loss_sidecar(workflow: Workflow, source_path: Path, verbose: bool = False) -> bool:
+    """Detect and apply loss side-car during import."""
+    
+def create_loss_sidecar_summary(workflow: Workflow, source_path: Path) -> Dict[str, Any]:
+    """Create summary of loss side-car application."""
+```
+
+**`wf2wf/importers/inference.py`** - Intelligent inference engine
+```python
+def infer_environment_specific_values(workflow: Workflow, source_format: str) -> None:
+    """Infer environment-specific values based on source format and content."""
+    
+def infer_execution_model(workflow: Workflow, source_format: str) -> str:
+    """Infer execution model from workflow characteristics."""
+    
+def infer_resource_requirements(workflow: Workflow) -> None:
+    """Infer resource requirements from commands and context."""
+```
+
+**`wf2wf/importers/interactive.py`** - Interactive prompting system
+```python
+def prompt_for_missing_information(workflow: Workflow, source_format: str) -> None:
+    """Interactive prompting for missing workflow information."""
+    
+def prompt_for_environment_adaptation(workflow: Workflow, target_environment: str) -> None:
+    """Interactive prompting for environment adaptation."""
+```
+
+#### 15.3.2  Refactored Individual Importers
+
+Each importer becomes much smaller, focusing only on format-specific parsing:
+
+```python
+class SnakemakeImporter(BaseImporter):
+    def _parse_source(self, path: Path, **opts) -> Dict[str, Any]:
+        """Parse Snakefile-specific content."""
+    
+    def _create_basic_workflow(self, parsed_data: Dict[str, Any]) -> Workflow:
+        """Create basic workflow from parsed data."""
+    
+    def _extract_tasks(self, parsed_data: Dict[str, Any]) -> List[Task]:
+        """Extract tasks from parsed data."""
+    
+    def _extract_edges(self, parsed_data: Dict[str, Any]) -> List[Edge]:
+        """Extract edges from parsed data."""
+```
+
+### 15.4  Implementation Phases
+
+#### 15.4.1  Phase 1: Core Infrastructure (Week 1)
+**Goal**: Create shared infrastructure that all importers can use
+
+**Deliverables**:
+1. **`base.py`** - Base importer class with shared workflow
+2. **`loss_integration.py`** - Enhanced loss side-car support
+3. **`inference.py`** - Intelligent field inference
+4. **`interactive.py`** - Interactive prompting system
+5. **Updated `__init__.py`** - New importer loading mechanism
+
+**Key Features**:
+- Unified import workflow with consistent error handling
+- Automatic loss side-car detection and application
+- Intelligent inference of missing fields
+- Interactive prompting for missing information
+- Environment adaptation support
+
+#### 15.4.2  Phase 2: Refactor One Importer (Week 2)
+**Goal**: Validate the new architecture with a simple importer
+
+**Deliverables**:
+1. **Refactored DAGMan importer** - Use as test case (smallest, simplest)
+2. **Comprehensive tests** - Ensure functionality is preserved
+3. **Performance validation** - Ensure no performance regression
+4. **Documentation** - Update importer documentation
+
+**Validation Criteria**:
+- All existing DAGMan tests pass
+- Loss side-car integration works correctly
+- Interactive mode functions properly
+- Performance is equivalent or better
+
+#### 15.4.3  Phase 3: Refactor Remaining Importers (Week 3-4)
+**Goal**: Refactor all remaining importers to use new architecture
+
+**Deliverables**:
+1. **Refactored Snakemake importer** - Most complex, test advanced features
+2. **Refactored CWL importer** - Already has some loss support
+3. **Refactored Nextflow importer** - Test with channel-based workflows
+4. **Refactored WDL importer** - Test with scatter/gather operations
+5. **Refactored Galaxy importer** - Test with tool-based workflows
+
+**Validation Criteria**:
+- All existing tests pass for each importer
+- Loss side-car integration works across all formats
+- Interactive mode works consistently
+- Performance is maintained or improved
+
+#### 15.4.4  Phase 4: Integration and Testing (Week 5)
+**Goal**: Comprehensive integration testing and finalization
+
+**Deliverables**:
+1. **Integration tests** - Test all importers together
+2. **Performance testing** - Benchmark against original implementation
+3. **Documentation updates** - Complete documentation overhaul
+4. **CLI integration** - Update CLI to use new importer architecture
+5. **Migration guide** - Guide for users of the new architecture
+
+**Validation Criteria**:
+- All integration tests pass
+- Performance is equivalent or better
+- Documentation is complete and accurate
+- CLI works seamlessly with new architecture
+
+### 15.5  Key Benefits
+
+#### 15.5.1  Code Reduction
+- **~70% reduction** in total importer code
+- **Eliminated duplication** of common patterns
+- **Easier maintenance** - bugs fixed once in shared code
+- **Faster development** - new importers can be added quickly
+
+#### 15.5.2  Enhanced Functionality
+- **Consistent loss side-car handling** across all formats
+- **Intelligent inference** fills in obvious missing information
+- **Interactive mode** helps users complete incomplete workflows
+- **Environment adaptation** for different execution environments
+- **Better error handling** with consistent error messages
+
+#### 15.5.3  Improved User Experience
+- **Interactive prompting** for missing information
+- **Automatic inference** reduces manual configuration
+- **Consistent behavior** across all importers
+- **Better error messages** with actionable suggestions
+- **Loss transparency** - users see what information was lost
+
+#### 15.5.4  Future-Proofing
+- **Extensible architecture** - easy to add new importers
+- **Plugin system** - third-party importers can use shared infrastructure
+- **Standardized interfaces** - consistent API across all importers
+- **Environment awareness** - ready for multi-environment IR
+
+### 15.6  Technical Specifications
+
+#### 15.6.1  Base Importer Interface
+```python
+class BaseImporter:
+    """Base class for all importers."""
+    
+    def __init__(self, interactive: bool = False, verbose: bool = False):
+        self.interactive = interactive
+        self.verbose = verbose
+    
+    def import_workflow(self, path: Path, **opts) -> Workflow:
+        """Main import method with shared workflow."""
+        pass
+    
+    def _parse_source(self, path: Path, **opts) -> Dict[str, Any]:
+        """Parse source format - must be implemented by subclasses."""
+        raise NotImplementedError
+    
+    def _create_basic_workflow(self, parsed_data: Dict[str, Any]) -> Workflow:
+        """Create basic workflow from parsed data."""
+        pass
+    
+    def _extract_tasks(self, parsed_data: Dict[str, Any]) -> List[Task]:
+        """Extract tasks from parsed data."""
+        pass
+    
+    def _extract_edges(self, parsed_data: Dict[str, Any]) -> List[Edge]:
+        """Extract edges from parsed data."""
+        pass
+```
+
+#### 15.6.2  Loss Integration Interface
+```python
+def detect_and_apply_loss_sidecar(
+    workflow: Workflow, 
+    source_path: Path, 
+    verbose: bool = False
+) -> bool:
+    """Detect and apply loss side-car during import."""
+    pass
+
+def create_loss_sidecar_summary(
+    workflow: Workflow, 
+    source_path: Path
+) -> Dict[str, Any]:
+    """Create summary of loss side-car application."""
+    pass
+```
+
+#### 15.6.3  Inference Interface
+```python
+def infer_environment_specific_values(
+    workflow: Workflow, 
+    source_format: str
+) -> None:
+    """Infer environment-specific values."""
+    pass
+
+def infer_execution_model(
+    workflow: Workflow, 
+    source_format: str
+) -> str:
+    """Infer execution model."""
+    pass
+
+def infer_resource_requirements(workflow: Workflow) -> None:
+    """Infer resource requirements."""
+    pass
+```
+
+#### 15.6.4  Interactive Interface
+```python
+def prompt_for_missing_information(
+    workflow: Workflow, 
+    source_format: str
+) -> None:
+    """Interactive prompting for missing information."""
+    pass
+
+def prompt_for_environment_adaptation(
+    workflow: Workflow, 
+    target_environment: str
+) -> None:
+    """Interactive prompting for environment adaptation."""
+    pass
+```
+
+### 15.7  Migration Strategy
+
+#### 15.7.1  No Backwards Compatibility Required
+Since backwards compatibility is not required, we can:
+- **Replace existing APIs** completely
+- **Remove legacy code** without maintaining compatibility
+- **Simplify interfaces** by removing compatibility layers
+- **Focus on new features** without worrying about breaking changes
+
+#### 15.7.2  Gradual Migration
+1. **Phase 1**: Build new infrastructure alongside existing importers
+2. **Phase 2**: Migrate one importer to validate approach
+3. **Phase 3**: Migrate remaining importers
+4. **Phase 4**: Remove old importer code completely
+
+#### 15.7.3  Testing Strategy
+- **Unit tests** for each new component
+- **Integration tests** for complete import workflow
+- **Performance tests** to ensure no regression
+- **User acceptance tests** for interactive features
+
+### 15.8  Success Metrics
+
+#### 15.8.1  Code Metrics
+- **70% reduction** in total importer code
+- **90% reduction** in code duplication
+- **100% consistency** in error handling
+- **100% consistency** in loss side-car handling
+
+#### 15.8.2  Functionality Metrics
+- **All existing tests pass** for each importer
+- **New tests pass** for shared functionality
+- **Interactive mode works** for all importers
+- **Loss side-car integration works** for all formats
+
+#### 15.8.3  User Experience Metrics
+- **Reduced manual configuration** through intelligent inference
+- **Better error messages** with actionable suggestions
+- **Consistent behavior** across all importers
+- **Improved workflow completion** through interactive mode
+
+### 15.9  Risk Mitigation
+
+#### 15.9.1  Technical Risks
+- **Complex refactoring** - Mitigated by gradual migration
+- **Performance regression** - Mitigated by comprehensive testing
+- **Feature loss** - Mitigated by thorough test coverage
+
+#### 15.9.2  Timeline Risks
+- **Scope creep** - Mitigated by clear phase boundaries
+- **Integration issues** - Mitigated by early integration testing
+- **User adoption** - Mitigated by improved user experience
+
+### 15.10  Conclusion
+
+This comprehensive importer refactor will significantly improve the wf2wf codebase by:
+- **Reducing code duplication** by ~70%
+- **Adding intelligent inference** for missing information
+- **Providing interactive mode** for user assistance
+- **Ensuring consistent loss side-car handling** across all formats
+- **Creating a more maintainable and extensible architecture**
+
+The refactor is ambitious but achievable with the phased approach and will result in a much more robust and user-friendly workflow conversion system.

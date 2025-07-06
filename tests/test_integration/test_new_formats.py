@@ -76,6 +76,103 @@ def test_format_error_handling():
         load_exporter("unsupported_format")
 
 
+def test_content_based_execution_model_detection(tmp_path):
+    """Test content-based execution model detection."""
+    from wf2wf.workflow_analysis import detect_execution_model_from_content
+    
+    # Test shared filesystem workflow (Snakemake)
+    shared_workflow = tmp_path / "shared_workflow.smk"
+    shared_workflow.write_text("""
+rule process_data:
+    input: "/shared/data/input.txt"
+    output: "/shared/results/output.txt"
+    threads: 4
+    resources: mem_mb=8000
+    conda: "envs/python.yml"
+    shell: "python process.py {input} {output}"
+""")
+    
+    analysis = detect_execution_model_from_content(shared_workflow, "snakemake")
+    assert analysis.execution_model == "shared_filesystem"
+    assert analysis.confidence > 0.5
+    assert len(analysis.indicators["shared_filesystem"]) > 0
+    
+    # Test distributed computing workflow (DAGMan)
+    distributed_workflow = tmp_path / "distributed_workflow.dag"
+    distributed_workflow.write_text("""
+JOB process_data process_data.sub
+JOB analyze_results analyze_results.sub
+PARENT process_data CHILD analyze_results
+RETRY process_data 3
+PRIORITY analyze_results 10
+""")
+    
+    # Create the submit file referenced
+    submit_file = tmp_path / "process_data.sub"
+    submit_file.write_text("""
+executable = /path/to/script.sh
+request_cpus = 8
+request_memory = 16384MB
+request_disk = 10240MB
+request_gpus = 1
+universe = docker
+docker_image = tensorflow/tensorflow:latest
+requirements = (Memory > 16000) && (HasGPU == True)
++WantGPULab = true
++ProjectName = "DistributedWorkflow"
+transfer_input_files = input_data.txt
+transfer_output_files = results.txt
+should_transfer_files = YES
+when_to_transfer_output = ON_EXIT
+queue
+""")
+    
+    analysis = detect_execution_model_from_content(distributed_workflow, "dagman")
+    assert analysis.execution_model == "distributed_computing"
+    assert analysis.confidence > 0.5
+    assert len(analysis.indicators["distributed_computing"]) > 0
+    
+    # Test hybrid workflow (Nextflow)
+    hybrid_workflow = tmp_path / "hybrid_workflow.nf"
+    hybrid_workflow.write_text("""
+process process_data {
+    input:
+    path input_file
+    output:
+    path output_file
+    publishDir "results/", mode: 'copy'
+    stash "processed_data"
+    
+    script:
+    '''
+    python process.py $input_file > $output_file
+    '''
+}
+
+workflow {
+    channel.fromPath("data/*.txt")
+        .map { file -> tuple(file, file.name) }
+        .set { input_ch }
+    
+    process_data(input_ch)
+}
+""")
+    
+    analysis = detect_execution_model_from_content(hybrid_workflow, "nextflow")
+    assert analysis.execution_model == "hybrid"
+    assert analysis.confidence > 0.4
+    assert len(analysis.indicators["hybrid"]) > 0
+    
+    # Test unknown content
+    unknown_workflow = tmp_path / "unknown_workflow.txt"
+    unknown_workflow.write_text("This is just some random text content.")
+    
+    analysis = detect_execution_model_from_content(unknown_workflow, "snakemake")
+    assert analysis.execution_model == "shared_filesystem"  # Default for snakemake
+    assert analysis.confidence < 0.5  # Low confidence
+    assert len(analysis.indicators["shared_filesystem"]) == 0
+
+
 def test_wdl_round_trip_basic():
     """Test basic round-trip conversion: WDL -> IR -> WDL."""
 

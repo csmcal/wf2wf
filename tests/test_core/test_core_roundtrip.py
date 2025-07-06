@@ -1,11 +1,17 @@
-"""Round-trip tests for Workflow JSON serialisation."""
+"""Test round-trip serialization of workflows."""
 
-# Allow running tests without installing the package
+import json
 import sys
-import pathlib
 import importlib.util
+from pathlib import Path
 
-proj_root = pathlib.Path(__file__).resolve().parents[1]
+import pytest
+
+from wf2wf.core import Task, Workflow, ParameterSpec, EnvironmentSpecificValue
+from wf2wf.exporters import cwl as cwl_exporter
+from wf2wf.importers import cwl as cwl_importer
+
+proj_root = Path(__file__).resolve().parents[1]
 
 # Ensure the *package* version of wf2wf is imported, not the CLI module.
 if "wf2wf" not in sys.modules:
@@ -16,7 +22,6 @@ if "wf2wf" not in sys.modules:
     assert spec and spec.loader  # for mypy
     spec.loader.exec_module(wf2wf_pkg)  # type: ignore[arg-type]
 
-from wf2wf.core import Workflow, Task, ResourceSpec, ParameterSpec
 from wf2wf.validate import validate_workflow
 
 
@@ -25,17 +30,18 @@ def minimal_workflow() -> Workflow:
     wf.add_task(
         Task(
             id="step_a",
-            command="echo A",
+            command=EnvironmentSpecificValue("echo A", ["shared_filesystem"]),
             outputs=[ParameterSpec(id="a.txt", type="File")],
         )
     )
     wf.add_task(
         Task(
             id="step_b",
-            command="echo B",
+            command=EnvironmentSpecificValue("echo B", ["shared_filesystem"]),
             inputs=[ParameterSpec(id="a.txt", type="File")],
             outputs=[ParameterSpec(id="b.txt", type="File")],
-            resources=ResourceSpec(cpu=2, mem_mb=512),
+            cpu=EnvironmentSpecificValue(2, ["shared_filesystem"]),
+            mem_mb=EnvironmentSpecificValue(512, ["shared_filesystem"]),
         )
     )
     wf.add_edge("step_a", "step_b")

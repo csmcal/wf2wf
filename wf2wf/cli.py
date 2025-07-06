@@ -227,20 +227,106 @@ OUTPUT_FORMAT_MAP = {
 }
 
 
+def detect_format_from_content(path: Path) -> Optional[str]:
+    """
+    Detect workflow format by examining file content.
+    
+    This function looks for format-specific patterns in the file content
+    to determine the actual format, regardless of file extension.
+    """
+    try:
+        content = path.read_text(encoding='utf-8', errors='ignore')
+        content_lower = content.lower()
+        
+        # Snakemake patterns
+        if any(pattern in content_lower for pattern in [
+            'rule ', 'input:', 'output:', 'shell:', 'run:', 'script:',
+            'wildcards:', 'params:', 'threads:', 'resources:',
+            'conda:', 'container:', 'benchmark:', 'log:'
+        ]):
+            return "snakemake"
+        
+        # DAGMan patterns
+        if any(pattern in content_lower for pattern in [
+            'job ', 'parent ', 'child ', 'retry ', 'priority ',
+            'executable =', 'request_cpus =', 'request_memory =',
+            'universe =', 'queue'
+        ]):
+            return "dagman"
+        
+        # Nextflow patterns
+        if any(pattern in content_lower for pattern in [
+            'process ', 'workflow ', 'channel ', 'publishDir ',
+            'input:', 'output:', 'script:', 'shell:', 'exec:',
+            'publishDir', 'tag', 'label'
+        ]):
+            return "nextflow"
+        
+        # CWL patterns
+        if any(pattern in content_lower for pattern in [
+            'cwlversion:', 'class:', 'inputs:', 'outputs:', 'steps:',
+            'requirements:', 'hints:', 'basecommand:', 'arguments:',
+            'stdin:', 'stdout:', 'stderr:', 'env:', 'doc:'
+        ]):
+            return "cwl"
+        
+        # WDL patterns
+        if any(pattern in content_lower for pattern in [
+            'workflow ', 'task ', 'call ', 'scatter ', 'if ',
+            'input {', 'output {', 'runtime {', 'command {',
+            'version', 'import '
+        ]):
+            return "wdl"
+        
+        # Galaxy patterns
+        if any(pattern in content_lower for pattern in [
+            'tool id=', 'tool name=', 'tool version=',
+            '<tool', '</tool>', '<param', '</param>',
+            '<inputs>', '</inputs>', '<outputs>', '</outputs>'
+        ]):
+            return "galaxy"
+        
+        # IR format patterns (JSON/YAML with wf2wf structure)
+        if any(pattern in content_lower for pattern in [
+            '"name":', '"version":', '"tasks":', '"edges":',
+            '"inputs":', '"outputs":', '"requirements":',
+            '"provenance":', '"documentation":'
+        ]):
+            # Check if it's a complete IR structure
+            if '"tasks":' in content_lower and '"edges":' in content_lower:
+                return "json" if path.suffix.lower() in [".json"] else "yaml"
+        
+        return None
+        
+    except (UnicodeDecodeError, IOError, OSError):
+        # File is binary or unreadable
+        return None
+
+
 def detect_input_format(path: Path) -> Optional[str]:
-    """Auto-detect input format from file extension."""
+    """Auto-detect input format from file extension and content."""
     suffix = path.suffix.lower()
     name = path.name.lower()
 
     # Check suffix first
     if suffix in INPUT_FORMAT_MAP:
-        return INPUT_FORMAT_MAP[suffix]
+        detected_format = INPUT_FORMAT_MAP[suffix]
+        
+        # For ambiguous extensions (.json, .yaml), verify with content
+        if suffix in [".json", ".yaml", ".yml"]:
+            content_format = detect_format_from_content(path)
+            if content_format and content_format != detected_format:
+                # Content suggests a different format than extension
+                return content_format
+        
+        return detected_format
 
     # Check specific filenames without extensions
     if name in ["snakefile", "makefile"]:
         return "snakemake"
 
-    return None
+    # If no extension match, try content-based detection
+    return detect_format_from_content(path)
 
 
 def detect_output_format(path: Path) -> Optional[str]:
@@ -691,6 +777,92 @@ def convert(
     if verbose:
         click.echo(f"Input: {input_path}")
         click.echo(f"Output: {output_path}")
+
+    # ------------------------------------------------------------------
+    # Interactive execution model selection
+    # ------------------------------------------------------------------
+    
+    if interactive:
+        click.echo(f"\nInput file: {input_path.name}")
+        click.echo("Please select the expected execution model for this workflow:")
+        click.echo("  1) Shared Filesystem (NFS, Lustre, local cluster)")
+        click.echo("  2) Distributed Computing (HTCondor, Grid, cloud batch)")
+        click.echo("  3) Hybrid (Nextflow, mixed cloud/HPC)")
+        click.echo("  4) Cloud-native (S3/GCS/Azure, serverless)")
+        click.echo("  5) Other / Not sure")
+        
+        # Use the existing prompt scheme
+        if _prompt.ask("Use automatic detection instead?", default=True):
+            # User chose automatic detection
+            if verbose:
+                click.echo("Using automatic execution model detection...")
+        else:
+            # User wants to specify manually
+            click.echo("Please enter your choice (1-5): ", nl=False)
+            try:
+                choice = input().strip()
+                choice_map = {
+                    "1": "shared_filesystem",
+                    "2": "distributed_computing", 
+                    "3": "hybrid",
+                    "4": "cloud_native",
+                    "5": "unknown"
+                }
+                execution_model = choice_map.get(choice, "unknown")
+                if verbose:
+                    click.echo(f"User specified execution model: {execution_model}")
+                # Skip automatic detection
+                content_analysis = None
+            except (EOFError, KeyboardInterrupt):
+                raise click.ClickException("Aborted by user")
+    else:
+        # Non-interactive mode - use automatic detection
+        if verbose:
+            click.echo(f"\nAnalyzing workflow execution model...")
+        
+        try:
+            from wf2wf.workflow_analysis import detect_execution_model_from_content
+            content_analysis = detect_execution_model_from_content(input_path, input_format)
+            
+            if verbose:
+                click.echo(f"Detected execution model: {content_analysis.execution_model} (confidence: {content_analysis.confidence:.2f})")
+                
+                if content_analysis.indicators:
+                    click.echo("Evidence:")
+                    for model, indicators in content_analysis.indicators.items():
+                        if indicators:
+                            click.echo(f"  {model}: {len(indicators)} indicators")
+                            for indicator in indicators[:3]:  # Show first 3 indicators
+                                click.echo(f"    - {indicator}")
+                            if len(indicators) > 3:
+                                click.echo(f"    ... and {len(indicators) - 3} more")
+                
+                if content_analysis.recommendations:
+                    click.echo("Recommendations:")
+                    for rec in content_analysis.recommendations:
+                        click.echo(f"  - {rec}")
+            
+            # Store execution model in workflow metadata for later use
+            execution_model = content_analysis.execution_model
+            
+        except Exception as e:
+            if verbose:
+                click.echo(f"Warning: Could not analyze execution model: {e}")
+            execution_model = "unknown"
+            content_analysis = None
+    
+    # If we have content analysis results, show them even in interactive mode
+    if content_analysis and verbose:
+        click.echo(f"\nAutomatic detection results:")
+        click.echo(f"  Detected: {content_analysis.execution_model} (confidence: {content_analysis.confidence:.2f})")
+        if content_analysis.indicators:
+            for model, indicators in content_analysis.indicators.items():
+                if indicators:
+                    click.echo(f"  {model}: {len(indicators)} indicators")
+        if content_analysis.recommendations:
+            click.echo("  Recommendations:")
+            for rec in content_analysis.recommendations:
+                click.echo(f"    - {rec}")
 
     # ------------------------------------------------------------------
     # Interactive prompt: overwrite existing output?

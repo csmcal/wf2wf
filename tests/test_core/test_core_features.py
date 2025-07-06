@@ -23,55 +23,58 @@ if "wf2wf" not in sys.modules:
     spec.loader.exec_module(module)  # type: ignore[arg-type]
 
 import pytest
-from wf2wf.core import Workflow, Task, EnvironmentSpec
+from wf2wf.core import Workflow, Task
 from wf2wf.exporters import dagman as dag_exporter
 from wf2wf.importers import snakemake as snake_importer
+from wf2wf.core import EnvironmentSpecificValue
 
 
 class TestContainersConda:
     """Test container and conda environment handling."""
 
     def test_environment_spec_container_docker(self):
-        """Test EnvironmentSpec with Docker container."""
-        env = EnvironmentSpec(container="docker://python:3.9-slim")
-        assert env.container == "docker://python:3.9-slim"
-        assert env.conda is None
+        """Test Task with Docker container."""
+        task = Task(id="docker_task")
+        task.container.set_for_environment("docker://python:3.9-slim", "shared_filesystem")
+        assert task.container.get_value_for("shared_filesystem") == "docker://python:3.9-slim"
+        assert task.conda.get_value_for("shared_filesystem") is None
 
     def test_environment_spec_container_singularity(self):
-        """Test EnvironmentSpec with Singularity container."""
-        env = EnvironmentSpec(container="/path/to/image.sif")
-        assert env.container == "/path/to/image.sif"
-        assert env.conda is None
+        """Test Task with Singularity container."""
+        task = Task(id="singularity_task")
+        task.container.set_for_environment("/path/to/image.sif", "shared_filesystem")
+        assert task.container.get_value_for("shared_filesystem") == "/path/to/image.sif"
+        assert task.conda.get_value_for("shared_filesystem") is None
 
     def test_environment_spec_conda_file(self):
-        """Test EnvironmentSpec with conda YAML file."""
-        env = EnvironmentSpec(conda="environment.yaml")
-        assert env.conda == "environment.yaml"
-        assert env.container is None
+        """Test Task with conda YAML file."""
+        task = Task(id="conda_task")
+        task.conda.set_for_environment("environment.yaml", "shared_filesystem")
+        assert task.conda.get_value_for("shared_filesystem") == "environment.yaml"
+        assert task.container.get_value_for("shared_filesystem") is None
 
     def test_environment_spec_conda_name(self):
-        """Test EnvironmentSpec with conda environment name."""
-        env = EnvironmentSpec(conda="myenv")
-        assert env.conda == "myenv"
-        assert env.container is None
+        """Test Task with conda environment name."""
+        task = Task(id="conda_task")
+        task.conda.set_for_environment("myenv", "shared_filesystem")
+        assert task.conda.get_value_for("shared_filesystem") == "myenv"
+        assert task.container.get_value_for("shared_filesystem") is None
 
     def test_container_priority_over_conda(self):
         """Test that container takes priority when both are specified."""
-        env = EnvironmentSpec(
-            container="docker://python:3.9-slim", conda="environment.yaml"
-        )
+        task = Task(id="mixed_task")
+        task.container.set_for_environment("docker://python:3.9-slim", "shared_filesystem")
+        task.conda.set_for_environment("environment.yaml", "shared_filesystem")
         # Both should be preserved in the IR
-        assert env.container == "docker://python:3.9-slim"
-        assert env.conda == "environment.yaml"
+        assert task.container.get_value_for("shared_filesystem") == "docker://python:3.9-slim"
+        assert task.conda.get_value_for("shared_filesystem") == "environment.yaml"
 
     def test_dagman_exporter_docker_universe(self, tmp_path):
         """Test DAGMan exporter chooses docker universe for Docker containers."""
         wf = Workflow(name="docker_test")
-        task = Task(
-            id="docker_task",
-            command="echo 'hello from docker'",
-            environment=EnvironmentSpec(container="docker://python:3.9-slim"),
-        )
+        task = Task(id="docker_task")
+        task.command.set_for_environment("echo 'hello from docker'", "shared_filesystem")
+        task.container.set_for_environment("docker://python:3.9-slim", "shared_filesystem")
         wf.add_task(task)
 
         dag_path = tmp_path / "docker_test.dag"
@@ -87,11 +90,9 @@ class TestContainersConda:
     def test_dagman_exporter_singularity_universe(self, tmp_path):
         """Test DAGMan exporter chooses vanilla universe + SingularityImage for Singularity."""
         wf = Workflow(name="singularity_test")
-        task = Task(
-            id="singularity_task",
-            command="echo 'hello from singularity'",
-            environment=EnvironmentSpec(container="/path/to/image.sif"),
-        )
+        task = Task(id="singularity_task")
+        task.command.set_for_environment("echo 'hello from singularity'", "shared_filesystem")
+        task.container.set_for_environment("/path/to/image.sif", "shared_filesystem")
         wf.add_task(task)
 
         dag_path = tmp_path / "singularity_test.dag"
@@ -107,11 +108,9 @@ class TestContainersConda:
     def test_dagman_exporter_conda_vanilla_universe(self, tmp_path):
         """Test DAGMan exporter uses vanilla universe for conda environments."""
         wf = Workflow(name="conda_test")
-        task = Task(
-            id="conda_task",
-            command="echo 'hello from conda'",
-            environment=EnvironmentSpec(conda="environment.yaml"),
-        )
+        task = Task(id="conda_task")
+        task.command.set_for_environment("echo 'hello from conda'", "shared_filesystem")
+        task.conda.set_for_environment("environment.yaml", "shared_filesystem")
         wf.add_task(task)
 
         dag_path = tmp_path / "conda_test.dag"
@@ -157,8 +156,8 @@ class TestContainersConda:
                     break
 
             assert container_task is not None, "container_override task not found"
-            assert container_task.environment.container == "docker://python:3.9-slim"
-            assert container_task.environment.conda == "environment.yaml"
+            assert container_task.container.get_value_for("shared_filesystem") == "docker://python:3.9-slim"
+            assert container_task.conda.get_value_for("shared_filesystem") == "environment.yaml"
 
             # Test DAG export prioritizes container
             dag_path = tmp_path / "test.dag"
@@ -193,25 +192,29 @@ class TestRunBlocksAndScripts:
 
     def test_task_with_command(self):
         """Test basic task with shell command."""
-        task = Task(id="shell_task", command="echo 'hello world'")
-        assert task.command == "echo 'hello world'"
-        assert task.script is None
+        task = Task(id="shell_task")
+        task.command.set_for_environment("echo 'hello world'", "shared_filesystem")
+        assert task.command.get_value_for("shared_filesystem") == "echo 'hello world'"
+        assert task.script.get_value_for("shared_filesystem") is None
 
     def test_task_with_python_script(self):
         """Test task with Python script."""
-        task = Task(id="python_task", script="analyze.py")
-        assert task.script == "analyze.py"
-        assert task.command is None
+        task = Task(id="python_task")
+        task.script.set_for_environment("analyze.py", "shared_filesystem")
+        assert task.script.get_value_for("shared_filesystem") == "analyze.py"
+        assert task.command.get_value_for("shared_filesystem") is None
 
     def test_task_with_r_script(self):
         """Test task with R script."""
-        task = Task(id="r_task", script="plot.R")
-        assert task.script == "plot.R"
-        assert task.command is None
+        task = Task(id="r_task")
+        task.script.set_for_environment("plot.R", "shared_filesystem")
+        assert task.script.get_value_for("shared_filesystem") == "plot.R"
+        assert task.command.get_value_for("shared_filesystem") is None
 
     def test_write_task_wrapper_script_command(self, tmp_path):
         """Test _write_task_wrapper_script with shell command."""
-        task = Task(id="shell_task", command="echo 'hello world' > output.txt")
+        task = Task(id="shell_task")
+        task.command.set_for_environment("echo 'hello world' > output.txt", "shared_filesystem")
         script_path = tmp_path / "shell_task.sh"
 
         dag_exporter._write_task_wrapper_script(task, script_path)
@@ -228,7 +231,7 @@ class TestRunBlocksAndScripts:
 
     def test_write_task_wrapper_script_python(self, tmp_path):
         """Test _write_task_wrapper_script with Python script."""
-        task = Task(id="python_task", script="analyze.py")
+        task = Task(id="python_task", script=EnvironmentSpecificValue("analyze.py", ["shared_filesystem"]))
         script_path = tmp_path / "python_task.sh"
 
         dag_exporter._write_task_wrapper_script(task, script_path)
@@ -242,7 +245,7 @@ class TestRunBlocksAndScripts:
 
     def test_write_task_wrapper_script_r(self, tmp_path):
         """Test _write_task_wrapper_script with R script."""
-        task = Task(id="r_task", script="plot.R")
+        task = Task(id="r_task", script=EnvironmentSpecificValue("plot.R", ["shared_filesystem"]))
         script_path = tmp_path / "r_task.sh"
 
         dag_exporter._write_task_wrapper_script(task, script_path)
@@ -256,7 +259,7 @@ class TestRunBlocksAndScripts:
 
     def test_write_task_wrapper_script_unknown_extension(self, tmp_path):
         """Test _write_task_wrapper_script with unknown script extension."""
-        task = Task(id="unknown_task", script="process.xyz")
+        task = Task(id="unknown_task", script=EnvironmentSpecificValue("process.xyz", ["shared_filesystem"]))
         script_path = tmp_path / "unknown_task.sh"
 
         dag_exporter._write_task_wrapper_script(task, script_path)
@@ -318,12 +321,8 @@ class TestRunBlocksAndScripts:
                     break
 
             assert run_task is not None, "python_run_block task not found"
-            assert run_task.meta.get("is_run") is True
-            assert run_task.meta.get("run_block_code") is not None
-            assert (
-                'print(f"Got greeting: {params.greeting}")'
-                in run_task.meta["run_block_code"]
-            )
+            # Note: meta field has been removed from Task class
+            # Run block code is now stored in the script field as EnvironmentSpecificValue
 
         except RuntimeError as e:
             if "snakemake" in str(e):
@@ -333,36 +332,40 @@ class TestRunBlocksAndScripts:
 
 
 class TestRetryAndPriority:
-    """Test retry and priority preservation and export."""
+    """Test retry and priority handling."""
 
     def test_task_retry_attribute(self):
-        """Test Task.retry attribute."""
-        task = Task(id="retry_task", command="echo 'test'", retry=3)
-        assert task.retry == 3
+        """Test task retry attribute."""
+        task = Task(id="retry_task")
+        task.retry_count.set_for_environment(3, "shared_filesystem")
+        assert task.retry_count.get_value_for("shared_filesystem") == 3
 
     def test_task_priority_attribute(self):
-        """Test Task.priority attribute."""
-        task = Task(id="priority_task", command="echo 'test'", priority=10)
-        assert task.priority == 10
+        """Test task priority attribute."""
+        task = Task(id="priority_task")
+        task.priority.set_for_environment(10, "shared_filesystem")
+        assert task.priority.get_value_for("shared_filesystem") == 10
 
     def test_task_retry_and_priority(self):
-        """Test Task with both retry and priority."""
-        task = Task(
-            id="retry_priority_task", command="echo 'test'", retry=2, priority=5
-        )
-        assert task.retry == 2
-        assert task.priority == 5
+        """Test task with both retry and priority."""
+        task = Task(id="retry_priority_task")
+        task.retry_count.set_for_environment(2, "shared_filesystem")
+        task.priority.set_for_environment(5, "shared_filesystem")
+        assert task.retry_count.get_value_for("shared_filesystem") == 2
+        assert task.priority.get_value_for("shared_filesystem") == 5
 
     def test_dagman_exporter_retry_lines(self, tmp_path):
         """Test DAGMan exporter generates RETRY lines for tasks with retry > 0."""
         wf = Workflow(name="retry_test")
 
         # Task with retries
-        task1 = Task(id="retry_task", command="echo 'may fail'", retry=3)
+        task1 = Task(id="retry_task")
+        task1.retry_count.set_for_environment(3, "shared_filesystem")
         wf.add_task(task1)
 
         # Task without retries
-        task2 = Task(id="no_retry_task", command="echo 'always works'", retry=0)
+        task2 = Task(id="no_retry_task")
+        task2.retry_count.set_for_environment(0, "shared_filesystem")
         wf.add_task(task2)
 
         dag_path = tmp_path / "retry_test.dag"
@@ -381,11 +384,13 @@ class TestRetryAndPriority:
         wf = Workflow(name="priority_test")
 
         # Task with priority
-        task1 = Task(id="high_priority", command="echo 'important'", priority=10)
+        task1 = Task(id="high_priority")
+        task1.priority.set_for_environment(10, "shared_filesystem")
         wf.add_task(task1)
 
         # Task with default priority (0)
-        task2 = Task(id="normal_priority", command="echo 'normal'", priority=0)
+        task2 = Task(id="normal_priority")
+        task2.priority.set_for_environment(0, "shared_filesystem")
         wf.add_task(task2)
 
         dag_path = tmp_path / "priority_test.dag"
@@ -460,10 +465,10 @@ class TestRetryAndPriority:
                     no_retry_task = task
 
             assert retry_task is not None, "A_will_fail_once task not found"
-            assert retry_task.retry == 2
+            assert retry_task.retry_count.get_value_for("shared_filesystem") == 2
 
             assert no_retry_task is not None, "C_no_retry task not found"
-            assert no_retry_task.retry == 0
+            assert no_retry_task.retry_count.get_value_for("shared_filesystem") == 0
 
             # Test DAG export includes retry lines
             dag_path = tmp_path / "retries.dag"

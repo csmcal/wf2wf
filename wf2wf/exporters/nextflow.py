@@ -1,646 +1,463 @@
 """wf2wf.exporters.nextflow – Workflow IR ➜ Nextflow DSL2
 
-This module converts wf2wf intermediate representation to Nextflow DSL2 workflows.
-It generates main.nf files, module files, and nextflow.config files with:
-- Process definitions with proper DSL2 syntax
-- Resource specifications
-- Container/conda environments
-- Channel operations and dependencies
-- Configuration parameters
+This module exports wf2wf intermediate representation workflows to
+Nextflow DSL2 format with enhanced features and channel management.
 """
 
-import re
+from __future__ import annotations
+
+import os
 from pathlib import Path
-from typing import Any, List, Union
+from typing import Any, Dict, List, Optional, Union
 
-from wf2wf.core import Workflow, Task, ParameterSpec
-from wf2wf.loss import (
-    reset as loss_reset,
-    write as loss_write,
-    record as loss_record,
-    prepare,
-    as_list,
-    compute_checksum,
+from wf2wf.core import (
+    Workflow,
+    Task,
+    ParameterSpec,
+    EnvironmentSpecificValue,
 )
+from wf2wf.exporters.base import BaseExporter
 
 
-# Helper to extract identifier/filename from ParameterSpec or raw string
-def _param_identifier(param: Any) -> str:
-    """Return a filename / identifier string from a ParameterSpec or raw value."""
-    if isinstance(param, ParameterSpec):
-        return str(param.id)
-    return str(param)
-
-
-def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any):
-    """Convert a wf2wf Workflow to Nextflow DSL2.
-
-    Args:
-        wf: Workflow object to convert
-        out_file: Path to output main.nf file
-        **opts: Additional options (modular, config_file, verbose, etc.)
-    """
-    prepare(wf.loss_map)
-    loss_reset()
-    out_path = Path(out_file)
-    verbose = opts.get("verbose", False)
-    modular = opts.get("modular", True)  # Create separate module files
-    config_file = opts.get("config_file", None)  # Separate config file
-
-    if verbose:
-        print(f"Exporting Nextflow workflow to: {out_path}")
-
-    # Create output directory if needed
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # --------------------------------------------------------------
-    # Record unsupported features BEFORE writing files / loss side-car
-    # --------------------------------------------------------------
-
-    # Workflow-level intent
-    if wf.intent:
-        loss_record(
-            "/intent",
-            "intent",
-            wf.intent,
-            "Nextflow lacks explicit intent metadata",
-            "user",
-        )
-
-    # Task-level unsupported attributes
-    for task in wf.tasks.values():
-        # Secondary files unsupported
-        for io_name in ("inputs", "outputs"):
-            params = getattr(task, io_name)
-            for p in params:
-                if isinstance(p, ParameterSpec) and getattr(p, "secondary_files", None):
-                    loss_record(
-                        f"/tasks/{task.id}/{io_name}/{p.id}/secondary_files",
-                        "secondary_files",
-                        p.secondary_files,
-                        "Nextflow has no native secondary_files",
-                        "user",
-                    )
-
-        # GPU memory / capability unsupported
-        if getattr(task.resources, "gpu_mem_mb", None):
-            loss_record(
-                f"/tasks/{task.id}/resources/gpu_mem_mb",
-                "gpu_mem_mb",
-                task.resources.gpu_mem_mb,
-                "Nextflow resource model lacks GPU memory field",
-                "user",
-            )
-        if getattr(task.resources, "gpu_capability", None):
-            loss_record(
-                f"/tasks/{task.id}/resources/gpu_capability",
-                "gpu_capability",
-                task.resources.gpu_capability,
-                "No gpu_capability mapping in Nextflow",
-                "user",
-            )
-
-    # Generate main.nf content
-    main_content = _generate_main_nf(wf, modular=modular, verbose=verbose)
-
-    # Write main.nf
-    out_path.write_text(main_content)
-
-    if verbose:
-        print(f"✓ Nextflow script written to {out_path}")
-
-    try:
-        from wf2wf import report as _rpt
-
-        _rpt.add_artefact(out_path)
-        _rpt.add_action("Exported Nextflow workflow")
-    except ImportError:
-        pass
-
-    # ------------------------------------------------------------------
-    # Persist loss map side-car and attach to workflow object
-    # ------------------------------------------------------------------
-
-    loss_write(
-        out_path.with_suffix(".loss.json"),
-        target_engine="nextflow",
-        source_checksum=compute_checksum(wf),
-    )
-    wf.loss_map = as_list()
-
-    if modular:
-        # Create modules directory and individual module files
-        modules_dir = out_path.parent / "modules"
-        modules_dir.mkdir(exist_ok=True)
-
-        for task_id, task in wf.tasks.items():
-            module_content = _generate_module_file(task)
-            module_file = modules_dir / f"{_sanitize_process_name(task_id)}.nf"
-            module_file.write_text(module_content)
-
-    # Generate configuration file
-    config_content = _generate_nextflow_config(wf)
-
-    if config_file:
-        # Write to separate config file
-        config_path = Path(config_file)
-        config_path.write_text(config_content)
-    else:
-        # Write to nextflow.config in same directory
-        config_path = out_path.parent / "nextflow.config"
-        config_path.write_text(config_content)
-
-    if verbose:
-        print(f"Generated Nextflow workflow with {len(wf.tasks)} processes")
-        if modular:
-            print(f"Created {len(wf.tasks)} module files in {modules_dir}")
-        print(f"Configuration written to: {config_path}")
-
-    # (Intent already recorded above)
-
-
-def _generate_main_nf(wf: Workflow, modular: bool = True, verbose: bool = False) -> str:
-    """Generate main.nf content."""
-    lines = [
-        "#!/usr/bin/env nextflow",
-        "",
-        "/*",
-        f" * {wf.name} - Generated by wf2wf",
-        f" * Original format: {wf.meta.get('source_format', 'Workflow IR')}",
-        f" * Tasks: {len(wf.tasks)}, Dependencies: {len(wf.edges)}",
-        " */",
-        "",
-        "nextflow.enable.dsl=2",
-        "",
-    ]
-
-    # Add includes for modular workflows
-    if modular:
-        lines.append("// Process modules")
-        for task_id in wf.tasks.keys():
-            process_name = _sanitize_process_name(task_id).upper()
-            module_path = f"./modules/{_sanitize_process_name(task_id)}"
-            lines.append(f"include {{ {process_name} }} from '{module_path}'")
-        lines.append("")
-    else:
-        # Embed process definitions directly
-        lines.append("// Process definitions")
-        for task in wf.tasks.values():
-            process_def = _generate_process_definition(task)
-            lines.extend(process_def.split("\n"))
-            lines.append("")
-
-    # Generate workflow definition
-    lines.extend(_generate_workflow_definition(wf).split("\n"))
-
-    # Add workflow completion handler
-    lines.extend(
-        [
-            "",
-            "workflow.onComplete {",
-            '    println "Pipeline completed at: $workflow.complete"',
-            "    println \"Execution status: ${ workflow.success ? 'OK' : 'failed' }\"",
-            "}",
-        ]
-    )
-
-    return "\n".join(lines)
-
-
-def _generate_module_file(task: Task) -> str:
-    """Generate a separate module file for a task."""
-    lines = [
-        "/*",
-        f" * {task.id} process module",
-        " * Generated by wf2wf",
-        " */",
-        "",
-    ]
-
-    process_def = _generate_process_definition(task)
-    lines.extend(process_def.split("\n"))
-
-    return "\n".join(lines)
-
-
-def _generate_process_definition(task: Task) -> str:
-    """Generate Nextflow process definition from Task."""
-    from wf2wf.environ import format_container_for_target_format, get_environment_metadata
+class NextflowExporter(BaseExporter):
+    """Nextflow exporter using shared infrastructure."""
     
-    process_name = _sanitize_process_name(task.id).upper()
+    def _get_target_format(self) -> str:
+        """Get the target format name."""
+        return "nextflow"
+    
+    def _generate_output(self, workflow: Workflow, output_path: Path, **opts: Any) -> None:
+        """Generate Nextflow output."""
+        config_file = opts.get("config_file", "nextflow.config")
+        modules_dir = opts.get("modules_dir", "modules")
+        use_dsl2 = opts.get("use_dsl2", True)
+        add_channels = opts.get("add_channels", True)
+        preserve_metadata = opts.get("preserve_metadata", True)
+        container_mode = opts.get("container_mode", "docker")
 
-    lines = [
-        f"process {process_name} {{",
-    ]
+        if self.verbose:
+            print(f"Exporting workflow '{workflow.name}' to Nextflow DSL2")
 
-    # Add tag if available
-    if task.meta.get("tag"):
-        lines.append(f"    tag \"{task.meta['tag']}\"")
-    elif task.inputs:
-        # Auto-generate tag from first input
-        first_input = _param_identifier(task.inputs[0])
-        # Use variable 'input_file' if single input; otherwise use sanitized name
-        if len(task.inputs) == 1:
-            lines.append('    tag "${input_file.baseName}"')
-        else:
-            lines.append(f'    tag "{Path(first_input).stem}"')
+        try:
+            # Create output directory
+            output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Add resource specifications
-    if task.resources.cpu:
-        lines.append(f"    cpus {task.resources.cpu}")
+            # Generate main.nf file
+            main_nf_content = _generate_main_nf_enhanced(
+                workflow,
+                use_dsl2=use_dsl2,
+                add_channels=add_channels,
+                preserve_metadata=preserve_metadata,
+                container_mode=container_mode,
+                verbose=self.verbose,
+            )
 
-    if task.resources.mem_mb:
-        memory_gb = task.resources.mem_mb / 1024
-        if memory_gb >= 1:
-            lines.append(f"    memory '{memory_gb:.1f}.GB'")
-        else:
-            lines.append(f"    memory '{task.resources.mem_mb}.MB'")
+            with output_path.open('w') as f:
+                f.write(main_nf_content)
 
-    if task.resources.disk_mb:
-        disk_gb = task.resources.disk_mb / 1024
-        if disk_gb >= 1:
-            lines.append(f"    disk '{disk_gb:.1f}.GB'")
-        else:
-            lines.append(f"    disk '{task.resources.disk_mb}.MB'")
+            # Generate modules if requested
+            if modules_dir and workflow.tasks:
+                modules_path = output_path.parent / modules_dir
+                modules_path.mkdir(parents=True, exist_ok=True)
+                
+                for task in workflow.tasks.values():
+                    module_content = _generate_module_nf_enhanced(
+                        task,
+                        preserve_metadata=preserve_metadata,
+                        container_mode=container_mode,
+                        verbose=self.verbose,
+                    )
+                    
+                    module_file = modules_path / f"{task.id}.nf"
+                    with module_file.open('w') as f:
+                        f.write(module_content)
+                    
+                    if self.verbose:
+                        print(f"  wrote module {task.id} → {module_file}")
 
-    if task.resources.time_s:
-        time_hours = task.resources.time_s / 3600
-        if time_hours >= 1:
-            lines.append(f"    time '{time_hours:.1f}h'")
-        else:
-            time_minutes = task.resources.time_s / 60
-            lines.append(f"    time '{time_minutes:.0f}m'")
+            # Generate nextflow.config if requested
+            if config_file:
+                config_content = _generate_nextflow_config_enhanced(
+                    workflow,
+                    container_mode=container_mode,
+                    verbose=self.verbose,
+                )
+                
+                config_path = output_path.parent / config_file
+                with config_path.open('w') as f:
+                    f.write(config_content)
+                
+                if self.verbose:
+                    print(f"  wrote config → {config_path}")
 
-    if task.resources.gpu:
-        lines.append(f"    accelerator {task.resources.gpu}")
+            if self.verbose:
+                print(f"✓ Nextflow workflow exported to {output_path}")
 
-    # Add container or conda environment
-    if task.environment.container:
-        container = format_container_for_target_format(task.environment.container, "nextflow")
-        lines.append(f"    container '{container}'")
+        except Exception as e:
+            raise RuntimeError(f"Failed to export Nextflow workflow: {e}")
 
-    if task.environment.conda:
-        lines.append(f"    conda '{task.environment.conda}'")
 
-    # SBOM / SIF provenance comments
-    if task.environment:
-        metadata = get_environment_metadata(task.environment.env_vars)
-        if metadata["sbom_path"]:
-            lines.append(f"    // wf2wf_sbom: {metadata['sbom_path']}")
-        if metadata["sif_path"]:
-            lines.append(f"    // wf2wf_sif: {metadata['sif_path']}")
+# Legacy function for backward compatibility
+def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any) -> None:
+    """Export a wf2wf workflow to Nextflow DSL2 format (legacy function)."""
+    exporter = NextflowExporter(
+        interactive=opts.get("interactive", False),
+        verbose=opts.get("verbose", False)
+    )
+    exporter.export_workflow(wf, out_file, **opts)
 
-    # Add error handling
-    if task.retry > 0:
-        lines.append("    errorStrategy 'retry'")
-        lines.append(f"    maxRetries {task.retry}")
 
-    # Add publishDir if specified
-    publish_dir = task.meta.get("publishDir")
-    if publish_dir:
-        lines.append(f"    publishDir \"{publish_dir}\", mode: 'copy'")
-    elif task.outputs:
-        # Auto-generate publishDir
-        lines.append(f"    publishDir \"results/{task.id}\", mode: 'copy'")
-
-    # Priority
-    if task.priority:
-        lines.append(f"    priority {task.priority}")
-
-    # Conditional execution
-    if task.when:
-        # Wrap the expression into Nextflow 'when { ... }' block
-        expr = task.when.strip()
-        # Remove leading '$(...)' if present so it becomes plain Groovy/JS
-        if expr.startswith("$(") and expr.endswith(")"):
-            expr = expr[2:-1]
-        lines.append(f"    when {{ {expr} }}")
-
+# Helper functions
+def _generate_main_nf_enhanced(
+    workflow: Workflow,
+    use_dsl2: bool = True,
+    add_channels: bool = True,
+    preserve_metadata: bool = True,
+    container_mode: str = "docker",
+    verbose: bool = False,
+) -> str:
+    """Generate enhanced main.nf file."""
+    lines = []
+    
+    # Add shebang and metadata
+    lines.append("#!/usr/bin/env nextflow")
     lines.append("")
+    
+    if preserve_metadata:
+        if workflow.label:
+            lines.append(f"// Workflow: {workflow.label}")
+        if workflow.doc:
+            lines.append(f"// Description: {workflow.doc}")
+        if workflow.version:
+            lines.append(f"// Version: {workflow.version}")
+        lines.append("")
+    
+    # Add DSL2 directive
+    if use_dsl2:
+        lines.append("nextflow.enable.dsl = 2")
+        lines.append("")
+    
+    # Add workflow inputs
+    if workflow.inputs:
+        lines.append("// Workflow inputs")
+        for param in workflow.inputs:
+            if isinstance(param, ParameterSpec):
+                lines.append(f"params.{param.id} = {_get_default_value(param)}")
+            else:
+                lines.append(f"params.{param} = null")
+        lines.append("")
+    
+    # Add channel definitions
+    if add_channels:
+        lines.extend(_generate_channel_definitions(workflow))
+        lines.append("")
+    
+    # Add workflow definition
+    lines.append("workflow {")
+    
+    # Add workflow inputs
+    if workflow.inputs:
+        lines.append("    // Workflow inputs")
+        for param in workflow.inputs:
+            if isinstance(param, ParameterSpec):
+                lines.append(f"    take: {param.id}")
+            else:
+                lines.append(f"    take: {param}")
+        lines.append("")
+    
+    # Add process calls
+    lines.append("    // Process calls")
+    for task in workflow.tasks.values():
+        process_call = _generate_process_call_enhanced(task, workflow)
+        lines.append(f"    {process_call}")
+    
+    # Add workflow outputs
+    if workflow.outputs:
+        lines.append("")
+        lines.append("    // Workflow outputs")
+        for param in workflow.outputs:
+            if isinstance(param, ParameterSpec):
+                lines.append(f"    emit: {param.id}")
+            else:
+                lines.append(f"    emit: {param}")
+    
+    lines.append("}")
+    lines.append("")
+    
+    return "\n".join(lines)
 
-    # Add input specification
+
+def _generate_channel_definitions(workflow: Workflow) -> List[str]:
+    """Generate channel definitions for workflow inputs."""
+    lines = []
+    
+    for param in workflow.inputs:
+        if isinstance(param, ParameterSpec):
+            if param.type.type == "File":
+                lines.append(f"// Input file channel")
+                lines.append(f"Channel.fromPath(params.{param.id})")
+            elif param.type.type == "array":
+                lines.append(f"// Input array channel")
+                lines.append(f"Channel.of(params.{param.id})")
+            else:
+                lines.append(f"// Input value channel")
+                lines.append(f"Channel.of(params.{param.id})")
+        else:
+            lines.append(f"Channel.of(params.{param})")
+    
+    return lines
+
+
+def _generate_process_call_enhanced(task: Task, workflow: Workflow) -> str:
+    """Generate enhanced process call."""
+    # Get input dependencies
+    parent_tasks = [edge.parent for edge in workflow.edges if edge.child == task.id]
+    
+    if parent_tasks:
+        # Task has dependencies
+        inputs = []
+        for parent in parent_tasks:
+            inputs.append(f"{parent}.out")
+        
+        # Add workflow-level inputs
+        for param in task.inputs:
+            if isinstance(param, ParameterSpec):
+                inputs.append(f"params.{param.id}")
+            else:
+                inputs.append(f"params.{param}")
+        
+        return f"{task.id}({', '.join(inputs)})"
+    else:
+        # Task has no dependencies
+        inputs = []
+        for param in task.inputs:
+            if isinstance(param, ParameterSpec):
+                inputs.append(f"params.{param.id}")
+            else:
+                inputs.append(f"params.{param}")
+        
+        if inputs:
+            return f"{task.id}({', '.join(inputs)})"
+        else:
+            return f"{task.id}()"
+
+
+def _generate_module_nf_enhanced(
+    task: Task,
+    preserve_metadata: bool = True,
+    container_mode: str = "docker",
+    verbose: bool = False,
+) -> str:
+    """Generate enhanced module.nf file."""
+    lines = []
+    
+    # Add process definition
+    lines.append(f"process {task.id} {{")
+    
+    # Add metadata
+    if preserve_metadata:
+        if task.label:
+            lines.append(f"    tag '{task.label}'")
+        if task.doc:
+            lines.append(f"    publishDir 'results/{task.id}', mode: 'copy'")
+        lines.append("")
+    
+    # Add resource requirements
+    environment = "shared_filesystem"
+    cpu = task.cpu.get_value_for(environment)
+    mem_mb = task.mem_mb.get_value_for(environment)
+    disk_mb = task.disk_mb.get_value_for(environment)
+    
+    if cpu or mem_mb or disk_mb:
+        lines.append("    // Resource requirements")
+        if cpu:
+            lines.append(f"    cpus {cpu}")
+        if mem_mb:
+            lines.append(f"    memory '{mem_mb} MB'")
+        if disk_mb:
+            lines.append(f"    disk '{disk_mb} MB'")
+        lines.append("")
+    
+    # Add container specification
+    container = task.container.get_value_for(environment)
+    if container:
+        lines.append("    // Container specification")
+        if container_mode == "docker":
+            lines.append(f"    container '{container}'")
+        elif container_mode == "singularity":
+            lines.append(f"    container '{container}'")
+        lines.append("")
+    
+    # Add conda environment
+    conda = task.conda.get_value_for(environment)
+    if conda:
+        lines.append("    // Conda environment")
+        lines.append(f"    conda '{conda}'")
+        lines.append("")
+    
+    # Add error handling
+    retry_count = task.retry_count.get_value_for(environment)
+    if retry_count:
+        lines.append("    // Error handling")
+        lines.append(f"    maxRetries {retry_count}")
+        lines.append("")
+    
+    # Add inputs
     if task.inputs:
         lines.append("    input:")
-        for i, input_param in enumerate(task.inputs):
-            input_name = _param_identifier(input_param)
-            if i == 0 and len(task.inputs) == 1:
-                # Single input; use canonical 'input_file'
-                lines.append("    path input_file")
+        for param in task.inputs:
+            if isinstance(param, ParameterSpec):
+                if param.type.type == "File":
+                    lines.append(f"        path {param.id}")
+                elif param.type.type == "array":
+                    lines.append(f"        each {param.id}")
+                else:
+                    lines.append(f"        val {param.id}")
             else:
-                var_name = _sanitize_variable_name(Path(input_name).stem)
-                lines.append(f"    path {var_name}")
+                lines.append(f"        val {param}")
         lines.append("")
-
-    # Add output specification
+    
+    # Add outputs
     if task.outputs:
         lines.append("    output:")
-        for output_param in task.outputs:
-            output_name_full = _param_identifier(output_param)
-            output_name = Path(output_name_full).name
-            emit_name = _sanitize_variable_name(Path(output_name).stem)
-            lines.append(f'    path "{output_name}", emit: {emit_name}')
+        for param in task.outputs:
+            if isinstance(param, ParameterSpec):
+                if param.type.type == "File":
+                    lines.append(f"        path \"{param.id}.*\", emit: {param.id}")
+                else:
+                    lines.append(f"        val {param.id}, emit: {param.id}")
+            else:
+                lines.append(f"        path \"{param}.*\", emit: {param}")
         lines.append("")
-
-    # Add script section
-    lines.append("    script:")
-    lines.append('    """')
-
-    # Generate script content
-    if task.script:
-        # Use external script
-        script_path = task.script
-        if task.command:
-            # Script with arguments
-            lines.append(f"    {task.command}")
+    
+    # Add script
+    command = task.command.get_value_for(environment)
+    if command:
+        lines.append("    script:")
+        if isinstance(command, str):
+            # Parse command into script lines
+            script_lines = _parse_command_for_nextflow(command)
+            for line in script_lines:
+                lines.append(f"        {line}")
         else:
-            # Just the script
-            lines.append(f"    {script_path}")
-    elif task.command:
-        # Inline command
-        command = task.command
-
-        # Handle multi-line commands
-        if "\n" in command:
-            for cmd_line in command.split("\n"):
-                if cmd_line.strip():
-                    lines.append(f"    {cmd_line}")
-        else:
-            lines.append(f"    {command}")
+            lines.append(f"        {command}")
     else:
-        # Default command
-        lines.append(f'    echo "Processing {task.id}"')
-
-    lines.append('    """')
+        lines.append("    script:")
+        lines.append(f"        echo 'No command specified for {task.id}'")
+    
     lines.append("}")
-
+    
     return "\n".join(lines)
 
 
-def _generate_workflow_definition(wf: Workflow) -> str:
-    """Generate the main workflow definition."""
-    lines = [
-        "workflow {",
-    ]
-
-    # Find input tasks (tasks with no dependencies)
-    input_tasks = _find_input_tasks(wf)
-
-    # Create input channels
-    if input_tasks:
-        lines.append("    // Input channels")
-        for task_id in input_tasks:
-            task = wf.tasks[task_id]
-            if task.inputs:
-                # Create channel from input files
-                input_files = ", ".join(
-                    f'"{_param_identifier(f)}"' for f in task.inputs
-                )
-                lines.append(f"    {task_id}_ch = Channel.fromPath([{input_files}])")
-            else:
-                # Create empty channel or value channel
-                lines.append(f"    {task_id}_ch = Channel.value('start')")
-        lines.append("")
-
-    # Generate process calls in topological order
-    ordered_tasks = _topological_sort(wf)
-
-    lines.append("    // Process execution")
-    for task_id in ordered_tasks:
-        task = wf.tasks[task_id]
-        process_name = _sanitize_process_name(task_id).upper()
-
-        # Find input channels for this task
-        input_channels = []
-
-        # Check if this is an input task
-        if task_id in input_tasks:
-            input_channels.append(f"{task_id}_ch")
-        else:
-            # Find parent tasks
-            parents = [edge.parent for edge in wf.edges if edge.child == task_id]
-            for parent in parents:
-                parent_name = _sanitize_process_name(parent).upper()
-                input_channels.append(f"{parent_name}.out")
-
-        # Generate process call
-        if input_channels:
-            input_str = ", ".join(input_channels)
-            lines.append(f"    {process_name}({input_str})")
-        else:
-            lines.append(f"    {process_name}()")
-
-    # Find final outputs
-    final_tasks = _find_final_tasks(wf)
-    if final_tasks:
-        lines.append("")
-        lines.append("    // Final outputs")
-        for task_id in final_tasks:
-            process_name = _sanitize_process_name(task_id).upper()
-            lines.append(f"    {process_name}.out.view()")
-
-    lines.append("}")
-
-    return "\n".join(lines)
-
-
-def _generate_nextflow_config(wf: Workflow) -> str:
-    """Generate nextflow.config content."""
-    lines = [
-        "// Nextflow configuration file",
-        "// Generated by wf2wf",
-        "",
-        "// Enable DSL2",
-        "nextflow.enable.dsl = 2",
-        "",
-    ]
-
-    # Add parameters from workflow config
-    if wf.config:
-        lines.append("// Pipeline parameters")
-        lines.append("params {")
-        for key, value in wf.config.items():
-            if isinstance(value, str):
-                lines.append(f'    {key} = "{value}"')
-            elif isinstance(value, bool):
-                lines.append(f"    {key} = {str(value).lower()}")
-            else:
-                lines.append(f"    {key} = {value}")
-        lines.append("}")
-        lines.append("")
-
+def _generate_nextflow_config_enhanced(
+    workflow: Workflow,
+    container_mode: str = "docker",
+    verbose: bool = False,
+) -> str:
+    """Generate enhanced nextflow.config file."""
+    lines = []
+    
+    lines.append("// Nextflow configuration file")
+    lines.append("// Generated by wf2wf")
+    lines.append("")
+    
     # Add process configuration
-    lines.extend(
-        [
-            "// Process configuration",
-            "process {",
-            "    // Default settings",
-            "    cpus = 1",
-            "    memory = '2.GB'",
-            "    time = '1h'",
-            "",
-            "    // Error handling",
-            "    errorStrategy = 'retry'",
-            "    maxRetries = 1",
-            "",
-            "    // Container settings",
-            "    container = 'ubuntu:20.04'",
-            "",
-        ]
-    )
-
-    # Add process-specific configurations
-    for task_id, task in wf.tasks.items():
-        process_name = _sanitize_process_name(task_id).upper()
-
-        config_lines = []
-
-        if task.resources.cpu:
-            config_lines.append(f"        cpus = {task.resources.cpu}")
-
-        if task.resources.mem_mb:
-            memory_gb = task.resources.mem_mb / 1024
-            if memory_gb >= 1:
-                config_lines.append(f"        memory = '{memory_gb:.1f}.GB'")
-            else:
-                config_lines.append(f"        memory = '{task.resources.mem_mb}.MB'")
-
-        if task.resources.time_s:
-            time_hours = task.resources.time_s / 3600
-            if time_hours >= 1:
-                config_lines.append(f"        time = '{time_hours:.1f}h'")
-            else:
-                time_minutes = task.resources.time_s / 60
-                config_lines.append(f"        time = '{time_minutes:.0f}m'")
-
-        if task.environment.container:
-            container = task.environment.container
-            if container.startswith("docker://"):
-                container = container[9:]
-            config_lines.append(f"        container = '{container}'")
-
-        if task.retry > 0:
-            config_lines.append(f"        maxRetries = {task.retry}")
-
-        if config_lines:
-            lines.append(f"    withName: '{process_name}' {{")
-            lines.extend(config_lines)
-            lines.append("    }")
-            lines.append("")
-
+    lines.append("process {")
+    lines.append("    // Default resource requirements")
+    lines.append("    cpus = 1")
+    lines.append("    memory = '4 GB'")
+    lines.append("    disk = '4 GB'")
+    lines.append("")
+    
+    # Add container configuration
+    if container_mode == "docker":
+        lines.append("    // Docker configuration")
+        lines.append("    container = 'default-runtime:latest'")
+    elif container_mode == "singularity":
+        lines.append("    // Singularity configuration")
+        lines.append("    container = 'default-runtime.sif'")
+    
+    lines.append("")
+    lines.append("    // Error handling")
+    lines.append("    maxRetries = 2")
+    lines.append("    errorStrategy = 'retry'")
     lines.append("}")
     lines.append("")
-
+    
     # Add executor configuration
-    lines.extend(
-        [
-            "// Executor configuration",
-            "executor {",
-            "    name = 'local'",
-            "    cpus = 8",
-            "    memory = '32.GB'",
-            "}",
-            "",
-            "// Container configuration",
-            "docker {",
-            "    enabled = true",
-            "    runOptions = '-u $(id -u):$(id -g)'",
-            "}",
-            "",
-            "singularity {",
-            "    enabled = false",
-            "    autoMounts = true",
-            "}",
-            "",
-            "// Conda configuration",
-            "conda {",
-            "    enabled = true",
-            "    useMamba = true",
-            "}",
-            "",
-            "// Resource monitoring",
-            "timeline {",
-            "    enabled = true",
-            "    file = 'results/timeline.html'",
-            "}",
-            "",
-            "report {",
-            "    enabled = true",
-            "    file = 'results/report.html'",
-            "}",
-            "",
-            "trace {",
-            "    enabled = true",
-            "    file = 'results/trace.txt'",
-            "}",
-            "",
-            "dag {",
-            "    enabled = true",
-            "    file = 'results/dag.svg'",
-            "}",
-        ]
-    )
-
+    lines.append("executor {")
+    lines.append("    name = 'local'")
+    lines.append("    queueSize = 100")
+    lines.append("}")
+    lines.append("")
+    
+    # Add reporting configuration
+    lines.append("report {")
+    lines.append("    enabled = true")
+    lines.append("    file = 'pipeline_report.html'")
+    lines.append("}")
+    lines.append("")
+    
+    # Add timeline configuration
+    lines.append("timeline {")
+    lines.append("    enabled = true")
+    lines.append("    file = 'timeline_report.html'")
+    lines.append("}")
+    lines.append("")
+    
+    # Add trace configuration
+    lines.append("trace {")
+    lines.append("    enabled = true")
+    lines.append("    file = 'trace.txt'")
+    lines.append("}")
+    
     return "\n".join(lines)
 
 
-def _find_input_tasks(wf: Workflow) -> List[str]:
-    """Find tasks that have no incoming dependencies."""
-    has_parents = {edge.child for edge in wf.edges}
-    return [task_id for task_id in wf.tasks.keys() if task_id not in has_parents]
+def _get_default_value(param: ParameterSpec) -> str:
+    """Get default value for parameter."""
+    if param.default is not None:
+        if isinstance(param.default, str):
+            return f"'{param.default}'"
+        else:
+            return str(param.default)
+    
+    # Provide sensible defaults based on type
+    if param.type.type == "File":
+        return "'input.txt'"
+    elif param.type.type == "string":
+        return "'default'"
+    elif param.type.type == "int":
+        return "0"
+    elif param.type.type == "float":
+        return "0.0"
+    elif param.type.type == "boolean":
+        return "false"
+    else:
+        return "null"
 
 
-def _find_final_tasks(wf: Workflow) -> List[str]:
-    """Find tasks that have no outgoing dependencies."""
-    has_children = {edge.parent for edge in wf.edges}
-    return [task_id for task_id in wf.tasks.keys() if task_id not in has_children]
-
-
-def _topological_sort(wf: Workflow) -> List[str]:
-    """Perform topological sort of tasks."""
-    # Build adjacency list
-    graph = {task_id: [] for task_id in wf.tasks.keys()}
-    in_degree = {task_id: 0 for task_id in wf.tasks.keys()}
-
-    for edge in wf.edges:
-        graph[edge.parent].append(edge.child)
-        in_degree[edge.child] += 1
-
-    # Kahn's algorithm
-    queue = [task_id for task_id, degree in in_degree.items() if degree == 0]
-    result = []
-
-    while queue:
-        current = queue.pop(0)
-        result.append(current)
-
-        for neighbor in graph[current]:
-            in_degree[neighbor] -= 1
-            if in_degree[neighbor] == 0:
-                queue.append(neighbor)
-
-    return result
-
-
-def _sanitize_process_name(name: str) -> str:
-    """Sanitize process name for Nextflow."""
-    # Replace invalid characters with underscores
-    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-
-    # Ensure it starts with a letter or underscore
-    if sanitized and sanitized[0].isdigit():
-        sanitized = f"process_{sanitized}"
-
-    return sanitized
-
-
-def _sanitize_variable_name(name: str) -> str:
-    """Sanitize variable name for Nextflow."""
-    # Replace invalid characters with underscores
-    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-
-    # Ensure it starts with a letter or underscore
-    if sanitized and sanitized[0].isdigit():
-        sanitized = f"var_{sanitized}"
-
-    # Convert to lowercase for variable names
-    return sanitized.lower()
+def _parse_command_for_nextflow(command: str) -> List[str]:
+    """Parse command string into Nextflow script lines."""
+    import shlex
+    
+    if not command or command.startswith("#"):
+        return ["echo 'No command specified'"]
+    
+    # Simple command parsing
+    parts = shlex.split(command)
+    if not parts:
+        return ["echo 'Empty command'"]
+    
+    # Convert to Nextflow script format
+    script_lines = []
+    
+    # Handle simple commands
+    if len(parts) == 1:
+        script_lines.append(parts[0])
+    else:
+        # Multi-part command
+        script_lines.append(" ".join(parts))
+    
+    return script_lines

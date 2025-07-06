@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 import tarfile
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, Callable
 import json
 import subprocess
 import os
@@ -26,10 +26,14 @@ import shutil
 import time
 import itertools
 import textwrap
+import logging
+import re
 
 import yaml
 
-from wf2wf.core import Task, Workflow
+from wf2wf.core import Task, Workflow, EnvironmentSpecificValue, CheckpointSpec, LoggingSpec, SecuritySpec, NetworkingSpec, MetadataSpec
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "generate_lock_hash",
@@ -54,6 +58,12 @@ __all__ = [
     "extract_sbom_digest",
     "format_container_for_target_format",
     "get_environment_metadata",
+    "EnvironmentManager",
+    "detect_and_parse_environments",
+    "infer_missing_environments",
+    "prompt_for_missing_environments",
+    "build_environment_images",
+    "adapt_environments_for_target",
 ]
 
 
@@ -1432,3 +1442,621 @@ def prune_cache(*, days: int = 60, min_free_gb: int = 5, verbose: bool = False):
 
     if verbose and freed:
         print(f"[prune] freed {freed/1e9:.2f} GB")
+
+# ---------------------------------------------------------------------------
+# Environment Manager for Workflow Importers
+# ---------------------------------------------------------------------------
+
+class EnvironmentManager:
+    """
+    Comprehensive environment and container management for workflow importers.
+    
+    This class provides unified environment handling across all importers,
+    including detection, parsing, validation, and interactive prompting.
+    """
+    
+    def __init__(self, interactive: bool = False, verbose: bool = False):
+        """
+        Initialize the environment manager.
+        
+        Args:
+            interactive: Enable interactive prompting for environment specifications
+            verbose: Enable verbose logging
+        """
+        self.interactive = interactive
+        self.verbose = verbose
+        
+        # Configure logging
+        if verbose:
+            logging.getLogger(__name__).setLevel(logging.DEBUG)
+    
+    def detect_and_parse_environments(
+        self, 
+        workflow: Workflow, 
+        source_format: str,
+        source_path: Optional[Path] = None
+    ) -> Dict[str, Any]:
+        """
+        Detect and parse environment specifications from workflow data.
+        
+        Args:
+            workflow: Workflow object to analyze
+            source_format: Source format name
+            source_path: Path to source file (for relative path resolution)
+            
+        Returns:
+            Dictionary containing detected environment information
+        """
+        detected_envs = {
+            'containers': set(),
+            'conda_environments': set(),
+            'environment_files': set(),
+            'environment_metadata': {},
+            'missing_environments': [],
+            'environment_warnings': []
+        }
+        
+        for task in workflow.tasks.values():
+            task_env_info = self._analyze_task_environment(task, source_path)
+            
+            # Collect containers
+            if task_env_info['container']:
+                detected_envs['containers'].add(task_env_info['container'])
+            
+            # Collect conda environments
+            if task_env_info['conda']:
+                detected_envs['conda_environments'].add(task_env_info['conda'])
+            
+            # Collect environment files
+            if task_env_info['environment_file']:
+                detected_envs['environment_files'].add(task_env_info['environment_file'])
+            
+            # Check for missing environments
+            if not task_env_info['container'] and not task_env_info['conda']:
+                detected_envs['missing_environments'].append(task.id)
+            
+            # Collect warnings
+            detected_envs['environment_warnings'].extend(task_env_info['warnings'])
+        
+        # Add environment metadata
+        detected_envs['environment_metadata'] = {
+            'source_format': source_format,
+            'source_path': str(source_path) if source_path else None,
+            'total_tasks': len(workflow.tasks),
+            'tasks_with_environments': len(workflow.tasks) - len(detected_envs['missing_environments']),
+            'tasks_without_environments': len(detected_envs['missing_environments'])
+        }
+        
+        return detected_envs
+    
+    def _analyze_task_environment(
+        self, 
+        task: Task, 
+        source_path: Optional[Path] = None
+    ) -> Dict[str, Any]:
+        """
+        Analyze environment specifications for a single task.
+        
+        Args:
+            task: Task to analyze
+            source_path: Path to source file (for relative path resolution)
+            
+        Returns:
+            Dictionary containing task environment information
+        """
+        env_info = {
+            'container': None,
+            'conda': None,
+            'environment_file': None,
+            'warnings': [],
+            'metadata': {}
+        }
+        
+        # Check for container specifications
+        container = task.container.get_value_for('shared_filesystem')
+        if container:
+            env_info['container'] = normalize_container_spec(container)
+            env_info['metadata']['container_source'] = 'explicit'
+        
+        # Check for conda specifications
+        conda = task.conda.get_value_for('shared_filesystem')
+        if conda:
+            env_info['conda'] = conda
+            env_info['metadata']['conda_source'] = 'explicit'
+            
+            # Check if conda spec is a file path
+            if self._is_environment_file(conda):
+                env_info['environment_file'] = conda
+                
+                # Resolve relative paths
+                if source_path and not Path(conda).is_absolute():
+                    resolved_path = source_path.parent / conda
+                    if resolved_path.exists():
+                        env_info['environment_file'] = str(resolved_path)
+                    else:
+                        env_info['warnings'].append(f"Environment file not found: {resolved_path}")
+        
+        # Check for environment variables that might indicate environment info
+        env_vars = task.env_vars.get_value_for('shared_filesystem') or {}
+        if env_vars:
+            env_info['metadata']['environment_variables'] = env_vars
+            
+            # Extract environment metadata
+            env_metadata = get_environment_metadata(env_vars)
+            if env_metadata:
+                env_info['metadata'].update(env_metadata)
+        
+        # Check for advanced environment features
+        if task.checkpointing.get_value_for('shared_filesystem'):
+            env_info['metadata']['checkpointing'] = True
+        
+        if task.logging.get_value_for('shared_filesystem'):
+            env_info['metadata']['logging'] = True
+        
+        if task.security.get_value_for('shared_filesystem'):
+            env_info['metadata']['security'] = True
+        
+        if task.networking.get_value_for('shared_filesystem'):
+            env_info['metadata']['networking'] = True
+        
+        return env_info
+    
+    def _is_environment_file(self, spec: str) -> bool:
+        """
+        Check if a specification is an environment file.
+        
+        Args:
+            spec: Environment specification string
+            
+        Returns:
+            True if the specification appears to be a file path
+        """
+        if not spec:
+            return False
+        
+        # Check for common environment file extensions
+        env_extensions = ['.yml', '.yaml', '.txt', '.lock']
+        return any(spec.endswith(ext) for ext in env_extensions) or '/' in spec or '\\' in spec
+    
+    def infer_missing_environments(
+        self, 
+        workflow: Workflow, 
+        source_format: str
+    ) -> None:
+        """
+        Infer missing environment specifications based on workflow content.
+        
+        Args:
+            workflow: Workflow to analyze
+            source_format: Source format name
+        """
+        logger.info("Inferring missing environment specifications...")
+        
+        for task in workflow.tasks.values():
+            self._infer_task_environment(task, source_format)
+    
+    def _infer_task_environment(self, task: Task, source_format: str) -> None:
+        """
+        Infer environment for a single task.
+        
+        Args:
+            task: Task to analyze
+            source_format: Source format name
+        """
+        # Skip if task already has environment specification
+        if (task.container.get_value_for('shared_filesystem') or 
+            task.conda.get_value_for('shared_filesystem')):
+            return
+        
+        # Try to infer from command
+        command = task.command.get_value_for('shared_filesystem')
+        if command:
+            # Try to infer container
+            container = self._infer_container_from_command(command)
+            if container:
+                task.container.set_for_environment(container, 'shared_filesystem')
+                logger.info(f"Inferred container '{container}' for task '{task.id}'")
+            
+            # Try to infer conda environment
+            conda_env = self._infer_conda_environment_from_command(command)
+            if conda_env:
+                task.conda.set_for_environment(conda_env, 'shared_filesystem')
+                logger.info(f"Inferred conda environment '{conda_env}' for task '{task.id}'")
+    
+    def _infer_container_from_command(self, command: str) -> Optional[str]:
+        """
+        Infer container specification from command.
+        
+        Args:
+            command: Command string
+            
+        Returns:
+            Inferred container specification or None
+        """
+        if not command:
+            return None
+        
+        # Common patterns for container inference
+        patterns = [
+            r'python\s+(\d+\.\d+)',  # python 3.9
+            r'R\s+script',  # R scripts
+            r'perl\s+',  # Perl scripts
+            r'java\s+',  # Java applications
+            r'tensorflow',  # TensorFlow
+            r'pytorch',  # PyTorch
+            r'bioconductor',  # Bioconductor
+        ]
+        
+        for pattern in patterns:
+            if re.search(pattern, command, re.IGNORECASE):
+                if 'python' in pattern:
+                    match = re.search(r'python\s+(\d+\.\d+)', command, re.IGNORECASE)
+                    if match:
+                        version = match.group(1)
+                        return f"python:{version}"
+                    return "python:3.9"
+                elif 'R' in pattern:
+                    return "rocker/r-base:latest"
+                elif 'perl' in pattern:
+                    return "perl:latest"
+                elif 'java' in pattern:
+                    return "openjdk:latest"
+                elif 'tensorflow' in pattern:
+                    return "tensorflow/tensorflow:latest"
+                elif 'pytorch' in pattern:
+                    return "pytorch/pytorch:latest"
+                elif 'bioconductor' in pattern:
+                    return "bioconductor/bioconductor_docker:latest"
+        
+        return None
+    
+    def _infer_conda_environment_from_command(self, command: str) -> Optional[str]:
+        """
+        Infer conda environment from command.
+        
+        Args:
+            command: Command string
+            
+        Returns:
+            Inferred conda environment or None
+        """
+        if not command:
+            return None
+        
+        # Look for common conda environment patterns
+        conda_patterns = [
+            r'conda\s+activate\s+(\w+)',
+            r'source\s+activate\s+(\w+)',
+            r'conda\s+run\s+-n\s+(\w+)',
+        ]
+        
+        for pattern in conda_patterns:
+            match = re.search(pattern, command, re.IGNORECASE)
+            if match:
+                return match.group(1)
+        
+        # Look for common tool patterns that suggest conda environments
+        tool_patterns = [
+            r'fastqc',
+            r'bwa',
+            r'samtools',
+            r'gatk',
+            r'bcftools',
+            r'plink',
+            r'Rscript',
+        ]
+        
+        for pattern in tool_patterns:
+            if re.search(pattern, command, re.IGNORECASE):
+                return f"{pattern.lower()}-env"
+        
+        return None
+    
+    def prompt_for_missing_environments(
+        self, 
+        workflow: Workflow, 
+        source_format: str
+    ) -> None:
+        """
+        Prompt user for missing environment specifications.
+        
+        Args:
+            workflow: Workflow to process
+            source_format: Source format name
+        """
+        if not self.interactive:
+            return
+        
+        logger.info("Prompting for missing environment specifications...")
+        
+        for task in workflow.tasks.values():
+            task_id = task.id
+            
+            # Skip if task already has environment specification
+            if (task.container.get_value_for('shared_filesystem') or 
+                task.conda.get_value_for('shared_filesystem')):
+                continue
+            
+            # Prompt for environment type
+            response = self._prompt_user(
+                f"Task '{task_id}' has no environment specification. "
+                f"Choose environment type:\n"
+                f"  1. None (system default)\n"
+                f"  2. Container (Docker/Singularity)\n"
+                f"  3. Conda environment\n"
+                f"Enter choice (1/2/3): ",
+                default="1",
+                validation_func=self._validate_environment_choice
+            )
+            
+            if response == "2":
+                # Prompt for container
+                container = self._prompt_user(
+                    f"Enter container specification for task '{task_id}' "
+                    f"(e.g., python:3.9, tensorflow/tensorflow:latest): ",
+                    default="python:3.9"
+                )
+                if container:
+                    task.container.set_for_environment(container, 'shared_filesystem')
+                    logger.info(f"Set container '{container}' for task '{task_id}'")
+            
+            elif response == "3":
+                # Prompt for conda environment
+                conda_env = self._prompt_user(
+                    f"Enter conda environment for task '{task_id}' "
+                    f"(e.g., bioinformatics, env.yml): ",
+                    default=""
+                )
+                if conda_env:
+                    task.conda.set_for_environment(conda_env, 'shared_filesystem')
+                    logger.info(f"Set conda environment '{conda_env}' for task '{task_id}'")
+    
+    def build_environment_images(
+        self, 
+        workflow: Workflow,
+        registry: Optional[str] = None,
+        push: bool = False,
+        dry_run: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Build environment images for workflow tasks.
+        
+        Args:
+            workflow: Workflow to process
+            registry: Docker registry for pushing images
+            push: Whether to push images to registry
+            dry_run: Whether to perform actual builds
+            
+        Returns:
+            Dictionary containing build results
+        """
+        results = {
+            'built_images': [],
+            'failed_images': [],
+            'skipped_images': []
+        }
+        
+        for task in workflow.tasks.values():
+            task_id = task.id
+            
+            # Check for conda environment files
+            conda_env = task.conda.get_value_for('shared_filesystem')
+            if conda_env and self._is_environment_file(conda_env):
+                try:
+                    env_path = Path(conda_env)
+                    if not env_path.is_absolute():
+                        # Assume relative to current directory
+                        env_path = Path.cwd() / conda_env
+                    
+                    if env_path.exists():
+                        # Build image from conda environment
+                        image_name = f"{task_id}-env"
+                        if registry:
+                            image_url = f"{registry}/{image_name}:latest"
+                        else:
+                            image_url = f"{image_name}:latest"
+                        
+                        success = build_docker_image_from_conda_env(
+                            env_path,
+                            image_url,
+                            verbose=self.verbose,
+                            dry_run=dry_run
+                        )
+                        
+                        if success:
+                            results['built_images'].append({
+                                'task_id': task_id,
+                                'image_url': image_url,
+                                'source': str(env_path)
+                            })
+                            
+                            # Update task with built image
+                            task.container.set_for_environment(image_url, 'shared_filesystem')
+                        else:
+                            results['failed_images'].append({
+                                'task_id': task_id,
+                                'image_url': image_url,
+                                'source': str(env_path)
+                            })
+                    else:
+                        results['skipped_images'].append({
+                            'task_id': task_id,
+                            'reason': f"Environment file not found: {env_path}"
+                        })
+                except Exception as e:
+                    results['failed_images'].append({
+                        'task_id': task_id,
+                        'reason': str(e)
+                    })
+        
+        return results
+    
+    def adapt_environments_for_target(
+        self, 
+        workflow: Workflow, 
+        target_format: str
+    ) -> None:
+        """
+        Adapt environment specifications for target format.
+        
+        Args:
+            workflow: Workflow to adapt
+            target_format: Target format name
+        """
+        logger.info(f"Adapting environments for target format: {target_format}")
+        
+        for task in workflow.tasks.values():
+            self._adapt_task_environment_for_target(task, target_format)
+    
+    def _adapt_task_environment_for_target(self, task: Task, target_format: str) -> None:
+        """
+        Adapt task environment for target format.
+        
+        Args:
+            task: Task to adapt
+            target_format: Target format name
+        """
+        # Adapt container specifications
+        container = task.container.get_value_for('shared_filesystem')
+        if container:
+            adapted_container = format_container_for_target_format(container, target_format)
+            if adapted_container != container:
+                task.container.set_for_environment(adapted_container, 'shared_filesystem')
+                logger.info(f"Adapted container '{container}' to '{adapted_container}' for {target_format}")
+        
+        # Adapt conda specifications
+        conda = task.conda.get_value_for('shared_filesystem')
+        if conda:
+            # For some formats, conda environments might need to be converted to containers
+            if target_format in ['dagman', 'nextflow'] and self._is_environment_file(conda):
+                # Suggest building container from conda environment
+                logger.info(f"Consider building container from conda environment '{conda}' for {target_format}")
+    
+    def _prompt_user(
+        self, 
+        message: str, 
+        default: str = "", 
+        validation_func: Optional[Callable] = None
+    ) -> str:
+        """
+        Prompt user for input with validation.
+        
+        Args:
+            message: Message to display
+            default: Default value
+            validation_func: Optional validation function
+            
+        Returns:
+            User input or default value
+        """
+        try:
+            import click
+            
+            # Use click for better UX if available
+            if default:
+                message = f"{message} [{default}]: "
+            else:
+                message = f"{message}: "
+            
+            while True:
+                response = click.prompt(message, default=default, show_default=False)
+                
+                if validation_func:
+                    try:
+                        validation_func(response)
+                    except ValueError as e:
+                        click.echo(f"Invalid input: {e}")
+                        continue
+                
+                return response
+                
+        except ImportError:
+            # Fallback to basic input
+            if default:
+                message = f"{message} [{default}]: "
+            else:
+                message = f"{message}: "
+            
+            while True:
+                response = input(message).strip()
+                if not response and default:
+                    response = default
+                
+                if validation_func:
+                    try:
+                        validation_func(response)
+                    except ValueError as e:
+                        print(f"Invalid input: {e}")
+                        continue
+                
+                return response
+    
+    def _validate_environment_choice(self, value: str) -> None:
+        """
+        Validate environment choice input.
+        
+        Args:
+            value: String to validate
+            
+        Raises:
+            ValueError: If validation fails
+        """
+        valid_choices = ['1', '2', '3']
+        if value not in valid_choices:
+            raise ValueError("Please enter a valid choice (1/2/3)")
+    
+    def _is_valid_container_spec(self, spec: str) -> bool:
+        """
+        Check if a container specification is valid.
+        
+        Args:
+            spec: Container specification string
+            
+        Returns:
+            True if the specification appears valid
+        """
+        if not spec:
+            return False
+        
+        # Basic validation patterns
+        patterns = [
+            r'^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*:[a-zA-Z0-9._-]+$',  # registry/repo:tag
+            r'^[a-zA-Z0-9][a-zA-Z0-9._-]*:[a-zA-Z0-9._-]+$',  # repo:tag
+            r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$',  # just repo name
+        ]
+        
+        return any(re.match(pattern, spec) for pattern in patterns)
+
+
+# ---------------------------------------------------------------------------
+# Convenience functions for backward compatibility
+# ---------------------------------------------------------------------------
+
+def detect_and_parse_environments(workflow: Workflow, source_format: str, **kwargs) -> Dict[str, Any]:
+    """Convenience function for detecting and parsing environments."""
+    manager = EnvironmentManager(**kwargs)
+    return manager.detect_and_parse_environments(workflow, source_format)
+
+
+def infer_missing_environments(workflow: Workflow, source_format: str, **kwargs) -> None:
+    """Convenience function for inferring missing environments."""
+    manager = EnvironmentManager(**kwargs)
+    manager.infer_missing_environments(workflow, source_format)
+
+
+def prompt_for_missing_environments(workflow: Workflow, source_format: str, **kwargs) -> None:
+    """Convenience function for prompting for missing environments."""
+    manager = EnvironmentManager(**kwargs)
+    manager.prompt_for_missing_environments(workflow, source_format)
+
+
+def build_environment_images(workflow: Workflow, **kwargs) -> Dict[str, Any]:
+    """Convenience function for building environment images."""
+    manager = EnvironmentManager(**kwargs)
+    return manager.build_environment_images(workflow)
+
+
+def adapt_environments_for_target(workflow: Workflow, target_format: str, **kwargs) -> None:
+    """Convenience function for adapting environments for target format."""
+    manager = EnvironmentManager(**kwargs)
+    manager.adapt_environments_for_target(workflow, target_format)

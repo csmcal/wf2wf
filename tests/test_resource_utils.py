@@ -45,22 +45,22 @@ class TestResourceProfiles:
         assert cluster.description == "HTCondor/SGE cluster environment"
         assert cluster.environment == "cluster"
         assert cluster.priority == "normal"
-        assert cluster.resources.cpu == 1
-        assert cluster.resources.mem_mb == 2048  # 2GB
-        assert cluster.resources.disk_mb == 4096  # 4GB
+        assert cluster.resources.cpu.value == 1
+        assert cluster.resources.mem_mb.value == 2048  # 2GB
+        assert cluster.resources.disk_mb.value == 4096  # 4GB
 
     def test_gpu_profile_values(self):
         """Test GPU profile has expected values."""
         gpu = DEFAULT_PROFILES["gpu"]
         assert gpu.name == "gpu"
         assert gpu.description == "GPU-enabled environment"
-        assert gpu.environment == "hpc"
+        assert gpu.environment == "gpu"
         assert gpu.priority == "high"
-        assert gpu.resources.cpu == 4
-        assert gpu.resources.mem_mb == 16384  # 16GB
-        assert gpu.resources.disk_mb == 32768  # 32GB
-        assert gpu.resources.gpu == 1
-        assert gpu.resources.gpu_mem_mb == 8192  # 8GB GPU memory
+        assert gpu.resources.cpu.value == 4
+        assert gpu.resources.mem_mb.value == 16384  # 16GB
+        assert gpu.resources.disk_mb.value == 32768  # 32GB
+        assert gpu.resources.gpu.value == 1
+        assert gpu.resources.gpu_mem_mb.value == 8192  # 8GB GPU memory
         # No environment field on ResourceSpec
 
 
@@ -154,35 +154,35 @@ class TestResourceInference:
     def test_bwa_command(self):
         """Test BWA command inference."""
         resources = infer_resources_from_command("bwa mem -t 4 input.fq output.bam")
-        assert resources.cpu == 4
-        assert resources.mem_mb == 2048  # 2GB
-        assert resources.disk_mb == 4096  # 4GB for sequence data
+        assert resources.cpu.value == 4
+        assert resources.mem_mb.value == 2048  # 2GB
+        assert resources.disk_mb.value == 4096  # 4GB for sequence data
     
     def test_gatk_command(self):
         """Test GATK command inference."""
         resources = infer_resources_from_command("gatk HaplotypeCaller -I input.bam -O output.vcf")
-        assert resources.cpu == 2
-        assert resources.mem_mb == 8192  # 8GB
-        assert resources.disk_mb == 4096  # 4GB for sequence data
+        assert resources.cpu.value == 2
+        assert resources.mem_mb.value == 8192  # 8GB
+        assert resources.disk_mb.value == 4096  # 4GB for sequence data
     
     def test_gpu_command(self):
         """Test GPU command inference."""
         resources = infer_resources_from_command("python train_model.py --gpu --cuda")
-        assert resources.gpu == 1
-        assert resources.gpu_mem_mb == 4096  # 4GB GPU memory
-        assert resources.cpu == 1
+        assert resources.gpu.value == 1
+        assert resources.gpu_mem_mb.value == 4096  # 4GB GPU memory
+        assert resources.cpu.value == 1
     
     def test_simple_command(self):
         """Test simple command inference."""
         resources = infer_resources_from_command("echo 'hello world'")
-        assert resources.cpu == 1
+        assert resources.cpu.value == 1
     
     def test_empty_command(self):
         """Test empty command returns default resources."""
         resources = infer_resources_from_command("")
-        assert resources.cpu == 1
-        assert resources.mem_mb is None  # Not specified for empty command
-        assert resources.threads == 1
+        assert resources.cpu.value == 1
+        assert resources.mem_mb.value is None  # Not specified for empty command
+        assert resources.threads.value == 1
     
     def test_script_inference(self):
         """Test resource inference from script content."""
@@ -191,9 +191,9 @@ class TestResourceInference:
         samtools view -h input.bam | head -1000 > output.sam
         """
         resources = infer_resources_from_command("", script)
-        assert resources.cpu == 1
-        assert resources.mem_mb == 2048  # 2GB for samtools
-        assert resources.disk_mb == 4096  # 4GB for sequence data
+        assert resources.cpu.value == 1
+        assert resources.mem_mb.value == 2048  # 2GB for samtools
+        assert resources.disk_mb.value == 4096  # 4GB for sequence data
 
 
 class TestResourceProfileApplication:
@@ -204,18 +204,18 @@ class TestResourceProfileApplication:
         resources = ResourceSpec()
         result = apply_resource_profile(resources, "cluster")
 
-        assert result.cpu == 1
-        assert result.mem_mb == 2048
-        assert result.disk_mb == 4096
+        assert result.cpu.value == 1
+        assert result.mem_mb.value == 2048
+        assert result.disk_mb.value == 4096
     
     def test_apply_profile_preserves_existing(self):
         """Test that existing resource values are preserved."""
         resources = ResourceSpec(cpu=4, mem_mb=8192)
         result = apply_resource_profile(resources, "cluster")
         
-        assert result.cpu == 4  # Preserved
-        assert result.mem_mb == 8192  # Preserved
-        assert result.disk_mb == 4096  # Filled from profile
+        assert result.cpu.value == 4  # Preserved
+        assert result.mem_mb.value == 8192  # Preserved
+        assert result.disk_mb.value == 4096  # Filled from profile
     
     def test_apply_gpu_profile(self):
         """Test applying GPU profile."""
@@ -223,11 +223,11 @@ class TestResourceProfileApplication:
         result = apply_resource_profile(resources, "gpu")
 
         # Should use profile values since input has None values
-        assert result.cpu == 4  # From GPU profile
-        assert result.mem_mb == 16384  # From GPU profile
-        assert result.disk_mb == 32768  # From GPU profile
-        assert result.gpu == 1  # From GPU profile
-        assert result.gpu_mem_mb == 8192  # From GPU profile
+        assert result.cpu.value == 4  # From GPU profile
+        assert result.mem_mb.value == 16384  # From GPU profile
+        assert result.disk_mb.value == 32768  # From GPU profile
+        assert result.gpu.value == 1  # From GPU profile
+        assert result.gpu_mem_mb.value == 8192  # From GPU profile
     
     def test_invalid_profile(self):
         """Test that invalid profile names raise errors."""
@@ -335,12 +335,12 @@ class TestProfileCreation:
 
         assert profile.name == "custom"
         assert profile.description == "Custom profile"
-        assert profile.resources.cpu == 8
-        assert profile.resources.mem_mb == 16384
-        assert profile.resources.disk_mb == 32768
-        assert profile.resources.time_s == 28800
-        assert profile.resources.gpu == 2
-        assert profile.resources.gpu_mem_mb == 16384
+        assert profile.resources.cpu.value == 8
+        assert profile.resources.mem_mb.value == 16384
+        assert profile.resources.disk_mb.value == 32768
+        assert profile.resources.time_s.value == 28800
+        assert profile.resources.gpu.value == 2
+        assert profile.resources.gpu_mem_mb.value == 16384
 
 
 class TestIntegration:
@@ -369,8 +369,8 @@ class TestIntegration:
         result = apply_resource_profile(inferred, "cluster")
 
         # Should have inferred values plus profile defaults
-        assert result.cpu == 4  # From inference
-        assert result.mem_mb == 2048  # From inference
-        assert result.disk_mb == 4096  # From inference
+        assert result.cpu.value == 4  # From inference
+        assert result.mem_mb.value == 2048  # From inference
+        assert result.disk_mb.value == 4096  # From inference
         # GPU should be None (not inferred, not in cluster profile)
-        assert result.gpu is None
+        assert result.gpu.value is None

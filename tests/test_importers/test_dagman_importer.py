@@ -4,6 +4,7 @@ import pytest
 from textwrap import dedent
 from wf2wf.importers import dagman as dag_importer
 from pathlib import Path
+from wf2wf.core import EnvironmentSpecificValue
 
 
 class TestDAGManImporter:
@@ -39,16 +40,16 @@ class TestDAGManImporter:
 
         # Test specific task properties
         prep_task = wf.tasks["prepare_data"]
-        assert prep_task.retry == 2
-        assert prep_task.resources.mem_mb == 2048  # 2GB in MB
-        assert prep_task.resources.disk_mb == 1024  # 1GB in MB
+        assert prep_task.retry_count.get_value_for("distributed_computing") == 2
+        assert prep_task.cpu.get_value_for("distributed_computing") == 2048  # 2GB in MB
+        assert prep_task.disk_mb.get_value_for("distributed_computing") == 1024  # 1GB in MB
 
         analyze_task = wf.tasks["analyze_data"]
-        assert analyze_task.retry == 1
-        assert analyze_task.priority == 10
-        assert analyze_task.resources.cpu == 4
-        assert analyze_task.resources.mem_mb == 8192  # 8GB in MB
-        assert analyze_task.environment.container == "docker://python:3.9-slim"
+        assert analyze_task.retry_count.get_value_for("distributed_computing") == 1
+        assert analyze_task.priority.get_value_for("distributed_computing") == 10
+        assert analyze_task.cpu.get_value_for("distributed_computing") == 4
+        assert analyze_task.mem_mb.get_value_for("distributed_computing") == 8192  # 8GB in MB
+        assert analyze_task.container.get_value_for("distributed_computing") == "docker://python:3.9-slim"
 
         # Save converted workflow to test output
         output_file = persistent_test_output / "demo_workflow.json"
@@ -95,17 +96,17 @@ queue
 
         # Check task1 properties
         task1 = wf.tasks["task1"]
-        assert task1.retry == 3
-        assert "dag_vars" in task1.meta
-        assert task1.meta["dag_vars"]["input"] == "data.txt"
+        assert task1.retry_count.get_value_for("distributed_computing") == 3
+        assert "dag_vars" in task1.metadata.format_specific
+        assert task1.metadata.format_specific["dag_vars"]["input"] == "data.txt"
 
         # Check task2 properties
         task2 = wf.tasks["task2"]
-        assert task2.priority == -5
+        assert task2.priority.get_value_for("distributed_computing") == -5
 
         # Check environment variables
-        assert "dag_variables" in wf.meta
-        assert wf.meta["dag_variables"]["PYTHONPATH"] == "/opt/tools"
+        assert "dag_variables" in wf.metadata.format_specific
+        assert wf.metadata.format_specific["dag_variables"]["PYTHONPATH"] == "/opt/tools"
 
     def test_submit_file_parsing(self, persistent_test_output):
         """Test submit file parsing with various features."""
@@ -155,17 +156,18 @@ JOB gpu_job gpu_job.sub
         task = wf.tasks["gpu_job"]
 
         # Check resource specifications
-        assert task.resources.cpu == 8
-        assert task.resources.mem_mb == 16384  # 16GB in MB
-        assert task.resources.disk_mb == 10240  # 10GB in MB
-        assert task.resources.gpu == 2
+        assert task.cpu.get_value_for("distributed_computing") == 8
+        assert task.mem_mb.get_value_for("distributed_computing") == 16384  # 16GB in MB
+        assert task.disk_mb.get_value_for("distributed_computing") == 10240  # 10GB in MB
+        assert task.gpu.get_value_for("distributed_computing") == 2
 
         # Check container
-        assert task.environment.container == "docker://tensorflow/tensorflow:latest"
+        assert task.container.get_value_for("distributed_computing") == "docker://tensorflow/tensorflow:latest"
 
         # Check environment variables
-        assert "OMP_NUM_THREADS" in task.environment.env_vars
-        assert task.environment.env_vars["OMP_NUM_THREADS"] == "8"
+        env_vars = task.env_vars.get_value_for("distributed_computing") or {}
+        assert "OMP_NUM_THREADS" in env_vars
+        assert env_vars["OMP_NUM_THREADS"] == "8"
 
         # Check file transfers - now using ParameterSpec objects
         input_ids = [inp.id if hasattr(inp, 'id') else inp for inp in task.inputs]
@@ -185,8 +187,8 @@ JOB gpu_job gpu_job.sub
                 assert out.transfer_mode == "always"
 
         # Check metadata
-        assert task.meta["requirements"] == "(Target.HasGPU == True)"
-        assert task.meta["condor_log"] == "job.log"
+        assert task.metadata.format_specific["requirements"] == "(Target.HasGPU == True)"
+        assert task.metadata.format_specific["condor_log"] == "job.log"
 
     def test_memory_unit_parsing(self):
         """Test parsing of different memory units."""
@@ -207,7 +209,7 @@ JOB gpu_job gpu_job.sub
         """Test error handling for invalid files."""
         # Test non-existent file
         with pytest.raises(FileNotFoundError):
-            dag_importer.to_workflow("nonexistent.dag")
+            dag_importer.to_workflow(Path("nonexistent.dag"))
 
         # Test empty DAG file
         empty_dag = persistent_test_output / "empty.dag"
@@ -255,10 +257,10 @@ class TestDAGManImporterInlineSubmit:
 
         # Check task properties
         task = wf.tasks["simple_task"]
-        assert task.resources.cpu == 2
-        assert task.resources.mem_mb == 4096
-        assert task.resources.disk_mb == 5120
-        assert task.meta.get("universe") == "vanilla"
+        assert task.cpu.get_value_for("distributed_computing") == 2
+        assert task.mem_mb.get_value_for("distributed_computing") == 4096
+        assert task.disk_mb.get_value_for("distributed_computing") == 5120
+        assert task.metadata.format_specific.get("universe") == "vanilla"
 
     def test_import_inline_submit_with_custom_attributes(self, persistent_test_output):
         """Test importing inline submit descriptions with custom HTCondor attributes."""
@@ -282,14 +284,17 @@ class TestDAGManImporterInlineSubmit:
         wf = dag_importer.to_workflow(dag_path)
 
         task = wf.tasks["gpu_task"]
-        assert task.resources.cpu == 4
-        assert task.resources.mem_mb == 8192
-        assert task.resources.gpu == 2
+        assert task.cpu.get_value_for("distributed_computing") == 4
+        assert task.mem_mb.get_value_for("distributed_computing") == 8192
+        assert task.gpu.get_value_for("distributed_computing") == 2
 
-        # Check custom attributes - requirements goes to meta, others to resources.extra
-        assert task.meta.get("requirements") == "(Memory > 8000) && (HasGPU == True)"
-        assert task.resources.extra["+wantgpulab"] == "true"
-        assert task.resources.extra["+projectname"] == "Special Project"
+        # Check custom attributes - requirements goes to meta, others to extra
+        assert task.metadata.format_specific["requirements"] == "(Memory > 8000) && (HasGPU == True)"
+        # Note: extra attributes are now stored in task.extra
+        extra_attrs = task.extra.get("+wantgpulab", EnvironmentSpecificValue()).get_value_for("distributed_computing")
+        assert extra_attrs == "true"
+        extra_attrs = task.extra.get("+projectname", EnvironmentSpecificValue()).get_value_for("distributed_computing")
+        assert extra_attrs == "Special Project"
 
     def test_import_inline_submit_container_types(self, persistent_test_output):
         """Test importing inline submit descriptions with different container types."""
@@ -320,13 +325,13 @@ class TestDAGManImporterInlineSubmit:
 
         # Check Docker task
         docker_task = wf.tasks["docker_task"]
-        assert docker_task.environment.container == "docker://python:3.9"
-        assert docker_task.meta.get("universe") == "docker"
+        assert docker_task.container.get_value_for("distributed_computing") == "docker://python:3.9"
+        assert docker_task.metadata.format_specific["universe"] == "docker"
 
         # Check Singularity task
         singularity_task = wf.tasks["singularity_task"]
-        assert singularity_task.environment.container == "/path/to/container.sif"
-        assert singularity_task.meta.get("universe") == "vanilla"
+        assert singularity_task.container.get_value_for("distributed_computing") == "/path/to/container.sif"
+        assert singularity_task.metadata.format_specific["universe"] == "vanilla"
 
     def test_import_inline_submit_with_retry_priority(self, persistent_test_output):
         """Test importing inline submit descriptions with retry and priority settings."""
@@ -349,8 +354,8 @@ class TestDAGManImporterInlineSubmit:
         wf = dag_importer.to_workflow(dag_path)
 
         task = wf.tasks["important_task"]
-        assert task.retry == 3
-        assert task.priority == 20
+        assert task.retry_count.get_value_for("distributed_computing") == 3
+        assert task.priority.get_value_for("distributed_computing") == 20
 
     def test_import_mixed_inline_and_external_submit(self, persistent_test_output):
         """Test importing DAG files with mixed inline and external submit descriptions."""
@@ -390,12 +395,12 @@ class TestDAGManImporterInlineSubmit:
         assert len(wf.tasks) == 2
 
         inline_task = wf.tasks["inline_task"]
-        assert inline_task.resources.cpu == 2
-        assert inline_task.resources.mem_mb == 4096
+        assert inline_task.cpu.get_value_for("distributed_computing") == 2
+        assert inline_task.mem_mb.get_value_for("distributed_computing") == 4096
 
         external_task = wf.tasks["external_task"]
-        assert external_task.resources.cpu == 1
-        assert external_task.resources.mem_mb == 2048
+        assert external_task.cpu.get_value_for("distributed_computing") == 1
+        assert external_task.mem_mb.get_value_for("distributed_computing") == 2048
 
         # Check dependency
         assert len(wf.edges) == 1
@@ -442,15 +447,15 @@ class TestDAGManImporterInlineSubmit:
         wf = dag_importer.to_workflow(dag_path)
 
         task = wf.tasks["complex_task"]
-        assert task.resources.cpu == 4
-        assert task.resources.mem_mb == 8192
-        assert task.resources.disk_mb == 10240
-        assert task.resources.gpu == 2
-        assert task.environment.container == "docker://tensorflow/tensorflow:latest-gpu"
+        assert task.cpu.get_value_for("distributed_computing") == 4
+        assert task.mem_mb.get_value_for("distributed_computing") == 8192
+        assert task.disk_mb.get_value_for("distributed_computing") == 10240
+        assert task.gpu.get_value_for("distributed_computing") == 2
+        assert task.container.get_value_for("distributed_computing") == "docker://tensorflow/tensorflow:latest-gpu"
 
         # Check custom attributes
-        assert task.meta.get("requirements") == "(Memory > 8000) && (HasGPU == True)"
-        assert task.resources.extra["+wantgpulab"] == "true"
+        assert task.metadata.format_specific["requirements"] == "(Memory > 8000) && (HasGPU == True)"
+        assert task.extra["+wantgpulab"].get_value_for("distributed_computing") == "true"
 
     def test_import_inline_submit_error_handling(self, persistent_test_output):
         """Test error handling for malformed inline submit descriptions."""
@@ -471,7 +476,7 @@ class TestDAGManImporterInlineSubmit:
         # Should have created the task with what was parsed
         assert "bad_task" in wf.tasks
         task = wf.tasks["bad_task"]
-        assert task.resources.cpu == 2
+        assert task.cpu.get_value_for("distributed_computing") == 2
 
     def test_import_inline_submit_empty_content(self):
         """Test importing DAGMan file with empty inline submit content."""
@@ -489,11 +494,11 @@ PARENT step1 CHILD step2
             assert "step1" in wf.tasks
             assert "step2" in wf.tasks
             
-            # Check that resources are None (not specified)
-            assert wf.tasks["step1"].resources.cpu is None
-            assert wf.tasks["step1"].resources.mem_mb is None
-            assert wf.tasks["step2"].resources.cpu is None
-            assert wf.tasks["step2"].resources.mem_mb is None
+            # Check that resources are default (not specified)
+            assert wf.tasks["step1"].cpu.get_value_for("distributed_computing") == 1
+            assert wf.tasks["step1"].mem_mb.get_value_for("distributed_computing") == 4096
+            assert wf.tasks["step2"].cpu.get_value_for("distributed_computing") == 1
+            assert wf.tasks["step2"].mem_mb.get_value_for("distributed_computing") == 4096
 
         finally:
             dag_file.unlink(missing_ok=True)
@@ -525,8 +530,8 @@ PARENT step1 CHILD step2
         # Check metadata preservation
         assert wf.name == "metadata_test"
         assert wf.version == "2.5"
-        assert wf.meta["description"] == "Test workflow with metadata"
-        assert wf.meta["author"] == "wf2wf"
+        assert wf.metadata.format_specific["workflow_metadata"]["description"] == "Test workflow with metadata"
+        assert wf.metadata.format_specific["workflow_metadata"]["author"] == "wf2wf"
 
 
 class TestDAGManImporterCompatibility:
@@ -589,11 +594,11 @@ class TestDAGManImporterCompatibility:
         task_inline = wf_inline.tasks["test_task"]
 
         # Core attributes should match
-        assert task_external.resources.cpu == task_inline.resources.cpu == 4
-        assert task_external.resources.mem_mb == task_inline.resources.mem_mb == 8192
-        assert task_external.resources.gpu == task_inline.resources.gpu == 1
+        assert task_external.cpu.get_value_for("distributed_computing") == task_inline.cpu.get_value_for("distributed_computing") == 4
+        assert task_external.mem_mb.get_value_for("distributed_computing") == task_inline.mem_mb.get_value_for("distributed_computing") == 8192
+        assert task_external.gpu.get_value_for("distributed_computing") == task_inline.gpu.get_value_for("distributed_computing") == 1
         assert (
-            task_external.environment.container
-            == task_inline.environment.container
+            task_external.container.get_value_for("distributed_computing")
+            == task_inline.container.get_value_for("distributed_computing")
             == "docker://tensorflow/tensorflow:latest"
         )

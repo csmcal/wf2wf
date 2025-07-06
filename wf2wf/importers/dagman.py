@@ -12,11 +12,143 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union
 
-from wf2wf.core import Workflow, Task, ResourceSpec, EnvironmentSpec
+from wf2wf.core import Workflow, Task, EnvironmentSpecificValue, MetadataSpec
+from wf2wf.importers.base import BaseImporter
+
+
+class DAGManImporter(BaseImporter):
+    """DAGMan importer using shared base infrastructure."""
+    
+    def _parse_source(self, path: Path, **opts: Any) -> Dict[str, Any]:
+        """Parse DAGMan file and extract all information."""
+        verbose = opts.get("verbose", False)
+        debug = opts.get("debug", False)
+        
+        if not path.exists():
+            raise FileNotFoundError(f"DAG file not found: {path}")
+            
+        if verbose:
+            print(f"Parsing DAGMan file: {path}")
+            
+        # Parse the DAG file
+        dag_content = path.read_text()
+        jobs, dependencies, variables, metadata = _parse_dag_file(dag_content, debug=debug)
+        
+        if not jobs:
+            raise ValueError("No jobs found in DAG file")
+            
+        return {
+            "jobs": jobs,
+            "dependencies": dependencies,
+            "variables": variables,
+            "metadata": metadata,
+            "dag_path": path,
+            "dag_dir": path.parent
+        }
+    
+    def _create_basic_workflow(self, parsed_data: Dict[str, Any]) -> Workflow:
+        """Create basic workflow from parsed DAGMan data."""
+        metadata = parsed_data["metadata"]
+        dag_path = parsed_data["dag_path"]
+        
+        # Use metadata workflow name if available, otherwise use filename
+        workflow_name = metadata.get("original_workflow_name", dag_path.stem)
+        
+        # Create workflow with metadata
+        wf = Workflow(
+            name=workflow_name, 
+            version=metadata.get("original_workflow_version", "1.0"),
+            execution_model=EnvironmentSpecificValue("distributed_computing", ["shared_filesystem"])
+        )
+        
+        # Restore workflow metadata if available
+        if metadata.get("workflow_metadata"):
+            if wf.metadata is None:
+                wf.metadata = MetadataSpec()
+            wf.metadata.add_format_specific("workflow_metadata", metadata["workflow_metadata"])
+        
+        return wf
+
+    def import_workflow(self, path: Path, **opts) -> Workflow:
+        """Main import method with shared workflow."""
+        parsed_data = self._parse_source(path, **opts)
+        workflow = self._create_basic_workflow(parsed_data)
+        tasks = self._extract_tasks(parsed_data)
+        for task in tasks:
+            workflow.add_task(task)
+        edges = self._extract_edges(parsed_data)
+        for parent, child in edges:
+            workflow.add_edge(parent, child)
+        self._extract_environment_specific_values(parsed_data, workflow)
+        return workflow
+    
+    def _extract_tasks(self, parsed_data: Dict[str, Any]) -> List[Task]:
+        """Extract tasks from parsed DAGMan data."""
+        jobs = parsed_data["jobs"]
+        dag_dir = parsed_data["dag_dir"]
+        verbose = self.verbose
+        
+        tasks = []
+        submit_files = {}  # Cache parsed submit files
+        
+        for job_name, job_info in jobs.items():
+            submit_info = {}
+            
+            if job_info.get("inline_submit"):
+                # Parse inline submit description
+                submit_info = _parse_submit_content(job_info["inline_submit"], debug=False)
+                if verbose:
+                    print(f"  Parsed inline submit for {job_name}")
+            elif job_info.get("submit_file"):
+                # Parse external submit file
+                submit_file = Path(dag_dir / job_info["submit_file"])
+                
+                # Parse submit file if not already cached
+                if str(submit_file) not in submit_files:
+                    if submit_file.exists():
+                        submit_files[str(submit_file)] = _parse_submit_file(submit_file, debug=False)
+                    else:
+                        if verbose:
+                            print(f"WARNING: Submit file not found: {submit_file}")
+                        submit_files[str(submit_file)] = {}
+                
+                submit_info = submit_files[str(submit_file)]
+            else:
+                if verbose:
+                    print(f"WARNING: No submit information found for job {job_name}")
+            
+            # Create task from job info
+            task = _create_task_from_job(job_name, job_info, submit_info, dag_dir)
+            tasks.append(task)
+            
+            if verbose:
+                print(f"  Added task: {task.id}")
+                
+        return tasks
+    
+    def _extract_edges(self, parsed_data: Dict[str, Any]) -> List[Tuple[str, str]]:
+        """Extract edges from parsed DAGMan data."""
+        return parsed_data["dependencies"]
+    
+    def _extract_environment_specific_values(self, parsed_data: Dict[str, Any], workflow: Workflow) -> None:
+        """Extract environment-specific values from parsed data."""
+        # DAGMan is inherently for distributed computing, so set execution model
+        workflow.execution_model.set_for_environment("distributed_computing", "distributed_computing")
+        
+        # Store DAG variables in workflow metadata
+        variables = parsed_data.get("variables", {})
+        if variables:
+            if workflow.metadata is None:
+                workflow.metadata = MetadataSpec()
+            workflow.metadata.add_format_specific("dag_variables", variables)
+    
+    def _get_source_format(self) -> str:
+        """Get the source format name."""
+        return "dagman"
 
 
 def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
-    """Convert DAGMan file at *path* into a Workflow IR object.
+    """Convert DAGMan file at *path* into a Workflow IR object using shared infrastructure.
 
     Parameters
     ----------
@@ -28,101 +160,19 @@ def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
         Enable verbose output (default: False).
     debug : bool, optional
         Enable debug output (default: False).
+    interactive : bool, optional
+        Enable interactive mode (default: False).
 
     Returns
     -------
     Workflow
         Populated IR instance.
     """
-    dag_path = Path(path)
-    if not dag_path.exists():
-        raise FileNotFoundError(f"DAG file not found: {dag_path}")
-
-    verbose = opts.get("verbose", False)
-    debug = opts.get("debug", False)
-    workflow_name = opts.get("name")  # Don't set default here
-
-    if verbose:
-        print(f"Parsing DAGMan file: {dag_path}")
-
-    # Parse the DAG file
-    dag_content = dag_path.read_text()
-    jobs, dependencies, variables, metadata = _parse_dag_file(dag_content, debug=debug)
-
-    if not jobs:
-        raise ValueError("No jobs found in DAG file")
-
-    # Use metadata workflow name if available, otherwise use provided name or filename
-    if not workflow_name:
-        workflow_name = metadata.get("original_workflow_name", dag_path.stem)
-
-    # Create workflow with metadata
-    wf = Workflow(
-        name=workflow_name, version=metadata.get("original_workflow_version", "1.0")
+    importer = DAGManImporter(
+        interactive=opts.get("interactive", False),
+        verbose=opts.get("verbose", False)
     )
-
-    # Restore workflow metadata if available
-    if metadata.get("workflow_metadata"):
-        wf.meta.update(metadata["workflow_metadata"])
-
-    # Add jobs as tasks
-    submit_files = {}  # Cache parsed submit files
-
-    for job_name, job_info in jobs.items():
-        submit_info = {}
-
-        if job_info.get("inline_submit"):
-            # Parse inline submit description
-            submit_info = _parse_submit_content(job_info["inline_submit"], debug=debug)
-            if verbose:
-                print(f"  Parsed inline submit for {job_name}")
-        elif job_info.get("submit_file"):
-            # Parse external submit file
-            submit_file = Path(dag_path.parent / job_info["submit_file"])
-
-            # Parse submit file if not already cached
-            if str(submit_file) not in submit_files:
-                if submit_file.exists():
-                    submit_files[str(submit_file)] = _parse_submit_file(
-                        submit_file, debug=debug
-                    )
-                else:
-                    if verbose:
-                        print(f"WARNING: Submit file not found: {submit_file}")
-                    submit_files[str(submit_file)] = {}
-
-            submit_info = submit_files[str(submit_file)]
-        else:
-            if verbose:
-                print(f"WARNING: No submit information found for job {job_name}")
-
-        # Create task from job info
-        task = _create_task_from_job(job_name, job_info, submit_info, dag_path.parent)
-        wf.add_task(task)
-
-        if verbose:
-            print(f"  Added task: {task.id}")
-
-    # Add dependencies as edges
-    for parent, child in dependencies:
-        try:
-            wf.add_edge(parent, child)
-            if verbose:
-                print(f"  Added edge: {parent} -> {child}")
-        except KeyError as e:
-            if verbose:
-                print(f"WARNING: Skipping invalid dependency {parent} -> {child}: {e}")
-
-    # Store DAG variables in workflow meta
-    if variables:
-        wf.meta["dag_variables"] = variables
-
-    if verbose:
-        print(
-            f"Created workflow '{wf.name}' with {len(wf.tasks)} tasks and {len(wf.edges)} dependencies"
-        )
-
-    return wf
+    return importer.import_workflow(path, **opts)
 
 
 def _parse_dag_file(
@@ -316,8 +366,8 @@ def _parse_submit_content(content: str, debug: bool = False) -> Dict[str, Any]:
         "output": [],
         "error": None,
         "log": None,
-        "resources": ResourceSpec(),
-        "environment": EnvironmentSpec(),
+        "resources": {},
+        "environment": {},
         "universe": "vanilla",
         "requirements": None,
         "raw_submit": {},
@@ -358,40 +408,40 @@ def _parse_submit_content(content: str, debug: bool = False) -> Dict[str, Any]:
         elif key == "requirements":
             submit_info["requirements"] = value
         elif key == "docker_image":
-            submit_info["environment"].container = f"docker://{value}"
+            submit_info["environment"]["container"] = f"docker://{value}"
         elif key.startswith("+singularityimage"):
-            submit_info["environment"].container = value
+            submit_info["environment"]["container"] = value
         elif key.startswith("request_"):
             # Resource requests
             if key == "request_cpus":
                 try:
-                    submit_info["resources"].cpu = int(value)
+                    submit_info["resources"]["cpu"] = int(value)
                 except ValueError:
                     if debug:
                         print(f"DEBUG: Could not parse CPU value: {value}")
             elif key == "request_memory":
                 try:
-                    submit_info["resources"].mem_mb = _parse_memory_value(value)
+                    submit_info["resources"]["mem_mb"] = _parse_memory_value(value)
                 except ValueError:
                     if debug:
                         print(f"DEBUG: Could not parse memory value: {value}")
             elif key == "request_disk":
                 try:
-                    submit_info["resources"].disk_mb = _parse_memory_value(value)
+                    submit_info["resources"]["disk_mb"] = _parse_memory_value(value)
                 except ValueError:
                     if debug:
                         print(f"DEBUG: Could not parse disk value: {value}")
             elif key == "request_gpus":
                 try:
-                    submit_info["resources"].gpu = int(value)
+                    submit_info["resources"]["gpu"] = int(value)
                 except ValueError:
                     if debug:
                         print(f"DEBUG: Could not parse GPU value: {value}")
         else:
             # Store other attributes in resources.extra
-            if not submit_info["resources"].extra:
-                submit_info["resources"].extra = {}
-            submit_info["resources"].extra[key] = value
+            if not submit_info["resources"]:
+                submit_info["resources"] = {}
+            submit_info["resources"][key] = value
 
     return submit_info
 
@@ -406,8 +456,8 @@ def _parse_submit_file(submit_path: Path, debug: bool = False) -> Dict[str, Any]
         "output": [],
         "error": None,
         "log": None,
-        "resources": ResourceSpec(),
-        "environment": EnvironmentSpec(),
+        "resources": {},
+        "environment": {},
         "universe": "vanilla",
         "requirements": None,
         "raw_submit": {},
@@ -456,20 +506,20 @@ def _parse_submit_file(submit_path: Path, debug: bool = False) -> Dict[str, Any]
 
         # Resource requests
         elif key == "request_cpus":
-            submit_info["resources"].cpu = int(float(value))
+            submit_info["resources"]["cpu"] = int(float(value))
         elif key == "request_memory":
             # Handle memory units (MB, GB, etc.)
-            submit_info["resources"].mem_mb = _parse_memory_value(value)
+            submit_info["resources"]["mem_mb"] = _parse_memory_value(value)
         elif key == "request_disk":
-            submit_info["resources"].disk_mb = _parse_memory_value(value)
+            submit_info["resources"]["disk_mb"] = _parse_memory_value(value)
         elif key == "request_gpus":
-            submit_info["resources"].gpu = int(float(value))
+            submit_info["resources"]["gpu"] = int(float(value))
 
         # Container universe
         elif key == "container_image":
-            submit_info["environment"].container = value
+            submit_info["environment"]["container"] = value
         elif key == "docker_image":
-            submit_info["environment"].container = f"docker://{value}"
+            submit_info["environment"]["container"] = f"docker://{value}"
 
         # Transfer files (approximate input/output detection)
         elif key == "transfer_input_files":
@@ -495,14 +545,14 @@ def _parse_submit_file(submit_path: Path, debug: bool = False) -> Dict[str, Any]
                 if "=" in env_pair:
                     env_key, env_val = env_pair.split("=", 1)
                     env_vars[env_key] = env_val
-            submit_info["environment"].env_vars = env_vars
+            submit_info["environment"]["env_vars"] = env_vars
 
     if debug:
         print(f"DEBUG: Parsed submit file {submit_path}:")
         print(f"  executable: {submit_info['executable']}")
         print(f"  arguments: {submit_info['arguments']}")
         print(
-            f"  resources: cpu={submit_info['resources'].cpu}, mem={submit_info['resources'].mem_mb}MB"
+            f"  resources: cpu={submit_info['resources'].get('cpu')}, mem={submit_info['resources'].get('mem_mb')}MB"
         )
 
     return submit_info
@@ -566,34 +616,66 @@ def _create_task_from_job(
     if not command:
         command = "echo 'No command specified'"
 
-    # Create task
-    task = Task(
-        id=job_name,
-        command=command,
-        script=script,
-        inputs=submit_info.get("input", []),
-        outputs=submit_info.get("output", []),
-        resources=submit_info.get("resources", ResourceSpec()),
-        environment=submit_info.get("environment", EnvironmentSpec()),
-        retry=job_info.get("retry", 0),
-        priority=job_info.get("priority", 0),
-    )
+    # Create task with environment-specific values
+    task = Task(id=job_name)
+    
+    # Set command and script
+    if command:
+        task.command.set_for_environment(command, "distributed_computing")
+    if script:
+        task.script.set_for_environment(script, "distributed_computing")
+    
+    # Set inputs and outputs
+    task.inputs = submit_info.get("input", [])
+    task.outputs = submit_info.get("output", [])
+    
+    # Set resource values from submit info
+    if submit_info.get("resources"):
+        resources = submit_info["resources"]
+        if "cpu" in resources:
+            task.cpu.set_for_environment(resources["cpu"], "distributed_computing")
+        if "mem_mb" in resources:
+            task.mem_mb.set_for_environment(resources["mem_mb"], "distributed_computing")
+        if "disk_mb" in resources:
+            task.disk_mb.set_for_environment(resources["disk_mb"], "distributed_computing")
+        if "gpu" in resources:
+            task.gpu.set_for_environment(resources["gpu"], "distributed_computing")
+    
+    # Set environment values
+    if submit_info.get("environment"):
+        env = submit_info["environment"]
+        if "container" in env:
+            task.container.set_for_environment(env["container"], "distributed_computing")
+        if "env_vars" in env:
+            task.env_vars.set_for_environment(env["env_vars"], "distributed_computing")
+    
+    # Set retry and priority
+    retry_count = job_info.get("retry", 0)
+    if retry_count > 0:
+        task.retry_count.set_for_environment(retry_count, "distributed_computing")
+    
+    priority = job_info.get("priority", 0)
+    if priority != 0:
+        task.priority.set_for_environment(priority, "distributed_computing")
 
     # Add DAGMan-specific metadata
-    task.meta.update(
-        {
-            "submit_file": job_info.get("submit_file"),
-            "universe": submit_info.get("universe", "vanilla"),
-            "dag_vars": job_info.get("vars", {}),
-            "requirements": submit_info.get("requirements"),
-            "condor_log": submit_info.get("log"),
-            "condor_error": submit_info.get("error"),
-        }
-    )
+    if task.metadata is None:
+        task.metadata = MetadataSpec()
+    
+    task.metadata.add_format_specific("submit_file", job_info.get("submit_file"))
+    task.metadata.add_format_specific("universe", submit_info.get("universe", "vanilla"))
+    task.metadata.add_format_specific("dag_vars", job_info.get("vars", {}))
+    task.metadata.add_format_specific("requirements", submit_info.get("requirements"))
+    task.metadata.add_format_specific("condor_log", submit_info.get("log"))
+    task.metadata.add_format_specific("condor_error", submit_info.get("error"))
 
     # Add any extra submit file attributes
     if submit_info.get("raw_submit"):
-        task.meta["raw_condor_submit"] = submit_info.get("raw_submit")
+        task.metadata.add_format_specific("raw_condor_submit", submit_info["raw_submit"])
+        # Store custom attributes (e.g., +wantgpulab) in task.extra
+        for k, v in submit_info["raw_submit"].items():
+            if k.startswith("+"):
+                task.extra[k] = EnvironmentSpecificValue(v, ["distributed_computing"])
 
     return task
 

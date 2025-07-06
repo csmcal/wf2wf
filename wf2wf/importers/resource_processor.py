@@ -72,16 +72,21 @@ def process_workflow_resources(
             inferred = infer_resources_from_command(task.command, task.script)
             
             # Only apply inferred values if current values are missing (None)
-            if task.resources.cpu is None and inferred.cpu is not None:
-                task.resources.cpu = inferred.cpu
-            if task.resources.mem_mb is None and inferred.mem_mb is not None:
-                task.resources.mem_mb = inferred.mem_mb
-            if task.resources.disk_mb is None and inferred.disk_mb is not None:
-                task.resources.disk_mb = inferred.disk_mb
-            if task.resources.gpu is None and inferred.gpu is not None:
-                task.resources.gpu = inferred.gpu
-            if task.resources.gpu_mem_mb is None and inferred.gpu_mem_mb is not None:
-                task.resources.gpu_mem_mb = inferred.gpu_mem_mb
+            if task.resources.cpu.value is None and inferred.cpu.value is not None:
+                task.resources.cpu.value = inferred.cpu.value
+                task.resources.cpu.source_method = "inferred"
+            if task.resources.mem_mb.value is None and inferred.mem_mb.value is not None:
+                task.resources.mem_mb.value = inferred.mem_mb.value
+                task.resources.mem_mb.source_method = "inferred"
+            if task.resources.disk_mb.value is None and inferred.disk_mb.value is not None:
+                task.resources.disk_mb.value = inferred.disk_mb.value
+                task.resources.disk_mb.source_method = "inferred"
+            if task.resources.gpu.value is None and inferred.gpu.value is not None:
+                task.resources.gpu.value = inferred.gpu.value
+                task.resources.gpu.source_method = "inferred"
+            if task.resources.gpu_mem_mb.value is None and inferred.gpu_mem_mb.value is not None:
+                task.resources.gpu_mem_mb.value = inferred.gpu_mem_mb.value
+                task.resources.gpu_mem_mb.source_method = "inferred"
     
     # Apply resource profile if specified
     if resource_profile:
@@ -90,6 +95,9 @@ def process_workflow_resources(
         
         for task in workflow.tasks.values():
             task.resources = apply_resource_profile(task.resources, resource_profile)
+            # Mark resources applied from profile
+            if task.resources.source_method == "explicit":
+                task.resources.source_method = "template"
     
     # Validate resources if requested
     if validate_resources:
@@ -133,11 +141,11 @@ def _interactive_resource_prompting(
     # Check for missing critical resources
     missing_resources = []
     for task in workflow.tasks.values():
-        if task.resources.cpu is None:
+        if task.resources.cpu.value is None:
             missing_resources.append(f"{task.id} (CPU)")
-        if task.resources.mem_mb is None:
+        if task.resources.mem_mb.value is None:
             missing_resources.append(f"{task.id} (memory)")
-        if task.resources.disk_mb is None:
+        if task.resources.disk_mb.value is None:
             missing_resources.append(f"{task.id} (disk)")
         # Note: Time is not typically a resource specification in workflow engines
     
@@ -151,12 +159,15 @@ def _interactive_resource_prompting(
             # Apply sensible defaults based on target environment
             defaults = _get_default_resources(target_environment)
             for task in workflow.tasks.values():
-                if task.resources.cpu is None:
-                    task.resources.cpu = defaults["cpu"]
-                if task.resources.mem_mb is None:
-                    task.resources.mem_mb = defaults["memory"]
-                if task.resources.disk_mb is None:
-                    task.resources.disk_mb = defaults["disk"]
+                if task.resources.cpu.value is None:
+                    task.resources.cpu.value = defaults["cpu"]
+                    task.resources.cpu.source_method = "prompted"
+                if task.resources.mem_mb.value is None:
+                    task.resources.mem_mb.value = defaults["memory"]
+                    task.resources.mem_mb.source_method = "prompted"
+                if task.resources.disk_mb.value is None:
+                    task.resources.disk_mb.value = defaults["disk"]
+                    task.resources.disk_mb.source_method = "prompted"
             
             if verbose:
                 print(f"  Applied default resources: CPU={defaults['cpu']}, "
@@ -187,8 +198,8 @@ def _suggest_resource_profiles(
     
     tasks_without_resources = []
     for task in workflow.tasks.values():
-        if (task.resources.cpu is None or task.resources.mem_mb is None or 
-            task.resources.disk_mb is None):
+        if (task.resources.cpu.value is None or task.resources.mem_mb.value is None or 
+            task.resources.disk_mb.value is None):
             tasks_without_resources.append(task.id)
         # Note: Time is not typically a resource specification in workflow engines
     

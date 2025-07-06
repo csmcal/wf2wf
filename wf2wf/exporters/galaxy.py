@@ -1,377 +1,400 @@
 """wf2wf.exporters.galaxy – Workflow IR ➜ Galaxy
 
 This module exports wf2wf intermediate representation workflows to
-Galaxy workflow JSON format (.ga files).
-
-Features supported:
-- Galaxy workflow JSON format
-- Tool steps and data input steps
-- Workflow connections and dependencies
-- Tool parameters and configurations
-- Workflow annotations and metadata
+Galaxy workflow format with enhanced features and tool integration.
 """
 
+from __future__ import annotations
+
 import json
-import uuid
+import os
 from pathlib import Path
-from typing import Any, Dict, Union
+from typing import Any, Dict, List, Optional, Union
 
-from wf2wf.core import Workflow, Task, ParameterSpec
-
-from wf2wf.loss import (
-    reset as loss_reset,
-    write as loss_write,
-    record as loss_record,
-    prepare as loss_prepare,
-    as_list as loss_as_list,
-    compute_checksum,
+from wf2wf.core import (
+    Workflow,
+    Task,
+    ParameterSpec,
+    EnvironmentSpecificValue,
 )
+from wf2wf.exporters.base import BaseExporter
 
 
-def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any) -> None:
-    """Export a wf2wf workflow to Galaxy workflow format.
+class GalaxyExporter(BaseExporter):
+    """Galaxy exporter using shared infrastructure."""
+    
+    def _get_target_format(self) -> str:
+        """Get the target format name."""
+        return "galaxy"
+    
+    def _generate_output(self, workflow: Workflow, output_path: Path, **opts: Any) -> None:
+        """Generate Galaxy output."""
+        preserve_metadata = opts.get("preserve_metadata", True)
+        add_tool_configs = opts.get("add_tool_configs", True)
+        tool_config_dir = opts.get("tool_config_dir", "tool_configs")
+        workflow_format = opts.get("workflow_format", "json")  # json or yaml
 
-    Args:
-        wf: The workflow to export
-        out_file: Path for the output Galaxy workflow file (.ga)
-        **opts: Additional options:
-            - galaxy_version: str = "21.09" - Galaxy version compatibility
-            - preserve_metadata: bool = True - Preserve metadata
-            - verbose: bool = False - Enable verbose output
-
-    Raises:
-        RuntimeError: If the workflow cannot be exported
-    """
-    # Prepare loss handling
-    loss_prepare(wf.loss_map)
-    loss_reset()
-
-    output_path = Path(out_file).resolve()
-    galaxy_version = opts.get("galaxy_version", "21.09")
-    preserve_metadata = opts.get("preserve_metadata", True)
-    verbose = opts.get("verbose", False)
-
-    if verbose:
-        print(f"Exporting workflow '{wf.name}' to Galaxy format")
-
-    try:
-        # Record unsupported features
-
-        if wf.intent:
-            loss_record(
-                "/intent",
-                "intent",
-                wf.intent,
-                "Galaxy workflow schema lacks intent field",
-                "user",
-            )
-
-        for task in wf.tasks.values():
-            if task.scatter:
-                loss_record(
-                    f"/tasks/{task.id}/scatter",
-                    "scatter",
-                    task.scatter.scatter,
-                    "Galaxy lacks scatter construct",
-                    "user",
-                )
-            if task.when:
-                loss_record(
-                    f"/tasks/{task.id}/when",
-                    "when",
-                    task.when,
-                    "Conditional execution not preserved in Galaxy",
-                    "user",
-                )
-
-        # Create output directory
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Generate Galaxy workflow JSON
-        galaxy_doc = _generate_galaxy_workflow(
-            wf, galaxy_version, preserve_metadata=preserve_metadata, verbose=verbose
-        )
-
-        # Write Galaxy workflow file
-        with open(output_path, "w") as f:
-            json.dump(galaxy_doc, f, indent=2, sort_keys=True)
-
-        if verbose:
-            print(f"Galaxy workflow exported to: {output_path}")
+        if self.verbose:
+            print(f"Exporting workflow '{workflow.name}' to Galaxy format")
 
         try:
-            from wf2wf import report as _rpt
+            # Create output directory
+            output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            _rpt.add_artefact(output_path)
-            _rpt.add_action("Exported Galaxy workflow")
-        except ImportError:
-            pass
-
-        loss_write(
-            output_path.with_suffix(".loss.json"),
-            target_engine="galaxy",
-            source_checksum=compute_checksum(wf),
-        )
-        wf.loss_map = loss_as_list()
-
-    except Exception as e:
-        raise RuntimeError(f"Failed to export Galaxy workflow: {e}")
-
-
-def _generate_galaxy_workflow(
-    wf: Workflow,
-    galaxy_version: str,
-    preserve_metadata: bool = True,
-    verbose: bool = False,
-) -> Dict[str, Any]:
-    """Generate Galaxy workflow JSON document."""
-
-    galaxy_doc = {
-        "a_galaxy_workflow": "true",
-        "annotation": wf.doc or wf.label or "",
-        "format-version": "0.1",
-        "name": wf.name,
-        "steps": {},
-        "tags": [],
-        "uuid": str(uuid.uuid4()),
-        "version": wf.version or "1.0",
-    }
-
-    # Add creator information if available
-    if preserve_metadata and wf.provenance and wf.provenance.authors:
-        galaxy_doc["creator"] = [
-            author.get("name", "Unknown") for author in wf.provenance.authors
-        ]
-
-    # Add license if available
-    if preserve_metadata and wf.provenance and wf.provenance.license:
-        galaxy_doc["license"] = wf.provenance.license
-
-    # Add tags from keywords if available
-    if preserve_metadata and wf.provenance and wf.provenance.keywords:
-        galaxy_doc["tags"] = wf.provenance.keywords
-
-    step_id = 0
-
-    # Add input steps
-    for input_param in wf.inputs:
-        input_step = _generate_galaxy_input_step(input_param, step_id)
-        galaxy_doc["steps"][str(step_id)] = input_step
-        step_id += 1
-
-    # Add tool steps
-    task_to_step_id = {}
-    for task in wf.tasks.values():
-        tool_step = _generate_galaxy_tool_step(
-            task, step_id, wf, task_to_step_id, preserve_metadata=preserve_metadata
-        )
-        galaxy_doc["steps"][str(step_id)] = tool_step
-        task_to_step_id[task.id] = step_id
-        step_id += 1
-
-    return galaxy_doc
-
-
-def _generate_galaxy_input_step(
-    input_param: ParameterSpec, step_id: int
-) -> Dict[str, Any]:
-    """Generate Galaxy data input step."""
-
-    step = {
-        "annotation": input_param.doc or "",
-        "content_id": None,
-        "errors": None,
-        "id": step_id,
-        "input_connections": {},
-        "inputs": [
-            {
-                "description": input_param.doc or input_param.label or "",
-                "name": input_param.id,
-            }
-        ],
-        "label": input_param.label or input_param.id,
-        "name": "Input dataset",
-        "outputs": [
-            {"name": "output", "type": _convert_ir_type_to_galaxy(input_param.type)}
-        ],
-        "position": {"left": 10, "top": 10 + (step_id * 100)},
-        "tool_id": None,
-        "tool_state": json.dumps({"optional": False, "tag": ""}),
-        "tool_version": None,
-        "type": "data_input",
-        "uuid": str(uuid.uuid4()),
-        "workflow_outputs": [],
-    }
-
-    return step
-
-
-def _generate_galaxy_tool_step(
-    task: Task,
-    step_id: int,
-    workflow: Workflow,
-    task_to_step_id: Dict[str, int],
-    preserve_metadata: bool = True,
-) -> Dict[str, Any]:
-    """Generate Galaxy tool step."""
-
-    # Extract tool information
-    tool_id = task.meta.get("galaxy_tool_id", task.id) if task.meta else task.id
-    tool_version = task.meta.get("galaxy_tool_version", "1.0") if task.meta else "1.0"
-
-    # Generate tool state from task inputs
-    tool_state = {}
-    for input_param in task.inputs:
-        if input_param.default is not None:
-            tool_state[input_param.id] = input_param.default
-        else:
-            tool_state[input_param.id] = ""
-
-    # Add Galaxy-specific parameters
-    tool_state["__page__"] = None
-    tool_state["__rerun_remap_job_id__"] = None
-
-    # Generate input connections
-    input_connections = _generate_galaxy_input_connections(
-        task, workflow, task_to_step_id
-    )
-
-    # Generate outputs
-    outputs = []
-    for output_param in task.outputs:
-        outputs.append(
-            {
-                "name": output_param.id,
-                "type": _convert_ir_type_to_galaxy(output_param.type),
-            }
-        )
-
-    # Determine workflow outputs
-    workflow_outputs = []
-    for output_param in workflow.outputs:
-        if any(out.id == output_param.id for out in task.outputs):
-            workflow_outputs.append(
-                {
-                    "output_name": output_param.id,
-                    "label": output_param.label or output_param.id,
-                    "uuid": str(uuid.uuid4()),
-                }
+            # Generate Galaxy workflow
+            galaxy_workflow = _generate_galaxy_workflow_enhanced(
+                workflow,
+                preserve_metadata=preserve_metadata,
+                add_tool_configs=add_tool_configs,
+                verbose=self.verbose,
             )
 
-    step = {
-        "annotation": task.doc or "",
-        "content_id": tool_id,
-        "errors": None,
-        "id": step_id,
-        "input_connections": input_connections,
-        "inputs": [],
-        "label": task.label or task.id,
-        "name": tool_id,
-        "outputs": outputs,
-        "position": {"left": 200 + (step_id * 50), "top": 10 + (step_id * 100)},
-        "tool_id": tool_id,
-        "tool_state": json.dumps(tool_state),
-        "tool_version": tool_version,
-        "type": "tool",
-        "uuid": str(uuid.uuid4()),
-        "workflow_outputs": workflow_outputs,
-    }
+            # Write workflow file
+            if workflow_format.lower() == "yaml":
+                import yaml
+                with output_path.open('w') as f:
+                    yaml.dump(galaxy_workflow, f, default_flow_style=False, indent=2)
+            else:
+                with output_path.open('w') as f:
+                    json.dump(galaxy_workflow, f, indent=2, sort_keys=True)
 
-    # ------------------------------------------------------------------
-    # Container reference (digest or SIF path)
-    # ------------------------------------------------------------------
+            # Generate tool configurations if requested
+            if add_tool_configs and workflow.tasks:
+                tool_config_path = output_path.parent / tool_config_dir
+                tool_config_path.mkdir(parents=True, exist_ok=True)
+                
+                for task in workflow.tasks.values():
+                    tool_config = _generate_tool_config_enhanced(
+                        task,
+                        preserve_metadata=preserve_metadata,
+                        verbose=self.verbose,
+                    )
+                    
+                    tool_file = tool_config_path / f"{task.id}.xml"
+                    with tool_file.open('w') as f:
+                        f.write(tool_config)
+                    
+                    if self.verbose:
+                        print(f"  wrote tool config {task.id} → {tool_file}")
 
-    if task.environment and task.environment.container:
-        from wf2wf.environ import format_container_for_target_format, get_environment_metadata
-        
-        container = format_container_for_target_format(task.environment.container, "galaxy")
-        step["container"] = container
+            if self.verbose:
+                print(f"✓ Galaxy workflow exported to {output_path}")
 
-    # ------------------------------------------------------------------
-    # SBOM / SIF provenance for reproducibility
-    # ------------------------------------------------------------------
-
-    if task.environment and task.environment.env_vars:
-        metadata = get_environment_metadata(task.environment.env_vars)
-        if metadata["sbom_path"]:
-            step["wf2wf_sbom"] = str(metadata["sbom_path"])
-        if metadata["sif_path"]:
-            step["wf2wf_sif"] = str(metadata["sif_path"])
-
-    # Add original Galaxy metadata if available
-    if preserve_metadata and task.meta:
-        if "galaxy_uuid" in task.meta:
-            step["uuid"] = task.meta["galaxy_uuid"]
-        if "galaxy_errors" in task.meta:
-            step["errors"] = task.meta["galaxy_errors"]
-
-    return step
+        except Exception as e:
+            raise RuntimeError(f"Failed to export Galaxy workflow: {e}")
 
 
-def _generate_galaxy_input_connections(
-    task: Task, workflow: Workflow, task_to_step_id: Dict[str, int]
+# Legacy function for backward compatibility
+def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any) -> None:
+    """Export a wf2wf workflow to Galaxy format (legacy function)."""
+    exporter = GalaxyExporter(
+        interactive=opts.get("interactive", False),
+        verbose=opts.get("verbose", False)
+    )
+    exporter.export_workflow(wf, out_file, **opts)
+
+
+# Helper functions
+def _generate_galaxy_workflow_enhanced(
+    workflow: Workflow,
+    preserve_metadata: bool = True,
+    add_tool_configs: bool = True,
+    verbose: bool = False,
 ) -> Dict[str, Any]:
-    """Generate input connections for Galaxy tool step."""
+    """Generate enhanced Galaxy workflow."""
+    galaxy_workflow = {
+        "a_galaxy_workflow": "true",
+        "format-version": "0.1",
+        "name": workflow.name or "wf2wf_workflow",
+        "uuid": _generate_uuid(),
+        "steps": {},
+        "annotation": "",
+    }
+    
+    # Add metadata
+    if preserve_metadata:
+        if workflow.label:
+            galaxy_workflow["name"] = workflow.label
+        if workflow.doc:
+            galaxy_workflow["annotation"] = workflow.doc
+        if workflow.version:
+            galaxy_workflow["version"] = workflow.version
+    
+    # Generate steps
+    step_id = 0
+    input_steps = {}
+    
+    # Add input steps
+    for param in workflow.inputs:
+        if isinstance(param, ParameterSpec):
+            step_id += 1
+            input_steps[param.id] = step_id
+            galaxy_workflow["steps"][str(step_id)] = _generate_input_step(
+                step_id, param, galaxy_workflow["name"]
+            )
+    
+    # Add tool steps
+    for task in workflow.tasks.values():
+        step_id += 1
+        galaxy_workflow["steps"][str(step_id)] = _generate_tool_step_enhanced(
+            step_id, task, workflow, input_steps, verbose
+        )
+    
+    return galaxy_workflow
 
-    input_connections = {}
 
-    # Find dependencies through workflow edges
-    for edge in workflow.edges:
-        if edge.child == task.id:
-            parent_step_id = task_to_step_id.get(edge.parent)
-            if parent_step_id is not None:
-                # Simple connection mapping - could be enhanced
-                # For now, connect first output of parent to first input of child
-                if task.inputs:
-                    input_name = task.inputs[0].id
-                    input_connections[input_name] = {
-                        "id": parent_step_id,
-                        "output_name": "output",
-                    }
-
-    # Also check for input connections from workflow inputs
-    input_step_id = 0
-    for input_param in workflow.inputs:
-        # Check if any task input matches workflow input
-        for task_input in task.inputs:
-            if task_input.id == input_param.id or task_input.id.endswith(
-                input_param.id
-            ):
-                input_connections[task_input.id] = {
-                    "id": input_step_id,
-                    "output_name": "output",
-                }
-        input_step_id += 1
-
-    return input_connections
-
-
-def _convert_ir_type_to_galaxy(ir_type: str) -> str:
-    """Convert IR type to Galaxy data type."""
-
-    # Handle union types
-    if isinstance(ir_type, dict):
-        ir_type = str(ir_type)
-
-    ir_type = str(ir_type)
-
-    # Basic type mapping
-    type_mapping = {
-        "File": "data",
-        "Directory": "data_collection",
-        "string": "text",
-        "int": "integer",
-        "float": "float",
-        "boolean": "boolean",
+def _generate_input_step(step_id: int, param: ParameterSpec, workflow_name: str) -> Dict[str, Any]:
+    """Generate Galaxy input step."""
+    return {
+        "id": step_id,
+        "type": "input",
+        "name": param.id,
+        "tool_id": None,
+        "tool_version": None,
+        "tool_state": json.dumps({
+            "name": param.id,
+            "type": _convert_type_to_galaxy(param.type),
+            "optional": param.type.nullable if hasattr(param.type, 'nullable') else False,
+        }),
+        "input_connections": {},
+        "outputs": {},
+        "position": {
+            "left": step_id * 200,
+            "top": 100,
+        },
+        "workflow_outputs": [],
+        "label": param.label or param.id,
+        "annotation": param.doc or "",
     }
 
-    # Handle optional types
-    if ir_type.endswith("?"):
-        base_type = ir_type[:-1]
-        return type_mapping.get(base_type, "data")
 
-    # Handle array types
-    if ir_type.startswith("array<") and ir_type.endswith(">"):
-        return "data_collection"
+def _generate_tool_step_enhanced(
+    step_id: int,
+    task: Task,
+    workflow: Workflow,
+    input_steps: Dict[str, int],
+    verbose: bool = False,
+) -> Dict[str, Any]:
+    """Generate enhanced Galaxy tool step."""
+    # Get input connections
+    input_connections = {}
+    parent_tasks = [edge.parent for edge in workflow.edges if edge.child == task.id]
+    
+    # Add parent task connections
+    for parent in parent_tasks:
+        parent_step_id = None
+        for step_num, step_data in workflow.steps.items():
+            if step_data.get("name") == parent:
+                parent_step_id = step_num
+                break
+        
+        if parent_step_id:
+            input_connections["input1"] = {
+                "id": parent_step_id,
+                "output_name": "output1",
+            }
+    
+    # Add workflow input connections
+    for param in task.inputs:
+        if isinstance(param, ParameterSpec) and param.id in input_steps:
+            input_connections[param.id] = {
+                "id": input_steps[param.id],
+                "output_name": "output",
+            }
+    
+    # Generate tool state
+    tool_state = _generate_tool_state_enhanced(task)
+    
+    return {
+        "id": step_id,
+        "type": "tool",
+        "name": task.id,
+        "tool_id": f"toolshed.g2.bx.psu.edu/repos/devteam/{task.id}/custom_tool/1.0.0",
+        "tool_version": "1.0.0",
+        "tool_state": json.dumps(tool_state),
+        "input_connections": input_connections,
+        "outputs": _generate_outputs_enhanced(task),
+        "position": {
+            "left": step_id * 200,
+            "top": 200,
+        },
+        "workflow_outputs": [],
+        "label": task.label or task.id,
+        "annotation": task.doc or "",
+    }
 
-    return type_mapping.get(ir_type, "data")
+
+def _generate_tool_state_enhanced(task: Task) -> Dict[str, Any]:
+    """Generate enhanced Galaxy tool state."""
+    tool_state = {}
+    
+    # Add command
+    command = task.command.get_value_for("shared_filesystem")
+    if command:
+        tool_state["command"] = command
+    
+    # Add resource requirements
+    environment = "shared_filesystem"
+    cpu = task.cpu.get_value_for(environment)
+    mem_mb = task.mem_mb.get_value_for(environment)
+    
+    if cpu:
+        tool_state["cpu"] = cpu
+    if mem_mb:
+        tool_state["memory"] = f"{mem_mb}MB"
+    
+    # Add container specification
+    container = task.container.get_value_for(environment)
+    if container:
+        tool_state["container"] = container
+    
+    # Add conda environment
+    conda = task.conda.get_value_for(environment)
+    if conda:
+        tool_state["conda_env"] = conda
+    
+    return tool_state
+
+
+def _generate_outputs_enhanced(task: Task) -> Dict[str, Any]:
+    """Generate enhanced Galaxy outputs."""
+    outputs = {}
+    
+    for param in task.outputs:
+        if isinstance(param, ParameterSpec):
+            outputs[param.id] = {
+                "name": param.id,
+                "type": _convert_type_to_galaxy(param.type),
+                "label": param.label or param.id,
+            }
+        else:
+            outputs[str(param)] = {
+                "name": str(param),
+                "type": "data",
+                "label": str(param),
+            }
+    
+    return outputs
+
+
+def _generate_tool_config_enhanced(
+    task: Task,
+    preserve_metadata: bool = True,
+    verbose: bool = False,
+) -> str:
+    """Generate enhanced Galaxy tool configuration."""
+    lines = []
+    
+    # Add XML header
+    lines.append('<?xml version="1.0"?>')
+    lines.append('<tool id="' + task.id + '" name="' + (task.label or task.id) + '" version="1.0.0">')
+    
+    # Add description
+    if preserve_metadata and task.doc:
+        lines.append('    <description>' + task.doc + '</description>')
+    
+    # Add command
+    command = task.command.get_value_for("shared_filesystem")
+    if command:
+        lines.append('    <command><![CDATA[')
+        lines.append('        ' + command)
+        lines.append('    ]]></command>')
+    
+    # Add inputs
+    if task.inputs:
+        lines.append('    <inputs>')
+        for param in task.inputs:
+            if isinstance(param, ParameterSpec):
+                lines.extend(_generate_tool_input(param))
+        lines.append('    </inputs>')
+    
+    # Add outputs
+    if task.outputs:
+        lines.append('    <outputs>')
+        for param in task.outputs:
+            if isinstance(param, ParameterSpec):
+                lines.extend(_generate_tool_output(param))
+        lines.append('    </outputs>')
+    
+    # Add help
+    if preserve_metadata and task.doc:
+        lines.append('    <help><![CDATA[')
+        lines.append('        ' + task.doc)
+        lines.append('    ]]></help>')
+    
+    lines.append('</tool>')
+    
+    return '\n'.join(lines)
+
+
+def _generate_tool_input(param: ParameterSpec) -> List[str]:
+    """Generate Galaxy tool input."""
+    lines = []
+    
+    param_type = _convert_type_to_galaxy(param.type)
+    param_id = param.id
+    param_label = param.label or param.id
+    
+    if param_type == "data":
+        lines.append(f'        <param name="{param_id}" type="data" format="txt" label="{param_label}" />')
+    elif param_type == "text":
+        lines.append(f'        <param name="{param_id}" type="text" label="{param_label}" />')
+    elif param_type == "integer":
+        lines.append(f'        <param name="{param_id}" type="integer" label="{param_label}" />')
+    elif param_type == "float":
+        lines.append(f'        <param name="{param_id}" type="float" label="{param_label}" />')
+    elif param_type == "boolean":
+        lines.append(f'        <param name="{param_id}" type="boolean" label="{param_label}" />')
+    else:
+        lines.append(f'        <param name="{param_id}" type="text" label="{param_label}" />')
+    
+    return lines
+
+
+def _generate_tool_output(param: ParameterSpec) -> List[str]:
+    """Generate Galaxy tool output."""
+    lines = []
+    
+    param_type = _convert_type_to_galaxy(param.type)
+    param_id = param.id
+    param_label = param.label or param.id
+    
+    if param_type == "data":
+        lines.append(f'        <data name="{param_id}" format="txt" label="{param_label}" />')
+    else:
+        lines.append(f'        <data name="{param_id}" format="txt" label="{param_label}" />')
+    
+    return lines
+
+
+def _convert_type_to_galaxy(type_spec) -> str:
+    """Convert TypeSpec to Galaxy type."""
+    if isinstance(type_spec, str):
+        return type_spec
+    
+    if type_spec.type == "File":
+        return "data"
+    elif type_spec.type == "Directory":
+        return "data"
+    elif type_spec.type == "string":
+        return "text"
+    elif type_spec.type == "int":
+        return "integer"
+    elif type_spec.type == "long":
+        return "integer"
+    elif type_spec.type == "float":
+        return "float"
+    elif type_spec.type == "double":
+        return "float"
+    elif type_spec.type == "boolean":
+        return "boolean"
+    elif type_spec.type == "array":
+        return "data"  # Galaxy arrays are typically data collections
+    else:
+        return "text"  # Default fallback
+
+
+def _generate_uuid() -> str:
+    """Generate a UUID for Galaxy workflow."""
+    import uuid
+    return str(uuid.uuid4())

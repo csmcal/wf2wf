@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://wf2wf.dev/schemas/v0.1/wf.json",
-  "title": "wf2wf Workflow IR v0.1",
+  "title": "wf2wf Workflow IR v0.1 (Multi-Environment)",
   "type": "object",
   "additionalProperties": false,
   "required": ["name", "tasks", "edges"],
@@ -20,73 +20,375 @@
     },
     "inputs": {
       "type": "array",
-      "items": {"anyOf": [{"type": "string"}, {"$ref": "#/definitions/parameter_spec"}]},
+      "items": {"$ref": "#/definitions/parameter_spec"},
       "default": []
     },
     "outputs": {
       "type": "array",
-      "items": {"anyOf": [{"type": "string"}, {"$ref": "#/definitions/parameter_spec"}]},
+      "items": {"$ref": "#/definitions/parameter_spec"},
       "default": []
     },
-    "requirements": {
-      "type": "array",
-      "items": {"$ref": "#/definitions/requirement_spec"},
-      "default": []
-    },
-    "hints": {
-      "type": "array",
-      "items": {"$ref": "#/definitions/requirement_spec"},
-      "default": []
-    },
+    "requirements": {"$ref": "#/definitions/environment_specific_requirement_array"},
+    "hints": {"$ref": "#/definitions/environment_specific_requirement_array"},
     "provenance": {"$ref": "#/definitions/provenance_spec"},
     "documentation": {"$ref": "#/definitions/documentation_spec"},
-    "intent": {
-      "type": "array",
-      "items": {"type": "string"},
-      "default": []
-    },
+    "intent": {"type": "array", "items": {"type": "string"}, "default": []},
     "cwl_version": {"type": ["string", "null"]},
     "bco_spec": {"$ref": "#/definitions/bco_spec"},
-    "config": {"type": ["object", "null"], "default": {}},
-    "meta": {"type": ["object", "null"], "default": {}},
-    "loss_map": {"type": "array", "items": {"type": "object"}, "default": []}
+    "execution_model": {"$ref": "#/definitions/environment_specific_string"},
+    "loss_map": {"type": "array", "items": {"type": "object"}, "default": []},
+    "metadata": {"$ref": "#/definitions/metadata_spec"},
+    "extra": {"type": "object"}
   },
   "definitions": {
+    "environment_specific_value": {
+      "type": "object",
+      "required": ["values"],
+      "properties": {
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value", "environments"],
+            "properties": {
+              "value": {
+                "oneOf": [
+                  {"type": ["string", "number", "boolean", "null"]},
+                  {"$ref": "#/definitions/checkpoint_spec"},
+                  {"$ref": "#/definitions/logging_spec"},
+                  {"$ref": "#/definitions/security_spec"},
+                  {"$ref": "#/definitions/networking_spec"},
+                  {"type": "object", "additionalProperties": {"type": "string"}},
+                  {"type": "array", "items": {"type": "string"}}
+                ]
+              },
+              "environments": {
+                "type": "array",
+                "items": {"type": ["string", "null"]}
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "environments": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "environment_specific_string": {
+      "type": "object",
+      "required": ["values"],
+      "properties": {
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value", "environments"],
+            "properties": {
+              "value": {"type": ["string", "null"]},
+              "environments": {
+                "type": "array",
+                "items": {"type": ["string", "null"]}
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "environments": {
+          "type": "array",
+          "items": {"type": ["string", "null"]}
+        }
+      },
+      "additionalProperties": false
+    },
+    "environment_specific_integer": {
+      "type": "object",
+      "required": ["values"],
+      "properties": {
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value", "environments"],
+            "properties": {
+              "value": {"type": ["integer", "null"]},
+              "environments": {
+                "type": "array",
+                "items": {"type": ["string", "null"]}
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "environments": {
+          "type": "array",
+          "items": {"type": ["string", "null"]}
+        }
+      },
+      "additionalProperties": false
+    },
+    "environment_specific_boolean": {
+      "type": "object",
+      "required": ["values"],
+      "properties": {
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value", "environments"],
+            "properties": {
+              "value": {"type": ["boolean", "null"]},
+              "environments": {
+                "type": "array",
+                "items": {"type": ["string", "null"]}
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "environments": {
+          "type": "array",
+          "items": {"type": ["string", "null"]}
+        }
+      },
+      "additionalProperties": false
+    },
+    "environment_specific_string_array": {
+      "type": "object",
+      "required": ["values"],
+      "properties": {
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value", "environments"],
+            "properties": {
+              "value": {"type": "array", "items": {"type": "string"}},
+              "environments": {
+                "type": "array",
+                "items": {"type": ["string", "null"]}
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "environments": {
+          "type": "array",
+          "items": {"type": ["string", "null"]}
+        }
+      },
+      "additionalProperties": false
+    },
+    "environment_specific_string_dict": {
+      "type": "object",
+      "required": ["values"],
+      "properties": {
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value", "environments"],
+            "properties": {
+              "value": {"type": "object", "additionalProperties": {"type": "string"}},
+              "environments": {
+                "type": "array",
+                "items": {"type": ["string", "null"]}
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "environments": {
+          "type": "array",
+          "items": {"type": ["string", "null"]}
+        }
+      },
+      "additionalProperties": false
+    },
+    "environment_specific_requirement_array": {
+      "type": "object",
+      "required": ["values"],
+      "properties": {
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value", "environments"],
+            "properties": {
+              "value": {"type": "array", "items": {"$ref": "#/definitions/requirement_spec"}},
+              "environments": {
+                "type": "array",
+                "items": {"type": ["string", "null"]}
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "environments": {
+          "type": "array",
+          "items": {"type": ["string", "null"]}
+        }
+      },
+      "additionalProperties": false
+    },
+    "environment_specific_checkpoint": {
+      "type": "object",
+      "required": ["values"],
+      "properties": {
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value", "environments"],
+            "properties": {
+              "value": {"$ref": "#/definitions/checkpoint_spec"},
+              "environments": {
+                "type": "array",
+                "items": {"type": ["string", "null"]}
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "environments": {
+          "type": "array",
+          "items": {"type": ["string", "null"]}
+        }
+      },
+      "additionalProperties": false
+    },
+    "environment_specific_logging": {
+      "type": "object",
+      "required": ["values"],
+      "properties": {
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value", "environments"],
+            "properties": {
+              "value": {"$ref": "#/definitions/logging_spec"},
+              "environments": {
+                "type": "array",
+                "items": {"type": ["string", "null"]}
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "environments": {
+          "type": "array",
+          "items": {"type": ["string", "null"]}
+        }
+      },
+      "additionalProperties": false
+    },
+    "environment_specific_security": {
+      "type": "object",
+      "required": ["values"],
+      "properties": {
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value", "environments"],
+            "properties": {
+              "value": {"$ref": "#/definitions/security_spec"},
+              "environments": {
+                "type": "array",
+                "items": {"type": ["string", "null"]}
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "environments": {
+          "type": "array",
+          "items": {"type": ["string", "null"]}
+        }
+      },
+      "additionalProperties": false
+    },
+    "environment_specific_networking": {
+      "type": "object",
+      "required": ["values"],
+      "properties": {
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value", "environments"],
+            "properties": {
+              "value": {"$ref": "#/definitions/networking_spec"},
+              "environments": {
+                "type": "array",
+                "items": {"type": ["string", "null"]}
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "environments": {
+          "type": "array",
+          "items": {"type": ["string", "null"]}
+        }
+      },
+      "additionalProperties": false
+    },
+    "checkpoint_spec": {
+      "type": "object",
+      "properties": {
+        "strategy": {"type": ["string", "null"]},
+        "interval": {"type": ["integer", "null"]},
+        "storage_location": {"type": ["string", "null"]},
+        "enabled": {"type": ["boolean", "null"]},
+        "notes": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "logging_spec": {
+      "type": "object",
+      "properties": {
+        "log_level": {"type": ["string", "null"]},
+        "log_format": {"type": ["string", "null"]},
+        "log_destination": {"type": ["string", "null"]},
+        "aggregation": {"type": ["string", "null"]},
+        "notes": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "security_spec": {
+      "type": "object",
+      "properties": {
+        "encryption": {"type": ["string", "null"]},
+        "access_policies": {"type": ["string", "null"]},
+        "secrets": {"type": "object", "additionalProperties": {"type": "string"}},
+        "authentication": {"type": ["string", "null"]},
+        "notes": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "networking_spec": {
+      "type": "object",
+      "properties": {
+        "network_mode": {"type": ["string", "null"]},
+        "allowed_ports": {"type": "array", "items": {"type": "integer"}},
+        "egress_rules": {"type": "array", "items": {"type": "string"}},
+        "ingress_rules": {"type": "array", "items": {"type": "string"}},
+        "notes": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
     "edge": {
       "type": "object",
-      "additionalProperties": false,
       "required": ["parent", "child"],
       "properties": {
         "parent": {"type": "string", "minLength": 1},
         "child": {"type": "string", "minLength": 1}
-      }
-    },
-    "environment": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "conda": {"type": ["string", "null"]},
-        "container": {"type": ["string", "null"]},
-        "workdir": {"type": ["string", "null"]},
-        "env_vars": {"type": "object", "additionalProperties": {"type": "string"}},
-        "modules": {"type": "array", "items": {"type": "string"}}
       },
-      "default": {}
-    },
-    "resources": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "cpu": {"type": ["integer", "null"], "minimum": 1},
-        "mem_mb": {"type": ["integer", "null"], "minimum": 0},
-        "disk_mb": {"type": ["integer", "null"], "minimum": 0},
-        "gpu": {"type": ["integer", "null"], "minimum": 0},
-        "gpu_mem_mb": {"type": ["integer", "null"], "minimum": 0},
-        "time_s": {"type": ["integer", "null"], "minimum": 0},
-        "threads": {"type": ["integer", "null"], "minimum": 1},
-        "extra": {"type": "object"}
-      },
-      "default": {}
+      "additionalProperties": false
     },
     "parameter_spec": {
       "type": "object",
@@ -103,13 +405,13 @@
         "load_contents": {"type": "boolean", "default": false},
         "load_listing": {"type": ["string", "null"]},
         "input_binding": {"type": ["object", "null"]},
-        "transfer_mode": {
-          "type": "string",
-          "enum": ["auto", "always", "never", "shared"],
-          "default": "auto",
-          "description": "File transfer behavior for distributed computing: 'auto' (detect from context), 'always' (force transfer), 'never' (assume local), 'shared' (on shared filesystem)"
-        }
-      }
+        "output_binding": {"type": ["object", "null"]},
+        "value_from": {"type": ["string", "null"]},
+        "transfer_mode": {"$ref": "#/definitions/environment_specific_string"},
+        "staging_required": {"$ref": "#/definitions/environment_specific_boolean"},
+        "cleanup_after": {"$ref": "#/definitions/environment_specific_boolean"}
+      },
+      "additionalProperties": false
     },
     "requirement_spec": {
       "type": "object",
@@ -117,42 +419,37 @@
       "properties": {
         "class_name": {"type": "string"},
         "data": {"type": "object", "default": {}}
-      }
-    },
-    "scatter_spec": {
-      "type": ["object", "null"],
-      "required": ["scatter"],
-      "properties": {
-        "scatter": {"type": "array", "items": {"type": "string"}},
-        "scatter_method": {"type": "string", "default": "dotproduct"}
-      }
+      },
+      "additionalProperties": false
     },
     "provenance_spec": {
       "type": ["object", "null"],
       "properties": {
-        "name": {"type": "string"},
-        "version": {"type": "string"},
-        "created": {"type": "string"},
-        "modified": {"type": "string"},
-        "license": {"type": ["string", "null"]},
+        "authors": {"type": "array", "items": {"type": "object"}},
         "contributors": {"type": "array", "items": {"type": "object"}},
-        "review": {"type": "array", "items": {"type": "object"}},
+        "created": {"type": ["string", "null"]},
+        "modified": {"type": ["string", "null"]},
+        "version": {"type": ["string", "null"]},
+        "license": {"type": ["string", "null"]},
+        "doi": {"type": ["string", "null"]},
+        "citations": {"type": "array", "items": {"type": "string"}},
+        "keywords": {"type": "array", "items": {"type": "string"}},
         "derived_from": {"type": ["string", "null"]},
-        "obsoletes": {"type": ["string", "null"]}
-      }
+        "extras": {"type": "object"}
+      },
+      "additionalProperties": false
     },
     "documentation_spec": {
       "type": ["object", "null"],
       "properties": {
-        "description": {"type": "string"},
-        "keywords": {"type": "array", "items": {"type": "string"}},
-        "citation": {"type": ["string", "null"]},
-        "doi": {"type": ["string", "null"]},
-        "publication": {"type": ["object", "null"]},
-        "contact": {"type": ["string", "null"]},
-        "homepage": {"type": ["string", "null"]},
-        "repository": {"type": ["string", "null"]}
-      }
+        "description": {"type": ["string", "null"]},
+        "label": {"type": ["string", "null"]},
+        "doc": {"type": ["string", "null"]},
+        "intent": {"type": "array", "items": {"type": "string"}},
+        "usage_notes": {"type": ["string", "null"]},
+        "examples": {"type": "array", "items": {"type": "object"}}
+      },
+      "additionalProperties": false
     },
     "bco_spec": {
       "type": ["object", "null"],
@@ -168,46 +465,83 @@
         "parametric_domain": {"type": "array", "items": {"type": "object"}},
         "io_domain": {"type": "object"},
         "error_domain": {"type": "object"}
-      }
+      },
+      "additionalProperties": false
     },
     "task": {
       "type": "object",
-      "additionalProperties": false,
       "required": ["id"],
       "properties": {
         "id": {"type": "string", "minLength": 1},
         "label": {"type": ["string", "null"]},
         "doc": {"type": ["string", "null"]},
-        "command": {"type": ["string", "null"]},
-        "script": {"type": ["string", "null"]},
-        "inputs": {"type": "array", "items": {"anyOf": [{"type": "string"}, {"$ref": "#/definitions/parameter_spec"}]}, "uniqueItems": true},
-        "outputs": {"type": "array", "items": {"anyOf": [{"type": "string"}, {"$ref": "#/definitions/parameter_spec"}]}, "uniqueItems": true},
-        "when": {"type": ["string", "null"]},
-        "scatter": {"$ref": "#/definitions/scatter_spec"},
-        "resources": {"$ref": "#/definitions/resources"},
-        "environment": {"$ref": "#/definitions/environment"},
-        "requirements": {
-          "type": "array",
-          "items": {"$ref": "#/definitions/requirement_spec"},
-          "default": []
-        },
-        "hints": {
-          "type": "array",
-          "items": {"$ref": "#/definitions/requirement_spec"},
-          "default": []
-        },
+        "command": {"$ref": "#/definitions/environment_specific_string"},
+        "script": {"$ref": "#/definitions/environment_specific_string"},
+        "inputs": {"type": "array", "items": {"$ref": "#/definitions/parameter_spec"}},
+        "outputs": {"type": "array", "items": {"$ref": "#/definitions/parameter_spec"}},
+        "when": {"$ref": "#/definitions/environment_specific_string"},
+        "scatter": {"$ref": "#/definitions/environment_specific_value"},
+        "cpu": {"$ref": "#/definitions/environment_specific_integer"},
+        "mem_mb": {"$ref": "#/definitions/environment_specific_integer"},
+        "disk_mb": {"$ref": "#/definitions/environment_specific_integer"},
+        "gpu": {"$ref": "#/definitions/environment_specific_integer"},
+        "gpu_mem_mb": {"$ref": "#/definitions/environment_specific_integer"},
+        "time_s": {"$ref": "#/definitions/environment_specific_integer"},
+        "threads": {"$ref": "#/definitions/environment_specific_integer"},
+        "conda": {"$ref": "#/definitions/environment_specific_string"},
+        "container": {"$ref": "#/definitions/environment_specific_string"},
+        "workdir": {"$ref": "#/definitions/environment_specific_string"},
+        "env_vars": {"$ref": "#/definitions/environment_specific_string_dict"},
+        "modules": {"$ref": "#/definitions/environment_specific_string_array"},
+        "retry_count": {"$ref": "#/definitions/environment_specific_integer"},
+        "retry_delay": {"$ref": "#/definitions/environment_specific_integer"},
+        "retry_backoff": {"$ref": "#/definitions/environment_specific_string"},
+        "max_runtime": {"$ref": "#/definitions/environment_specific_integer"},
+        "checkpoint_interval": {"$ref": "#/definitions/environment_specific_integer"},
+        "on_failure": {"$ref": "#/definitions/environment_specific_string"},
+        "failure_notification": {"$ref": "#/definitions/environment_specific_string"},
+        "cleanup_on_failure": {"$ref": "#/definitions/environment_specific_boolean"},
+        "restart_from_checkpoint": {"$ref": "#/definitions/environment_specific_boolean"},
+        "partial_results": {"$ref": "#/definitions/environment_specific_boolean"},
+        "priority": {"$ref": "#/definitions/environment_specific_integer"},
+        "file_transfer_mode": {"$ref": "#/definitions/environment_specific_string"},
+        "staging_required": {"$ref": "#/definitions/environment_specific_boolean"},
+        "cleanup_after": {"$ref": "#/definitions/environment_specific_boolean"},
+        "cloud_provider": {"$ref": "#/definitions/environment_specific_string"},
+        "cloud_storage_class": {"$ref": "#/definitions/environment_specific_string"},
+        "cloud_encryption": {"$ref": "#/definitions/environment_specific_boolean"},
+        "parallel_transfers": {"$ref": "#/definitions/environment_specific_integer"},
+        "bandwidth_limit": {"$ref": "#/definitions/environment_specific_string"},
+        "requirements": {"$ref": "#/definitions/environment_specific_requirement_array"},
+        "hints": {"$ref": "#/definitions/environment_specific_requirement_array"},
+        "checkpointing": {"$ref": "#/definitions/environment_specific_checkpoint"},
+        "logging": {"$ref": "#/definitions/environment_specific_logging"},
+        "security": {"$ref": "#/definitions/environment_specific_security"},
+        "networking": {"$ref": "#/definitions/environment_specific_networking"},
         "provenance": {"$ref": "#/definitions/provenance_spec"},
         "documentation": {"$ref": "#/definitions/documentation_spec"},
-        "intent": {
-          "type": "array",
-          "items": {"type": "string"},
-          "default": []
-        },
-        "params": {"type": "object", "default": {}},
-        "priority": {"type": "integer", "minimum": 0, "default": 0},
-        "retry": {"type": "integer", "minimum": 0, "default": 0},
-        "meta": {"type": "object", "default": {}}
-      }
+        "intent": {"type": "array", "items": {"type": "string"}, "default": []},
+        "metadata": {"$ref": "#/definitions/metadata_spec"},
+        "extra": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "metadata_spec": {
+      "type": ["object", "null"],
+      "properties": {
+        "source_format": {"type": ["string", "null"]},
+        "source_file": {"type": ["string", "null"]},
+        "source_version": {"type": ["string", "null"]},
+        "parsing_notes": {"type": "array", "items": {"type": "string"}, "default": []},
+        "conversion_warnings": {"type": "array", "items": {"type": "string"}, "default": []},
+        "format_specific": {"type": "object", "default": {}},
+        "uninterpreted": {"type": "object", "default": {}},
+        "annotations": {"type": "object", "default": {}},
+        "environment_metadata": {"type": "object", "default": {}},
+        "validation_errors": {"type": "array", "items": {"type": "string"}, "default": []},
+        "quality_metrics": {"type": "object", "default": {}}
+      },
+      "additionalProperties": false
     }
   }
 }
