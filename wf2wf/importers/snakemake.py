@@ -17,6 +17,7 @@ import subprocess
 import shutil
 import textwrap
 import yaml
+import logging
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Union, List, Tuple
@@ -24,6 +25,9 @@ from collections import defaultdict
 
 from wf2wf.core import Workflow, Task, EnvironmentSpecificValue, ParameterSpec, CheckpointSpec, LoggingSpec, SecuritySpec, NetworkingSpec, MetadataSpec, Edge, ScatterSpec
 from wf2wf.importers.base import BaseImporter
+
+# Configure logger for this module
+logger = logging.getLogger(__name__)
 
 
 class SnakemakeImporter(BaseImporter):
@@ -45,7 +49,7 @@ class SnakemakeImporter(BaseImporter):
         debug = opts.get("debug", False)
 
         if verbose:
-            print(f"INFO: Step 1: Parsing Snakefile: {path}")
+            logger.info(f"Step 1: Parsing Snakefile: {path}")
 
         # Convert workdir to Path if it's a string
         if workdir and isinstance(workdir, str):
@@ -55,7 +59,7 @@ class SnakemakeImporter(BaseImporter):
         try:
             rule_templates = _parse_snakefile_for_rules(path, debug=debug)
             if verbose:
-                print(f"  Found {len(rule_templates['rules'])} rule templates.")
+                logger.info(f"Found {len(rule_templates['rules'])} rule templates.")
         except Exception as e:
             raise RuntimeError(f"Failed to read or parse the Snakefile: {e}")
 
@@ -78,17 +82,24 @@ class SnakemakeImporter(BaseImporter):
         if not parse_only:
             # Get execution graph from `snakemake --dag`
             if verbose:
-                print("INFO: Step 2: Running `snakemake --dag` to get dependency graph...")
+                logger.info("Step 2: Running `snakemake --dag` to get dependency graph...")
 
             dag_output = self._run_snakemake_dag(path, workdir, configfile, cores, snakemake_args, verbose)
             result["dag_output"] = dag_output
             
             # Get job details from `snakemake --dry-run`
             if verbose:
-                print("INFO: Step 3: Running `snakemake --dry-run` to get job details...")
+                logger.info("Step 3: Running `snakemake --dry-run` to get job details...")
             
             dryrun_output = self._run_snakemake_dryrun(path, workdir, configfile, cores, snakemake_args, verbose)
             result["dryrun_output"] = dryrun_output
+            
+            # Parse dry-run output to get job information
+            if dryrun_output:
+                jobs = _parse_dryrun_output(dryrun_output, debug=debug)
+                result["jobs"] = jobs
+                if debug:
+                    logger.debug(f"Parsed {len(jobs)} jobs from dry-run output")
         
         return result
     
@@ -118,9 +129,9 @@ class SnakemakeImporter(BaseImporter):
             return dag_process.stdout
         except subprocess.CalledProcessError as e:
             if verbose:
-                print(f"WARNING: `snakemake --dag` failed: {e}")
-                print(f"STDOUT: {e.stdout}")
-                print(f"STDERR: {e.stderr}")
+                logger.warning(f"`snakemake --dag` failed: {e}")
+                logger.warning(f"STDOUT: {e.stdout}")
+                logger.warning(f"STDERR: {e.stderr}")
             return ""
     
     def _run_snakemake_dryrun(self, path: Path, workdir: Path, configfile: str, cores: int, snakemake_args: List[str], verbose: bool) -> str:
@@ -149,9 +160,9 @@ class SnakemakeImporter(BaseImporter):
             return dryrun_process.stdout
         except subprocess.CalledProcessError as e:
             if verbose:
-                print(f"WARNING: `snakemake --dry-run` failed: {e}")
-                print(f"STDOUT: {e.stdout}")
-                print(f"STDERR: {e.stderr}")
+                logger.warning(f"`snakemake --dry-run` failed: {e}")
+                logger.warning(f"STDOUT: {e.stdout}")
+                logger.warning(f"STDERR: {e.stderr}")
             return ""
     
     def _create_basic_workflow(self, parsed_data: Dict[str, Any]) -> Workflow:
@@ -185,6 +196,19 @@ class SnakemakeImporter(BaseImporter):
         rule_templates = parsed_data.get("rule_templates", {})
         jobs = parsed_data.get("jobs", {})
         
+        if self.verbose:
+            logger.info(f"Extracting tasks from {len(rule_templates.get('rules', {}))} rule templates")
+        
+        # Convert jobs list to dictionary if needed (jobs from _parse_dryrun_output is a list)
+        if isinstance(jobs, list):
+            jobs_dict = {}
+            for job_data in jobs:
+                job_id = job_data.get("jobid", f"job_{len(jobs_dict)}")
+                jobs_dict[job_id] = job_data
+            jobs = jobs_dict
+            if self.verbose:
+                logger.debug(f"Converted {len(jobs)} jobs from list to dictionary format")
+        
         # Group jobs by rule name to collect wildcard instances
         rule_jobs = {}
         for job_id, job_data in jobs.items():
@@ -200,15 +224,22 @@ class SnakemakeImporter(BaseImporter):
             if rule_name == "all":
                 continue  # Exclude the 'all' pseudo-task
             
-            # Get jobs for this rule
             rule_job_instances = rule_jobs.get(rule_name, [])
             
-            # Create task with rule name as ID
-            task = _build_task_from_rule_with_wildcards(rule_name, rule_details, rule_job_instances)
+            if rule_job_instances:
+                # Use the enhanced task builder with wildcard preservation
+                task = _build_task_from_rule_with_wildcards(rule_name, rule_details, rule_job_instances)
+            else:
+                # Fallback to basic task creation from rule template
+                task = _build_task_from_rule_details(rule_name, rule_details)
+            
             tasks.append(task)
+            
+            if self.verbose:
+                logger.info(f"Created task '{task.id}' with {len(task.inputs)} inputs, {len(task.outputs)} outputs")
         
         return tasks
-
+    
     def _extract_edges(self, parsed_data: Dict[str, Any]) -> List[Edge]:
         """Extract edges from parsed Snakemake data using rule-based approach."""
         import re
@@ -216,7 +247,10 @@ class SnakemakeImporter(BaseImporter):
         dot_output = parsed_data.get("dag_output", "")
         jobs = parsed_data.get("jobs", {})
 
-        # Build mapping from DOT node IDs to rule names (robust to all label formats)
+        if self.verbose:
+            logger.info("Extracting edges from DAG output")
+
+        # Build mapping from DOT node IDs to base rule names (first line of label)
         id_to_rule = {}
         node_label_pattern = re.compile(r'^(\w+)\s*\[label\s*=\s*"([^"]+)"')
         for line in dot_output.splitlines():
@@ -225,22 +259,55 @@ class SnakemakeImporter(BaseImporter):
             if m:
                 node_id = m.group(1)
                 label = m.group(2)
-                # For multi-line labels (e.g. 'process_chunk\nchunk: 1\nsample: a'), take the first line as the rule name
-                rule_name = label.split("\n", 1)[0].replace('rule ', '').strip()
+                # Extract base rule name (first part before any escaped newlines)
+                # Handle both literal newlines and escaped \n
+                if "\\n" in label:
+                    rule_name = label.split("\\n", 1)[0].strip()
+                else:
+                    rule_name = label.split("\n", 1)[0].strip()
+                # Remove "rule " prefix if present
+                if rule_name.startswith("rule "):
+                    rule_name = rule_name[5:].strip()
                 id_to_rule[node_id] = rule_name
+                if self.verbose:
+                    logger.debug(f"Mapped node {node_id} -> rule '{rule_name}' (from label: '{label}')")
 
-        # Parse edges: e.g. 1 -> 0
+        if self.verbose:
+            logger.info(f"Node ID to rule mapping: {id_to_rule}")
+
+        # Parse edges: e.g. 1 -> 0, and deduplicate edges between rule names
         edge_pattern = re.compile(r'^(\w+)\s*->\s*(\w+)')
+        seen = set()
         for line in dot_output.splitlines():
             line = line.strip()
             m = edge_pattern.match(line)
             if m:
                 parent_id, child_id = m.group(1), m.group(2)
+                # Always use id_to_rule mapping for both parent and child
                 parent_rule = id_to_rule.get(parent_id)
                 child_rule = id_to_rule.get(child_id)
+                if parent_rule is None or child_rule is None:
+                    if self.verbose:
+                        logger.warning(f"Skipping edge {parent_id} -> {child_id}: node IDs not found in mapping")
+                    continue
                 # Exclude edges involving the 'all' pseudo-task
-                if parent_rule and child_rule and parent_rule != "all" and child_rule != "all":
-                    edges.append(Edge(parent=parent_rule, child=child_rule))
+                if parent_rule != "all" and child_rule != "all":
+                    key = (parent_rule, child_rule)
+                    if key not in seen:
+                        edge = Edge(parent=parent_rule, child=child_rule)
+                        edges.append(edge)
+                        seen.add(key)
+                        if self.verbose:
+                            logger.debug(f"Created edge: {parent_rule} -> {child_rule} (from nodes {parent_id} -> {child_id})")
+                    else:
+                        if self.verbose:
+                            logger.debug(f"Skipping duplicate edge: {parent_rule} -> {child_rule}")
+
+        if self.verbose:
+            logger.info(f"Extracted {len(edges)} unique edges between rules")
+            for edge in edges:
+                logger.debug(f"Edge: {edge.parent} -> {edge.child}")
+
         return edges
     
     def _extract_environment_specific_values(self, parsed_data: Dict[str, Any], workflow: Workflow) -> None:

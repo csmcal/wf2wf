@@ -113,7 +113,18 @@ def from_workflow(
         interactive=opts.get("interactive", False),
         verbose=verbose
     )
-    exporter.export_workflow(wf, out_file, **opts)
+    # Pass all options including inline_submit
+    export_opts = {
+        "workdir": workdir,
+        "scripts_dir": scripts_dir,
+        "default_memory": default_memory,
+        "default_disk": default_disk,
+        "default_cpus": default_cpus,
+        "inline_submit": inline_submit,
+        "debug": debug,
+        **opts
+    }
+    exporter.export_workflow(wf, out_file, **export_opts)
 
 
 # Helper functions (unchanged from original implementation)
@@ -131,12 +142,23 @@ def _sanitize_condor_job_name(name: str) -> str:
 def _write_task_wrapper_script(task: Task, path: Path, target_env: str):
     """Write wrapper script for a task."""
     # Try to get command from any environment, preferring distributed_computing
-    command = (task.command.get_value_for(target_env) or 
-               task.command.get_value_for("shared_filesystem") or 
-               task.command.get_value_for("cloud_native"))
-    script = (task.script.get_value_for(target_env) or 
-              task.script.get_value_for("shared_filesystem") or 
-              task.script.get_value_for("cloud_native"))
+    command = None
+    if isinstance(task.command, EnvironmentSpecificValue):
+        command = (task.command.get_value_for(target_env) or 
+                   task.command.get_value_for("shared_filesystem") or 
+                   task.command.get_value_for("cloud_native"))
+    else:
+        # Handle legacy string command
+        command = task.command
+    
+    script = None
+    if isinstance(task.script, EnvironmentSpecificValue):
+        script = (task.script.get_value_for(target_env) or 
+                  task.script.get_value_for("shared_filesystem") or 
+                  task.script.get_value_for("cloud_native"))
+    else:
+        # Handle legacy string script
+        script = task.script
     
     if script:
         # Copy script file

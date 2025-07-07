@@ -92,6 +92,21 @@ def export_workflow(
     exporter.export_workflow(workflow, output_path, **opts)
 
 
+def load(format_name: str) -> Type[BaseExporter]:
+    """Load exporter for the specified format (backward compatibility).
+    
+    Args:
+        format_name: Name of the target format
+        
+    Returns:
+        Exporter class
+        
+    Raises:
+        ValueError: If format is not supported
+    """
+    return get_exporter(format_name)
+
+
 # Legacy functions for backward compatibility
 def from_workflow(workflow: Workflow, output_path: Path, format_name: str, **opts: Any) -> None:
     """Legacy function for backward compatibility."""
@@ -134,6 +149,7 @@ __all__ = [
     "get_exporter",
     "list_formats",
     "export_workflow",
+    "load",           # Backward compatibility
     "from_workflow",  # Legacy
     "export_cwl",     # Legacy
     "export_dagman",  # Legacy

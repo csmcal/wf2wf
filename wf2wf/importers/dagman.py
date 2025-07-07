@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union
+import logging
 
 from wf2wf.core import Workflow, Task, EnvironmentSpecificValue, MetadataSpec
 from wf2wf.importers.base import BaseImporter
@@ -18,25 +19,23 @@ from wf2wf.importers.base import BaseImporter
 
 class DAGManImporter(BaseImporter):
     """DAGMan importer using shared base infrastructure."""
-    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.logger = logging.getLogger("wf2wf.importers.dagman")
+
     def _parse_source(self, path: Path, **opts: Any) -> Dict[str, Any]:
-        """Parse DAGMan file and extract all information."""
         verbose = opts.get("verbose", False)
         debug = opts.get("debug", False)
-        
         if not path.exists():
+            self.logger.error(f"DAG file not found: {path}")
             raise FileNotFoundError(f"DAG file not found: {path}")
-            
         if verbose:
-            print(f"Parsing DAGMan file: {path}")
-            
-        # Parse the DAG file
+            self.logger.info(f"Parsing DAGMan file: {path}")
         dag_content = path.read_text()
         jobs, dependencies, variables, metadata = _parse_dag_file(dag_content, debug=debug)
-        
         if not jobs:
+            self.logger.error("No jobs found in DAG file")
             raise ValueError("No jobs found in DAG file")
-            
         return {
             "jobs": jobs,
             "dependencies": dependencies,
@@ -45,7 +44,7 @@ class DAGManImporter(BaseImporter):
             "dag_path": path,
             "dag_dir": path.parent
         }
-    
+
     def _create_basic_workflow(self, parsed_data: Dict[str, Any]) -> Workflow:
         """Create basic workflow from parsed DAGMan data."""
         metadata = parsed_data["metadata"]
@@ -98,7 +97,7 @@ class DAGManImporter(BaseImporter):
                 # Parse inline submit description
                 submit_info = _parse_submit_content(job_info["inline_submit"], debug=False)
                 if verbose:
-                    print(f"  Parsed inline submit for {job_name}")
+                    self.logger.info(f"Parsed inline submit for {job_name}")
             elif job_info.get("submit_file"):
                 # Parse external submit file
                 submit_file = Path(dag_dir / job_info["submit_file"])
@@ -109,26 +108,31 @@ class DAGManImporter(BaseImporter):
                         submit_files[str(submit_file)] = _parse_submit_file(submit_file, debug=False)
                     else:
                         if verbose:
-                            print(f"WARNING: Submit file not found: {submit_file}")
+                            self.logger.warning(f"Submit file not found: {submit_file}")
                         submit_files[str(submit_file)] = {}
                 
                 submit_info = submit_files[str(submit_file)]
             else:
                 if verbose:
-                    print(f"WARNING: No submit information found for job {job_name}")
+                    self.logger.warning(f"No submit information found for job {job_name}")
             
             # Create task from job info
             task = _create_task_from_job(job_name, job_info, submit_info, dag_dir)
             tasks.append(task)
             
             if verbose:
-                print(f"  Added task: {task.id}")
+                self.logger.info(f"Added task: {task.id}")
                 
         return tasks
     
     def _extract_edges(self, parsed_data: Dict[str, Any]) -> List[Tuple[str, str]]:
         """Extract edges from parsed DAGMan data."""
-        return parsed_data["dependencies"]
+        edges = parsed_data["dependencies"]
+        if self.verbose:
+            self.logger.info(f"Extracted {len(edges)} edges from DAGMan file")
+            for parent, child in edges:
+                self.logger.debug(f"Edge: {parent} -> {child}")
+        return edges
     
     def _extract_environment_specific_values(self, parsed_data: Dict[str, Any], workflow: Workflow) -> None:
         """Extract environment-specific values from parsed data."""
@@ -141,6 +145,8 @@ class DAGManImporter(BaseImporter):
             if workflow.metadata is None:
                 workflow.metadata = MetadataSpec()
             workflow.metadata.add_format_specific("dag_variables", variables)
+            if self.verbose:
+                self.logger.info(f"Extracted DAG variables: {variables}")
     
     def _get_source_format(self) -> str:
         """Get the source format name."""
