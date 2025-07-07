@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, Union, List, Tuple
 from collections import defaultdict
 
-from wf2wf.core import Workflow, Task, EnvironmentSpecificValue, ParameterSpec, CheckpointSpec, LoggingSpec, SecuritySpec, NetworkingSpec, MetadataSpec
+from wf2wf.core import Workflow, Task, EnvironmentSpecificValue, ParameterSpec, CheckpointSpec, LoggingSpec, SecuritySpec, NetworkingSpec, MetadataSpec, Edge, ScatterSpec
 from wf2wf.importers.base import BaseImporter
 
 
@@ -31,29 +31,27 @@ class SnakemakeImporter(BaseImporter):
     
     def _parse_source(self, path: Path, **opts: Any) -> Dict[str, Any]:
         """Parse Snakefile and extract all information."""
-        configfile = opts.get("configfile")
+        # Convert string to Path if needed
+        if isinstance(path, str):
+            path = Path(path)
+        
+        preserve_metadata = opts.get("preserve_metadata", True)
+        parse_only = opts.get("parse_only", False)
         workdir = opts.get("workdir")
+        configfile = opts.get("configfile")
         cores = opts.get("cores", 1)
         snakemake_args = opts.get("snakemake_args", [])
-        parse_only = opts.get("parse_only", False)
         verbose = self.verbose
         debug = opts.get("debug", False)
 
-        if debug:
-            print(f"DEBUG: Converting Snakemake workflow from {path}")
-        
-        # Check for snakemake executable unless parse_only mode is enabled
-        if not parse_only and not shutil.which("snakemake"):
-            raise RuntimeError("The 'snakemake' executable was not found in your PATH. Please install snakemake: 'pip install snakemake' or 'conda install snakemake'")
-        
-        # Use the Snakefile's directory as working directory by default
-        if workdir is None:
-            workdir = path.parent
-
-        # Parse Snakefile for rule templates
         if verbose:
-            print("INFO: Step 1: Parsing Snakefile for rule definitions...")
+            print(f"INFO: Step 1: Parsing Snakefile: {path}")
 
+        # Convert workdir to Path if it's a string
+        if workdir and isinstance(workdir, str):
+            workdir = Path(workdir)
+
+        # Parse the Snakefile for rule templates
         try:
             rule_templates = _parse_snakefile_for_rules(path, debug=debug)
             if verbose:
@@ -159,62 +157,91 @@ class SnakemakeImporter(BaseImporter):
     def _create_basic_workflow(self, parsed_data: Dict[str, Any]) -> Workflow:
         """Create basic workflow from parsed Snakemake data."""
         workflow_name = parsed_data["workflow_name"]
-        
         # Create workflow object
         wf = Workflow(
             name=workflow_name,
             version="1.0",
             execution_model=EnvironmentSpecificValue("shared_filesystem", ["shared_filesystem"]),
         )
-        
+        # Extract and add tasks
+        tasks = self._extract_tasks(parsed_data)
+        for task in tasks:
+            wf.add_task(task)
+        # Build a mapping from rule name/job label to task ID
+        task_id_map = {task.id: task.id for task in tasks}
+        # Extract and add edges, ensuring all endpoints exist
+        edges = self._extract_edges(parsed_data)
+        for edge in edges:
+            if edge.parent not in task_id_map:
+                raise ValueError(f"Parent task '{edge.parent}' not found in workflow. Available tasks: {list(task_id_map.keys())}")
+            if edge.child not in task_id_map:
+                raise ValueError(f"Child task '{edge.child}' not found in workflow. Available tasks: {list(task_id_map.keys())}")
+            wf.add_edge(edge.parent, edge.child)
         return wf
     
     def _extract_tasks(self, parsed_data: Dict[str, Any]) -> List[Task]:
-        """Extract tasks from parsed Snakemake data."""
-        rule_templates = parsed_data["rule_templates"]
-        parse_only = parsed_data["parse_only"]
-        verbose = self.verbose
-        debug = parsed_data.get("debug", False)
-        
+        """Extract tasks from parsed Snakemake data using rule-based approach with wildcard preservation."""
         tasks = []
+        rule_templates = parsed_data.get("rule_templates", {})
+        jobs = parsed_data.get("jobs", {})
         
-        if parse_only:
-            # Create tasks from rule templates only
-            if verbose:
-                print("INFO: Creating tasks from rule templates...")
-
-            for rule_name, rule_details in rule_templates["rules"].items():
-                task = _create_task_from_rule_template(rule_name, rule_details, verbose=verbose, debug=debug)
-                tasks.append(task)
-
-            if verbose:
-                print(f"  Created {len(tasks)} tasks from rule templates")
-        else:
-            # Create tasks from dry-run output
-            dryrun_output = parsed_data.get("dryrun_output", "")
-            if dryrun_output:
-                jobs = _parse_dryrun_output(dryrun_output, debug=debug)
-                
-                for job_data in jobs:
-                    rule_name = job_data.get("rule", "unknown")
-                    task = _build_task_from_job_data(rule_name, job_data, rule_templates["rules"].get(rule_name, {}))
-                    tasks.append(task)
-                
-                if verbose:
-                    print(f"  Created {len(tasks)} tasks from dry-run output")
+        # Group jobs by rule name to collect wildcard instances
+        rule_jobs = {}
+        for job_id, job_data in jobs.items():
+            rule_name = job_data.get("rule_name", job_id)
+            if rule_name == "all":
+                continue  # Exclude the 'all' pseudo-task
+            if rule_name not in rule_jobs:
+                rule_jobs[rule_name] = []
+            rule_jobs[rule_name].append((job_id, job_data))
+        
+        # Create one task per rule, with scatter information if multiple instances
+        for rule_name, rule_details in rule_templates.get("rules", {}).items():
+            if rule_name == "all":
+                continue  # Exclude the 'all' pseudo-task
+            
+            # Get jobs for this rule
+            rule_job_instances = rule_jobs.get(rule_name, [])
+            
+            # Create task with rule name as ID
+            task = _build_task_from_rule_with_wildcards(rule_name, rule_details, rule_job_instances)
+            tasks.append(task)
         
         return tasks
-    
-    def _extract_edges(self, parsed_data: Dict[str, Any]) -> List[Tuple[str, str]]:
-        """Extract edges from parsed Snakemake data."""
-        if parsed_data["parse_only"]:
-            return []  # No edges in parse-only mode
-        
-        dag_output = parsed_data.get("dag_output", "")
-        if dag_output:
-            return _parse_dot_output(dag_output, debug=parsed_data.get("debug", False))
-        
-        return []
+
+    def _extract_edges(self, parsed_data: Dict[str, Any]) -> List[Edge]:
+        """Extract edges from parsed Snakemake data using rule-based approach."""
+        import re
+        edges = []
+        dot_output = parsed_data.get("dag_output", "")
+        jobs = parsed_data.get("jobs", {})
+
+        # Build mapping from DOT node IDs to rule names (robust to all label formats)
+        id_to_rule = {}
+        node_label_pattern = re.compile(r'^(\w+)\s*\[label\s*=\s*"([^"]+)"')
+        for line in dot_output.splitlines():
+            line = line.strip()
+            m = node_label_pattern.match(line)
+            if m:
+                node_id = m.group(1)
+                label = m.group(2)
+                # For multi-line labels (e.g. 'process_chunk\nchunk: 1\nsample: a'), take the first line as the rule name
+                rule_name = label.split("\n", 1)[0].replace('rule ', '').strip()
+                id_to_rule[node_id] = rule_name
+
+        # Parse edges: e.g. 1 -> 0
+        edge_pattern = re.compile(r'^(\w+)\s*->\s*(\w+)')
+        for line in dot_output.splitlines():
+            line = line.strip()
+            m = edge_pattern.match(line)
+            if m:
+                parent_id, child_id = m.group(1), m.group(2)
+                parent_rule = id_to_rule.get(parent_id)
+                child_rule = id_to_rule.get(child_id)
+                # Exclude edges involving the 'all' pseudo-task
+                if parent_rule and child_rule and parent_rule != "all" and child_rule != "all":
+                    edges.append(Edge(parent=parent_rule, child=child_rule))
+        return edges
     
     def _extract_environment_specific_values(self, parsed_data: Dict[str, Any], workflow: Workflow) -> None:
         """Extract environment-specific values from parsed data."""
@@ -231,27 +258,50 @@ class SnakemakeImporter(BaseImporter):
 
 def _build_task_from_job_data(rule_name: str, job_data: Dict[str, Any], rule_template: Dict[str, Any]) -> Task:
     """Build a task from job data and rule template."""
-    # This is a simplified version - the full implementation would be more complex
     task = Task(id=rule_name)
-    
-    # Set command from job data
+
+    # Command
     if "shellcmd" in job_data:
         task.command.set_for_environment(job_data["shellcmd"], "shared_filesystem")
-    
-    # Set resources from job data
+
+    # Resources
     if "resources" in job_data:
         resources = job_data["resources"]
         if "threads" in resources:
             task.threads.set_for_environment(resources["threads"], "shared_filesystem")
         if "mem_mb" in resources:
             task.mem_mb.set_for_environment(resources["mem_mb"], "shared_filesystem")
-    
-    # Set inputs and outputs from job data
+        if "disk_mb" in resources:
+            task.disk_mb.set_for_environment(resources["disk_mb"], "shared_filesystem")
+        if "gpu" in resources:
+            task.gpu.set_for_environment(resources["gpu"], "shared_filesystem")
+        if "gpu_mem_mb" in resources:
+            task.gpu_mem_mb.set_for_environment(resources["gpu_mem_mb"], "shared_filesystem")
+        if "time_min" in resources:
+            task.time_s.set_for_environment(int(resources["time_min"]) * 60, "shared_filesystem")
+
+    # Inputs/outputs
     if "input" in job_data:
         task.inputs = [ParameterSpec(id=f, type="File") for f in job_data["input"]]
     if "output" in job_data:
         task.outputs = [ParameterSpec(id=f, type="File") for f in job_data["output"]]
-    
+
+    # Environment
+    if rule_template.get("conda"):
+        task.conda.set_for_environment(rule_template["conda"], "shared_filesystem")
+    if rule_template.get("container"):
+        task.container.set_for_environment(rule_template["container"], "shared_filesystem")
+
+    # Retries
+    if rule_template.get("retries") is not None:
+        task.retry_count.set_for_environment(int(rule_template["retries"]), "shared_filesystem")
+
+    # Script/run block
+    if rule_template.get("script"):
+        task.script.set_for_environment(rule_template["script"], "shared_filesystem")
+    elif rule_template.get("run"):
+        task.script.set_for_environment(rule_template["run"], "shared_filesystem")
+
     return task
 
 
@@ -293,6 +343,8 @@ def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
     Workflow
         Populated IR instance.
     """
+    if isinstance(path, str):
+        path = Path(path)
     importer = SnakemakeImporter(
         interactive=opts.get("interactive", False),
         verbose=opts.get("verbose", False)
@@ -413,25 +465,62 @@ def _parse_snakefile_for_rules(snakefile_path, debug=False):
         details = {}
 
         # 3. Parse directives from the extracted rule body
-
-        # Simple key: "value" directives
-        for directive in [
-            "input",
-            "output",
-            "log",
-            "conda",
-            "container",
-            "shell",
-            "script",
-        ]:
-            # This regex handles single/double quotes, raw strings, and allows for newlines
-            pattern = re.compile(
-                rf"^\s*{directive}:\s*(?:['\"](.*?)(?<!\\)['\"]|r['\"](.*?)(?<!\\)['\"])",
-                re.S | re.M,
-            )
-            dir_match = pattern.search(body)
-            if dir_match:
-                details[directive] = dir_match.group(1) or dir_match.group(2)
+        # Robust, quote-aware parsing for key directives
+        directives_to_capture = [
+            "input", "output", "log", "conda", "container", "shell", "script"
+        ]
+        
+        # Process each line and handle indented directives properly
+        i = 0
+        while i < len(body_lines):
+            line = body_lines[i]
+            stripped = line.strip()
+            
+            # Skip empty lines and comments
+            if not stripped or stripped.startswith("#"):
+                i += 1
+                continue
+            
+            # Check if this line starts a directive (after stripping whitespace)
+            directive_found = None
+            for directive in directives_to_capture:
+                if stripped.startswith(f"{directive}:"):
+                    directive_found = directive
+                    break
+            
+            if directive_found:
+                # Find the start of the value (after colon)
+                colon_pos = stripped.find(":")
+                value = stripped[colon_pos + 1:].lstrip()
+                
+                # If value starts with a quote, capture until matching quote
+                if value and value[0] in ('"', "'"):
+                    quote_char = value[0]
+                    value_body = value[1:]
+                    collected = []
+                    
+                    # If the quote ends on the same line
+                    if value_body.endswith(quote_char) and not value_body[:-1].endswith("\\"):
+                        collected.append(value_body[:-1])
+                    else:
+                        collected.append(value_body)
+                        i += 1
+                        while i < len(body_lines):
+                            l = body_lines[i]
+                            if l.rstrip().endswith(quote_char) and not l.rstrip()[:-1].endswith("\\"):
+                                collected.append(l.rstrip()[:-1])
+                                break
+                            else:
+                                collected.append(l.rstrip("\n"))
+                            i += 1
+                    value = "\n".join(collected)
+                else:
+                    # Unquoted value (single line)
+                    value = value.strip()
+                
+                details[directive_found] = value
+            
+            i += 1
 
         # Parse retries directive (simple numeric value)
         retries_pattern = re.compile(r"^\s*retries:\s*(\d+)", re.M)
@@ -817,180 +906,72 @@ def _detect_transfer_mode(filepath: str, is_input: bool = True) -> str:
 
 def _create_task_from_rule_template(rule_name: str, rule_details: Dict[str, Any], verbose: bool = False, debug: bool = False) -> Task:
     """Create a task from a rule template in parse-only mode."""
-    
     task = Task(id=rule_name, label=rule_name)
-    
-    # Initialize multi-environment specifications
-    # The original code had MultiEnvironmentResourceSpec, MultiEnvironmentFileTransferSpec, MultiEnvironmentErrorHandlingSpec
-    # but they are no longer imported. Assuming a simplified Task object for now.
-    multi_env_resources = {}
-    multi_env_file_transfer = {}
-    multi_env_error_handling = {}
-    
-    # Extract inputs
+
+    # Inputs
     inputs = []
     if rule_details.get("input"):
-        input_str = rule_details["input"]
-        # Parse comma-separated inputs, handling quotes
-        input_list = _parse_snakemake_list(input_str)
+        input_list = _parse_snakemake_list(rule_details["input"])
         for inp in input_list:
             if inp.strip():
-                # Detect transfer mode based on file path patterns
-                transfer_mode = _detect_transfer_mode(inp.strip(), is_input=True)
-                
-                # Create multi-environment file transfer specification
-                if transfer_mode == "shared":
-                    multi_env_file_transfer["mode"] = "shared"
-                elif transfer_mode == "never":
-                    multi_env_file_transfer["mode"] = "never"
-                else:  # auto
-                    multi_env_file_transfer["mode"] = "auto"
-                
-                param = ParameterSpec(id=inp.strip(), type="File", transfer_mode=transfer_mode)
-                # Ensure type normalization
-                param.type = param.type if hasattr(param.type, 'type') else ParameterSpec(id=param.id, type=param.type).type
+                param = ParameterSpec(id=inp.strip(), type="File")
                 inputs.append(param)
-    
-    # Extract outputs
+    task.inputs = inputs
+
+    # Outputs
     outputs = []
     if rule_details.get("output"):
-        output_str = rule_details["output"]
-        # Parse comma-separated outputs, handling quotes
-        output_list = _parse_snakemake_list(output_str)
+        output_list = _parse_snakemake_list(rule_details["output"])
         for out in output_list:
             if out.strip():
-                # Detect transfer mode based on file path patterns
-                transfer_mode = _detect_transfer_mode(out.strip(), is_input=False)
-                
-                # Create multi-environment file transfer specification for outputs
-                if transfer_mode == "shared":
-                    multi_env_file_transfer["mode"] = "shared"
-                elif transfer_mode == "never":
-                    multi_env_file_transfer["mode"] = "never"
-                else:  # auto
-                    multi_env_file_transfer["mode"] = "auto"
-                
-                param = ParameterSpec(id=out.strip(), type="File", transfer_mode=transfer_mode)
-                # Ensure type normalization
-                param.type = param.type if hasattr(param.type, 'type') else ParameterSpec(id=param.id, type=param.type).type
+                param = ParameterSpec(id=out.strip(), type="File")
                 outputs.append(param)
-    
-    # Extract command/script
-    command = None
-    script = None
-    
-    if rule_details.get("shell"):
-        command = rule_details["shell"]
-    elif rule_details.get("script"):
-        script = rule_details["script"]
-    elif rule_details.get("run"):
-        # For run blocks, store the code in meta and use a placeholder command
-        command = f"# run block for rule {rule_name}"
-        task.meta = {"run_block": rule_details["run"]}
-    else:
-        command = f"echo 'No command defined for rule {rule_name}'"
-    
-    task.command = command
-    if script:
-        task.script = script
-    
-    # Extract resources and populate multi-environment specifications
-    if rule_details.get("resources"):
-        resources = {}
-        for key, value in rule_details["resources"].items():
-            if key == "mem_mb":
-                resources["mem_mb"] = int(value)
-                # Multi-environment: shared filesystem typically needs less explicit memory
-                multi_env_resources["mem_mb"] = int(value)
-                multi_env_resources["mem_mb"] = int(value) # This line seems redundant, should be multi_env_resources["mem_mb"] = int(value)
-                multi_env_resources["mem_mb"] = 0 # Shared systems often don't need explicit memory
-            elif key == "disk_mb":
-                resources["disk_mb"] = int(value)
-                # Multi-environment: shared filesystem typically needs less explicit disk
-                multi_env_resources["disk_mb"] = int(value)
-                multi_env_resources["disk_mb"] = int(value) # This line seems redundant, should be multi_env_resources["disk_mb"] = int(value)
-                multi_env_resources["disk_mb"] = 0 # Shared systems often don't need explicit disk
-            elif key == "cpus":
-                resources["cpu"] = int(value)
-                # Multi-environment: CPU requirements apply to all environments
-                multi_env_resources["cpu"] = int(value)
-                multi_env_resources["cpu"] = int(value) # This line seems redundant, should be multi_env_resources["cpu"] = int(value)
-                multi_env_resources["cpu"] = int(value)
-            elif key == "time_min":
-                resources["time_s"] = int(value)
-                # Multi-environment: time limits apply to distributed and cloud environments
-                multi_env_resources["time_s"] = int(value)
-                multi_env_resources["time_s"] = int(value) # This line seems redundant, should be multi_env_resources["time_s"] = int(value)
-                multi_env_resources["time_s"] = int(value)
-            elif key == "gpu":
-                resources["gpu"] = int(value)
-                # Multi-environment: GPU requirements apply to distributed and cloud environments
-                multi_env_resources["gpu"] = int(value)
-                multi_env_resources["gpu"] = int(value) # This line seems redundant, should be multi_env_resources["gpu"] = int(value)
-                multi_env_resources["gpu"] = int(value)
-            elif key == "gpu_mem_mb":
-                resources["gpu_mem_mb"] = int(value)
-                # Multi-environment: GPU memory requirements apply to distributed and cloud environments
-                multi_env_resources["gpu_mem_mb"] = int(value)
-                multi_env_resources["gpu_mem_mb"] = int(value) # This line seems redundant, should be multi_env_resources["gpu_mem_mb"] = int(value)
-                multi_env_resources["gpu_mem_mb"] = int(value)
-            else:
-                # Store other resources in metadata
-                if task.metadata is None:
-                    task.metadata = MetadataSpec()
-                if "resources" not in task.metadata.format_specific:
-                    task.metadata.format_specific["resources"] = {}
-                task.metadata.format_specific["resources"][key] = value
-        
-        if any([resources.get("mem_mb"), resources.get("disk_mb"), resources.get("cpu"), resources.get("time_s"), resources.get("gpu"), resources.get("gpu_mem_mb")]):
-            task.resources = resources
-    
-    # Extract environment
-    if rule_details.get("conda"):
-        environment = {"conda": rule_details["conda"]}
-        if not task.environment:
-            task.environment = {}
-        task.environment.update(environment)
-    
-    if rule_details.get("container"):
-        environment = {"container": rule_details["container"]}
-        if not task.environment:
-            task.environment = {}
-        task.environment.update(environment)
-    
-    # Extract retries and populate multi-environment error handling
-    if rule_details.get("retries"):
-        task.retry = rule_details["retries"]
-        # Multi-environment: retry logic is more important for distributed and cloud environments
-        multi_env_error_handling["retry_count"] = rule_details["retries"]
-        multi_env_error_handling["retry_count"] = rule_details["retries"] # This line seems redundant, should be multi_env_error_handling["retry_count"] = rule_details["retries"]
-        multi_env_error_handling["retry_count"] = 0 # Shared systems often don't need explicit retries
-    
-    # Set multi-environment specifications on the task
-    task.multi_env_resources = multi_env_resources
-    task.multi_env_file_transfer = multi_env_file_transfer
-    task.multi_env_error_handling = multi_env_error_handling
-    
-    # Store rule details in meta
-    task.meta.update({
-        "rule_name": rule_name,
-        "rule_details": rule_details,
-        "parse_only_mode": True,
-        "limitations": [
-            "No wildcard expansion",
-            "No job instantiation", 
-            "No dependency resolution",
-            "Limited resource detection"
-        ]
-    })
-    
-    # Set inputs and outputs
-    task.inputs = inputs
     task.outputs = outputs
-    
-    if debug:
-        print(f"DEBUG: Created task '{rule_name}' with {len(inputs)} inputs, {len(outputs)} outputs")
-    
+
+    # Command/script (environment-specific for shared_filesystem)
+    if rule_details.get("shell"):
+        task.command.set_for_environment(rule_details["shell"], "shared_filesystem")
+    elif rule_details.get("run"):
+        task.script.set_for_environment(rule_details["run"], "shared_filesystem")
+    elif rule_details.get("script"):
+        task.script.set_for_environment(rule_details["script"], "shared_filesystem")
+
+    # Resources (environment-specific for shared_filesystem)
+    if rule_details.get("threads"):
+        task.threads.set_for_environment(rule_details["threads"], "shared_filesystem")
+    if rule_details.get("resources"):
+        resources = rule_details["resources"]
+        if isinstance(resources, dict):
+            if "mem_mb" in resources:
+                task.mem_mb.set_for_environment(resources["mem_mb"], "shared_filesystem")
+            if "mem_gb" in resources:
+                task.mem_mb.set_for_environment(resources["mem_gb"] * 1024, "shared_filesystem")
+            if "disk_mb" in resources:
+                task.disk_mb.set_for_environment(resources["disk_mb"], "shared_filesystem")
+            if "disk_gb" in resources:
+                task.disk_mb.set_for_environment(resources["disk_gb"] * 1024, "shared_filesystem")
+            if "gpu" in resources:
+                task.gpu.set_for_environment(resources["gpu"], "shared_filesystem")
+
+    # Environment specifications (environment-specific for shared_filesystem)
+    if rule_details.get("conda"):
+        task.conda.set_for_environment(rule_details["conda"], "shared_filesystem")
+    if rule_details.get("container"):
+        task.container.set_for_environment(rule_details["container"], "shared_filesystem")
+
+    # Retry logic (environment-specific for shared_filesystem)
+    if rule_details.get("retries"):
+        task.retry_count.set_for_environment(rule_details["retries"], "shared_filesystem")
+
+    # Priority (environment-specific for shared_filesystem)
+    if rule_details.get("priority"):
+        task.priority.set_for_environment(rule_details["priority"], "shared_filesystem")
+
+    # Store original rule details in metadata for potential future use
+    if not task.metadata:
+        task.metadata = MetadataSpec()
+    task.metadata.add_format_specific("snakemake_rule", rule_details)
+
     return task
 
 
@@ -1120,3 +1101,106 @@ def _build_task_from_rule_details(rule_name: str, rule_details: Dict[str, Any]) 
         task.networking.set_for_environment(spec, "shared_filesystem")
     
     return task
+
+
+def _build_task_from_rule_with_wildcards(rule_name: str, rule_details: Dict[str, Any], rule_job_instances: List[tuple]) -> Task:
+    """Build a task from rule details with wildcard pattern preservation and scatter information."""
+    task = Task(id=rule_name)
+    
+    # Extract wildcard patterns and instances
+    wildcard_patterns = _extract_wildcard_patterns(rule_details)
+    wildcard_instances = _extract_wildcard_instances(rule_job_instances)
+    
+    # Set up scatter if multiple instances exist
+    if len(rule_job_instances) > 1 and wildcard_instances:
+        scatter_spec = ScatterSpec(
+            scatter=list(wildcard_instances[0].keys()) if wildcard_instances else [],
+            wildcard_instances=wildcard_instances
+        )
+        task.scatter.set_for_environment(scatter_spec, "shared_filesystem")
+    
+    # Command/script
+    if rule_details.get("shell"):
+        task.command.set_for_environment(rule_details["shell"], "shared_filesystem")
+    elif rule_details.get("script"):
+        task.script.set_for_environment(rule_details["script"], "shared_filesystem")
+    elif rule_details.get("run"):
+        task.script.set_for_environment(rule_details["run"], "shared_filesystem")
+    
+    # Resources
+    if "threads" in rule_details:
+        task.threads.set_for_environment(rule_details["threads"], "shared_filesystem")
+    if "resources" in rule_details:
+        resources = rule_details["resources"]
+        if "mem_mb" in resources:
+            task.mem_mb.set_for_environment(resources["mem_mb"], "shared_filesystem")
+        if "disk_mb" in resources:
+            task.disk_mb.set_for_environment(resources["disk_mb"], "shared_filesystem")
+        if "gpu" in resources:
+            task.gpu.set_for_environment(resources["gpu"], "shared_filesystem")
+        if "time_min" in resources:
+            task.time_s.set_for_environment(int(resources["time_min"]) * 60, "shared_filesystem")
+    
+    # Inputs with wildcard patterns
+    if "input" in rule_details:
+        for i, input_pattern in enumerate(rule_details["input"]):
+            param = ParameterSpec(
+                id=f"input_{i}",
+                type="File",
+                wildcard_pattern=input_pattern
+            )
+            task.inputs.append(param)
+    
+    # Outputs with wildcard patterns
+    if "output" in rule_details:
+        for i, output_pattern in enumerate(rule_details["output"]):
+            param = ParameterSpec(
+                id=f"output_{i}",
+                type="File",
+                wildcard_pattern=output_pattern
+            )
+            task.outputs.append(param)
+    
+    # Environment
+    if rule_details.get("conda"):
+        task.conda.set_for_environment(rule_details["conda"], "shared_filesystem")
+    if rule_details.get("container"):
+        task.container.set_for_environment(rule_details["container"], "shared_filesystem")
+    
+    # Retries
+    if rule_details.get("retries") is not None:
+        task.retry_count.set_for_environment(int(rule_details["retries"]), "shared_filesystem")
+    
+    return task
+
+
+def _extract_wildcard_patterns(rule_details: Dict[str, Any]) -> Dict[str, str]:
+    """Extract wildcard patterns from rule details."""
+    patterns = {}
+    
+    # Extract from input/output patterns
+    for io_type in ["input", "output"]:
+        if io_type in rule_details:
+            for pattern in rule_details[io_type]:
+                # Find wildcards in pattern like {wildcard}
+                import re
+                wildcards = re.findall(r'\{([^}]+)\}', pattern)
+                for wildcard in wildcards:
+                    patterns[wildcard] = pattern
+    
+    return patterns
+
+
+def _extract_wildcard_instances(rule_job_instances: List[tuple]) -> List[Dict[str, str]]:
+    """Extract wildcard instances from job instances."""
+    instances = []
+    
+    for job_id, job_data in rule_job_instances:
+        if "wildcards" in job_data:
+            instances.append(job_data["wildcards"])
+        else:
+            # Try to extract from job_id if it contains wildcard info
+            # This is a fallback for when wildcards aren't explicitly stored
+            pass
+    
+    return instances

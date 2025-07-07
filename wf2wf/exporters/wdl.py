@@ -33,6 +33,7 @@ class WDLExporter(BaseExporter):
         wdl_version = opts.get("wdl_version", "1.0")
         add_runtime = opts.get("add_runtime", True)
         add_meta = opts.get("add_meta", True)
+        target_env = self.target_environment
 
         if self.verbose:
             print(f"Exporting workflow '{workflow.name}' to WDL {wdl_version}")
@@ -49,6 +50,7 @@ class WDLExporter(BaseExporter):
                 add_runtime=add_runtime,
                 add_meta=add_meta,
                 verbose=self.verbose,
+                target_environment=target_env,
             )
 
             with output_path.open('w') as f:
@@ -66,6 +68,7 @@ class WDLExporter(BaseExporter):
                         add_runtime=add_runtime,
                         add_meta=add_meta,
                         verbose=self.verbose,
+                        target_environment=target_env,
                     )
                     
                     task_file = tasks_path / f"{task.id}.wdl"
@@ -100,6 +103,7 @@ def _generate_main_wdl_enhanced(
     add_runtime: bool = True,
     add_meta: bool = True,
     verbose: bool = False,
+    target_environment: str = "shared_filesystem",
 ) -> str:
     """Generate enhanced main WDL file."""
     lines = []
@@ -195,6 +199,7 @@ def _generate_task_wdl_enhanced(
     add_runtime: bool = True,
     add_meta: bool = True,
     verbose: bool = False,
+    target_environment: str = "shared_filesystem",
 ) -> str:
     """Generate enhanced task WDL file."""
     lines = []
@@ -227,7 +232,7 @@ def _generate_task_wdl_enhanced(
         lines.append("")
     
     # Add command
-    command = task.command.get_value_for("shared_filesystem")
+    command = task.command.get_value_for(target_environment)
     if command:
         lines.append("    command {")
         if isinstance(command, str):

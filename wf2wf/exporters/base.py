@@ -20,6 +20,7 @@ from wf2wf.loss import (
     as_list as loss_list,
     prepare as loss_prepare,
     compute_checksum,
+    write_loss_document,
 )
 from wf2wf.exporters.loss_integration import detect_and_record_losses
 from wf2wf.exporters.inference import infer_missing_values
@@ -29,10 +30,11 @@ from wf2wf.exporters.interactive import prompt_for_missing_values
 class BaseExporter(ABC):
     """Base class for all exporters with shared functionality."""
     
-    def __init__(self, interactive: bool = False, verbose: bool = False):
+    def __init__(self, interactive: bool = False, verbose: bool = False, target_environment: str = "shared_filesystem"):
         self.interactive = interactive
         self.verbose = verbose
         self.target_format = self._get_target_format()
+        self.target_environment = target_environment
     
     @abstractmethod
     def _get_target_format(self) -> str:
@@ -45,6 +47,7 @@ class BaseExporter(ABC):
         
         if self.verbose:
             print(f"Exporting workflow '{workflow.name}' to {self.target_format}")
+            print(f"  Target environment: {self.target_environment}")
             print(f"  Output: {output_path}")
             print(f"  Tasks: {len(workflow.tasks)}")
             print(f"  Dependencies: {len(workflow.edges)}")
@@ -53,15 +56,15 @@ class BaseExporter(ABC):
         loss_prepare(workflow.loss_map)
         loss_reset()
         
-        # 2. Infer missing values based on target format
-        infer_missing_values(workflow, self.target_format, verbose=self.verbose)
+        # 2. Infer missing values based on target format and environment
+        infer_missing_values(workflow, self.target_format, target_environment=self.target_environment, verbose=self.verbose)
         
         # 3. Interactive prompting if enabled
         if self.interactive:
-            prompt_for_missing_values(workflow, self.target_format)
+            prompt_for_missing_values(workflow, self.target_format, target_environment=self.target_environment)
         
         # 4. Record format-specific losses
-        detect_and_record_losses(workflow, self.target_format, verbose=self.verbose)
+        detect_and_record_losses(workflow, self.target_format, target_environment=self.target_environment, verbose=self.verbose)
         
         # 5. Create output directory
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -80,6 +83,7 @@ class BaseExporter(ABC):
         # 8. Report completion
         if self.verbose:
             print(f"✓ {self.target_format.title()} workflow exported to {output_path}")
+            print(f"  Target environment: {self.target_environment}")
             print(f"  Loss side-car: {output_path.with_suffix('.loss.json')}")
     
     @abstractmethod
@@ -199,6 +203,48 @@ class BaseExporter(ABC):
         """Get execution model for specific environment."""
         model = self._get_environment_specific_value(workflow.execution_model, environment)
         return model if model is not None else "unknown"
+    
+    # Convenience methods that use target_environment by default
+    def _get_task_resources_for_target(self, task: Task) -> Dict[str, Any]:
+        """Get task resources for target environment."""
+        return self._get_task_resources(task, self.target_environment)
+    
+    def _get_task_environment_for_target(self, task: Task) -> Dict[str, Any]:
+        """Get task environment specifications for target environment."""
+        return self._get_task_environment(task, self.target_environment)
+    
+    def _get_task_error_handling_for_target(self, task: Task) -> Dict[str, Any]:
+        """Get task error handling specifications for target environment."""
+        return self._get_task_error_handling(task, self.target_environment)
+    
+    def _get_task_file_transfer_for_target(self, task: Task) -> Dict[str, Any]:
+        """Get task file transfer specifications for target environment."""
+        return self._get_task_file_transfer(task, self.target_environment)
+    
+    def _get_task_advanced_features_for_target(self, task: Task) -> Dict[str, Any]:
+        """Get task advanced features for target environment."""
+        return self._get_task_advanced_features(task, self.target_environment)
+    
+    def _get_workflow_requirements_for_target(self, workflow: Workflow) -> List[Any]:
+        """Get workflow requirements for target environment."""
+        return self._get_workflow_requirements(workflow, self.target_environment)
+    
+    def _get_workflow_hints_for_target(self, workflow: Workflow) -> List[Any]:
+        """Get workflow hints for target environment."""
+        return self._get_workflow_hints(workflow, self.target_environment)
+    
+    def _get_execution_model_for_target(self, workflow: Workflow) -> str:
+        """Get execution model for target environment."""
+        return self._get_execution_model(workflow, self.target_environment)
+    
+    def _get_environment_specific_value_for_target(self, env_value: EnvironmentSpecificValue) -> Any:
+        """Get value for target environment, with fallback to universal value."""
+        return self._get_environment_specific_value(env_value, self.target_environment)
+    
+    def _record_loss_if_present_for_target(self, task: Task, field_name: str, 
+                                          reason: str = "Feature not supported in target format") -> None:
+        """Record loss if a field has a value for the target environment."""
+        self._record_loss_if_present(task, field_name, self.target_environment, reason)
     
     def _sanitize_name(self, name: str) -> str:
         """Sanitize name for target format."""

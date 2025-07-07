@@ -545,9 +545,13 @@ class TestEdgeCasesAndRobustness:
         decoded_workflow = Workflow.from_dict(json.loads(serialized))
         decoded_task = decoded_workflow.tasks["test_task"]
         
-        # Verify None values are preserved
+        # Verify None values are preserved for specific environments
         assert decoded_task.command.get_value_for("shared_filesystem") is None
         assert decoded_task.cpu.get_value_for("distributed_computing") is None
+        
+        # Verify default values are still available for other environments
+        assert decoded_task.cpu.get_value_for("shared_filesystem") == 1  # Default value
+        assert decoded_task.cpu.get_value_for("cloud_native") == 1  # Default value
 
     def test_empty_spec_objects(self):
         """Test round-trip of empty spec objects."""

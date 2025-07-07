@@ -416,16 +416,15 @@ def _generate_resource_requirement(resources: Any) -> Optional[Dict[str, Any]]:
     return req if len(req) > 1 else None
 
 
-def _generate_resource_requirement_from_task(task: Task) -> Optional[Dict[str, Any]]:
-    """Generate CWL ResourceRequirement from task resources."""
-    environment = "shared_filesystem"
+def _generate_resource_requirement_from_task(task: Task, target_environment: str = "shared_filesystem") -> Optional[Dict[str, Any]]:
+    """Generate CWL ResourceRequirement from task resources for target environment."""
     
     req = {"class": "ResourceRequirement"}
     
-    # Get resource values
-    cpu = task.cpu.get_value_for(environment)
-    mem_mb = task.mem_mb.get_value_for(environment)
-    disk_mb = task.disk_mb.get_value_for(environment)
+    # Get resource values for target environment
+    cpu = task.cpu.get_value_for(target_environment)
+    mem_mb = task.mem_mb.get_value_for(target_environment)
+    disk_mb = task.disk_mb.get_value_for(target_environment)
     
     if cpu:
         req["coresMin"] = cpu
@@ -437,13 +436,11 @@ def _generate_resource_requirement_from_task(task: Task) -> Optional[Dict[str, A
     return req if len(req) > 1 else None
 
 
-def _generate_environment_requirement(env: Any) -> Optional[Dict[str, Any]]:
-    """Generate CWL environment requirement from environment specification."""
-    if not env:
-        return None
+def _generate_environment_requirement(task: Task, target_environment: str = "shared_filesystem") -> Optional[Dict[str, Any]]:
+    """Generate CWL environment requirement from task environment specification for target environment."""
     
     # Handle container requirements
-    container = env.container.get_value_for("shared_filesystem") if hasattr(env, 'container') else None
+    container = task.container.get_value_for(target_environment)
     if container:
         return {
             "class": "DockerRequirement",
@@ -451,7 +448,7 @@ def _generate_environment_requirement(env: Any) -> Optional[Dict[str, Any]]:
         }
     
     # Handle conda requirements
-    conda = env.conda.get_value_for("shared_filesystem") if hasattr(env, 'conda') else None
+    conda = task.conda.get_value_for(target_environment)
     if conda:
         return {
             "class": "SoftwareRequirement",

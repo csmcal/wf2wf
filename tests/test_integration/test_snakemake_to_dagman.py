@@ -77,16 +77,15 @@ def test_linear_pipeline(mock_subproc_run, tmp_path):
 
     # Simple structural checks
     assert len(wf.tasks) == 3
-    # assert any(t.id == "rule_a_0" or t.id.startswith("rule_a") for t in wf.tasks.values())
+    # Check that we have rule-based task IDs
+    assert "rule_a" in wf.tasks
+    assert "rule_b" in wf.tasks
+    assert "rule_c" in wf.tasks
 
-    # Check edges in IR
-    def _clean(s: str) -> str:
-        return s.replace("rule ", "").replace("rule_", "", 1)
-
-    edges = {(_clean(e.parent), _clean(e.child)) for e in wf.edges}
-    assert ("a_0", "b_1") in edges or ("rule_a_0", "rule_b_1") in {
-        (e.parent, e.child) for e in wf.edges
-    }
+    # Check edges in IR - now using rule names
+    edges = {(e.parent, e.child) for e in wf.edges}
+    assert ("rule_a", "rule_b") in edges
+    assert ("rule_b", "rule_c") in edges
 
     # Export to DAGMan
     dag_path = tmp_path / "linear.dag"
@@ -97,10 +96,9 @@ def test_linear_pipeline(mock_subproc_run, tmp_path):
     txt = dag_path.read_text()
 
     # Condor job names are sanitized task IDs; verify dependency line exists
-    assert (
-        "PARENT rule_a_0 CHILD rule_b_1" in txt
-        or "PARENT rule_rule_a_0 CHILD rule_rule_b_1" in txt
-    )
+    # Now using rule-based IDs instead of job-instance IDs
+    assert "PARENT rule_a CHILD rule_b" in txt
+    assert "PARENT rule_b CHILD rule_c" in txt
 
     # Add new test
     # ... (existing code)

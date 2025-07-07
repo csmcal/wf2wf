@@ -4,7 +4,7 @@ import yaml
 import json
 
 from wf2wf.exporters.cwl import from_workflow
-from wf2wf.core import Workflow, Task, ResourceSpec, EnvironmentSpec
+from wf2wf.core import Workflow, Task
 
 
 class TestCWLExporter:
@@ -18,9 +18,10 @@ class TestCWLExporter:
         task = Task(
             id="test_task",
             command="echo 'Hello World'",
-            resources=ResourceSpec(cpu=2, mem_mb=4096),
-            environment=EnvironmentSpec(container="docker://ubuntu:20.04"),
         )
+        task.cpu.set_for_environment(2, "shared_filesystem")
+        task.mem_mb.set_for_environment(4096, "shared_filesystem")
+        task.container.set_for_environment("docker://ubuntu:20.04", "shared_filesystem")
         workflow.add_task(task)
 
         # Export to CWL
@@ -85,21 +86,24 @@ class TestCWLExporter:
         task1 = Task(
             id="prepare_data",
             command="python prepare.py",
-            resources=ResourceSpec(cpu=2, mem_mb=4096),
         )
+        task1.cpu.set_for_environment(2, "shared_filesystem")
+        task1.mem_mb.set_for_environment(4096, "shared_filesystem")
 
         task2 = Task(
             id="analyze_data",
             command="python analyze.py",
-            resources=ResourceSpec(cpu=4, mem_mb=8192),
-            environment=EnvironmentSpec(container="docker://python:3.9"),
         )
+        task2.cpu.set_for_environment(4, "shared_filesystem")
+        task2.mem_mb.set_for_environment(8192, "shared_filesystem")
+        task2.container.set_for_environment("docker://python:3.9", "shared_filesystem")
 
         task3 = Task(
             id="generate_report",
             command="python report.py",
-            resources=ResourceSpec(cpu=1, mem_mb=2048),
         )
+        task3.cpu.set_for_environment(1, "shared_filesystem")
+        task3.mem_mb.set_for_environment(2048, "shared_filesystem")
 
         workflow.add_task(task1)
         workflow.add_task(task2)
@@ -150,8 +154,9 @@ class TestCWLExporter:
         task = Task(
             id="inline_task",
             command="echo 'inline test'",
-            resources=ResourceSpec(cpu=1, mem_mb=2048),
         )
+        task.cpu.set_for_environment(1, "shared_filesystem")
+        task.mem_mb.set_for_environment(2048, "shared_filesystem")
         workflow.add_task(task)
 
         # Export as single file
@@ -182,10 +187,8 @@ class TestCWLExporter:
         task = Task(
             id="conda_task",
             command="python script.py",
-            environment=EnvironmentSpec(
-                conda={"dependencies": ["numpy=1.21.0", "pandas", "scipy=1.7.0"]}
-            ),
         )
+        task.conda.set_for_environment({"dependencies": ["numpy=1.21.0", "pandas", "scipy=1.7.0"]}, "shared_filesystem")
         workflow.add_task(task)
 
         # Export to CWL
@@ -244,8 +247,11 @@ class TestCWLExporter:
         task = Task(
             id="resource_task",
             command="heavy_computation",
-            resources=ResourceSpec(cpu=8, mem_mb=32768, disk_mb=10240, gpu=2),
         )
+        task.cpu.set_for_environment(8, "shared_filesystem")
+        task.mem_mb.set_for_environment(32768, "shared_filesystem")
+        task.disk_mb.set_for_environment(10240, "shared_filesystem")
+        task.gpu.set_for_environment(2, "shared_filesystem")
         workflow.add_task(task)
 
         # Export to CWL
@@ -272,29 +278,37 @@ class TestCWLExporter:
         workflow_data = {
             "name": "Complex Analysis Pipeline",
             "version": "2.0",
-            "config": {
-                "input_data": "data/samples.txt",
-                "quality_threshold": 0.8,
-                "analysis_mode": "comprehensive",
+            "metadata": {
+                "format_specific": {
+                    "input_data": "data/samples.txt",
+                    "quality_threshold": 0.8,
+                    "analysis_mode": "comprehensive",
+                }
             },
             "tasks": {
                 "quality_control": {
                     "id": "quality_control",
                     "command": "qc_tool --input {input} --threshold {threshold}",
-                    "resources": {"cpu": 4, "mem_mb": 8192, "disk_mb": 5120},
-                    "environment": {"container": "docker://biotools/qc:latest"},
+                    "cpu": [{"value": 4, "environments": ["shared_filesystem"]}],
+                    "mem_mb": [{"value": 8192, "environments": ["shared_filesystem"]}],
+                    "disk_mb": [{"value": 5120, "environments": ["shared_filesystem"]}],
+                    "container": [{"value": "docker://biotools/qc:latest", "environments": ["shared_filesystem"]}],
                 },
                 "alignment": {
                     "id": "alignment",
                     "command": "align_reads --input {input} --reference {ref}",
-                    "resources": {"cpu": 8, "mem_mb": 16384, "disk_mb": 20480},
-                    "environment": {"container": "docker://biotools/aligner:v2.1"},
+                    "cpu": [{"value": 8, "environments": ["shared_filesystem"]}],
+                    "mem_mb": [{"value": 16384, "environments": ["shared_filesystem"]}],
+                    "disk_mb": [{"value": 20480, "environments": ["shared_filesystem"]}],
+                    "container": [{"value": "docker://biotools/aligner:v2.1", "environments": ["shared_filesystem"]}],
                 },
                 "variant_calling": {
                     "id": "variant_calling",
                     "command": "call_variants --aligned {input} --output {output}",
-                    "resources": {"cpu": 6, "mem_mb": 12288, "disk_mb": 10240},
-                    "environment": {"container": "docker://biotools/variants:latest"},
+                    "cpu": [{"value": 6, "environments": ["shared_filesystem"]}],
+                    "mem_mb": [{"value": 12288, "environments": ["shared_filesystem"]}],
+                    "disk_mb": [{"value": 10240, "environments": ["shared_filesystem"]}],
+                    "container": [{"value": "docker://biotools/variants:latest", "environments": ["shared_filesystem"]}],
                 },
             },
             "edges": [
@@ -318,7 +332,7 @@ class TestCWLExporter:
         assert len(cwl_doc["steps"]) == 3
         assert cwl_doc["label"] == "Complex Analysis Pipeline"
 
-        # Check config mapping to inputs
+        # Check metadata mapping to inputs
         inputs = cwl_doc["inputs"]
         assert "quality_threshold" in inputs
         assert inputs["quality_threshold"]["default"] == 0.8

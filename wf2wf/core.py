@@ -28,39 +28,54 @@ class EnvironmentSpecificValue:
     
     # Each entry contains: value, environments
     values: List[Dict[str, Any]] = field(default_factory=list)
+    
+    # Explicit default value (separate from environment-specific values)
+    default_value: Optional[Any] = None
 
     def __init__(self, value: Any = None, environments: Optional[List[str]] = None):
         self.values = []
+        self.default_value = None
+        
         if value is not None:
-            # Normalize environments: treat None or [None] as []
-            env_list = []
-            if environments:
+            if environments is None or not environments:
+                # No environments specified = this is the default value
+                self.default_value = value
+            else:
+                # Environments specified = this is environment-specific
+                # Normalize environments: remove None values
                 env_list = [env for env in environments if env is not None]
-            if not env_list:
-                env_list = []
-            self.values.append({
-                "value": value,
-                "environments": env_list
-            })
+                if env_list:
+                    self.values.append({
+                        "value": value,
+                        "environments": env_list
+                    })
 
     def is_applicable_to(self, environment: str) -> bool:
         """Check if any value is applicable to the given environment."""
+        # Check for environment-specific value
         for entry in self.values:
-            if not entry["environments"] or environment in entry["environments"]:
+            if environment in entry["environments"]:
                 return True
-        return False
+        # Check for default value
+        return self.default_value is not None
 
     def get_value_for(self, environment: str) -> Optional[Any]:
-        """Get the value for the given environment, or the default if none is set."""
-        # Search in reverse order (most recent first) for exact match
+        """Get the value for the given environment, or None if not set."""
+        # Search for environment-specific value first
         for entry in reversed(self.values):
             if environment in entry["environments"]:
                 return entry["value"]
-        # Fallback: any value with empty environments (universal default)
-        for entry in reversed(self.values):
-            if not entry["environments"]:
-                return entry["value"]
+        # No environment-specific value found
         return None
+
+    def get_value_with_default(self, environment: str) -> Optional[Any]:
+        """Get the value for the given environment, with fallback to default value."""
+        # Try environment-specific value first
+        value = self.get_value_for(environment)
+        if value is not None:
+            return value
+        # Fallback to default value
+        return self.default_value
 
     def add_environment(self, environment: str):
         """Add an environment to the most recent value's applicable environments."""
@@ -75,20 +90,27 @@ class EnvironmentSpecificValue:
 
     def set_for_environment(self, value: Any, environment: Optional[str]):
         """Set a value for a specific environment (replaces if already present)."""
-        # Remove any existing value for this environment
         if environment is None:
-            envs = []
-        else:
-            envs = [environment]
-        for entry in self.values:
-            for env in envs:
-                if env in entry["environments"]:
-                    entry["environments"].remove(env)
+            # Setting default value
+            self.default_value = value
+            return
+        
+        # Remove any existing value for this environment
+        self.values = [entry for entry in self.values if environment not in entry["environments"]]
+        
         # Add new value
         self.values.append({
             "value": value,
-            "environments": envs
+            "environments": [environment]
         })
+
+    def set_default_value(self, value: Any):
+        """Set the default value explicitly."""
+        self.default_value = value
+
+    def get_default_value(self) -> Optional[Any]:
+        """Get the default value."""
+        return self.default_value
 
     def all_environments(self) -> Set[str]:
         """Get all environments that have values set."""
@@ -96,6 +118,14 @@ class EnvironmentSpecificValue:
         for entry in self.values:
             envs.update(entry["environments"])
         return envs
+
+    def has_environment_specific_value(self, environment: str) -> bool:
+        """Check if there's an environment-specific value for the given environment."""
+        return self.get_value_for(environment) is not None
+
+    def has_default_value(self) -> bool:
+        """Check if there's a default value set."""
+        return self.default_value is not None
 
 # -----------------------------------------------------------------------------
 # Predefined Execution Environments
@@ -491,10 +521,13 @@ class ParameterSpec:
     # CWL Step-specific expression support
     value_from: Optional[str] = None  # CWL valueFrom expression
 
+    # Wildcard pattern support (for Snakemake compatibility)
+    wildcard_pattern: Optional[str] = None  # e.g., "data/{sample}_{replicate}.txt"
+
     # Environment-specific file transfer behavior
-    transfer_mode: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue("auto", []))
-    staging_required: EnvironmentSpecificValue[bool] = field(default_factory=lambda: EnvironmentSpecificValue(False, []))
-    cleanup_after: EnvironmentSpecificValue[bool] = field(default_factory=lambda: EnvironmentSpecificValue(False, []))
+    transfer_mode: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue("auto"))
+    staging_required: EnvironmentSpecificValue[bool] = field(default_factory=lambda: EnvironmentSpecificValue(False))
+    cleanup_after: EnvironmentSpecificValue[bool] = field(default_factory=lambda: EnvironmentSpecificValue(False))
 
     # ------------------------------------------------------------------
     # Post-initialisation normalisation
@@ -528,6 +561,8 @@ class ScatterSpec:
     scatter_method: str = (
         "dotproduct"  # dotproduct, nested_crossproduct, flat_crossproduct
     )
+    # Wildcard instances for each scatter instance (for Snakemake compatibility)
+    wildcard_instances: List[Dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -645,63 +680,63 @@ class Task:
     scatter: EnvironmentSpecificValue[ScatterSpec] = field(default_factory=lambda: EnvironmentSpecificValue(None))
 
     # Resources (universally environment-aware)
-    cpu: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(1, []))
-    mem_mb: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(4096, []))
-    disk_mb: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(4096, []))
-    gpu: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(0, []))
-    gpu_mem_mb: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(0, []))
-    time_s: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(3600, []))
-    threads: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(1, []))
+    cpu: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(1))
+    mem_mb: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(4096))
+    disk_mb: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(4096))
+    gpu: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(0))
+    gpu_mem_mb: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(0))
+    time_s: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(3600))
+    threads: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(1))
 
     # Environment isolation (environment-specific)
-    conda: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue(None, []))
-    container: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue(None, []))
-    workdir: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue(None, []))
-    env_vars: EnvironmentSpecificValue[Dict[str, str]] = field(default_factory=lambda: EnvironmentSpecificValue({}, []))
-    modules: EnvironmentSpecificValue[List[str]] = field(default_factory=lambda: EnvironmentSpecificValue([], []))
+    conda: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue(None))
+    container: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue(None))
+    workdir: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue(None))
+    env_vars: EnvironmentSpecificValue[Dict[str, str]] = field(default_factory=lambda: EnvironmentSpecificValue({}))
+    modules: EnvironmentSpecificValue[List[str]] = field(default_factory=lambda: EnvironmentSpecificValue([]))
 
     # Error handling (environment-specific)
-    retry_count: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(0, []))
-    retry_delay: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(60, []))
-    retry_backoff: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue("none", []))
-    max_runtime: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(None, []))
-    checkpoint_interval: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(None, []))
+    retry_count: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(0))
+    retry_delay: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(60))
+    retry_backoff: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue("none"))
+    max_runtime: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(None))
+    checkpoint_interval: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(None))
 
     # Failure handling (environment-specific)
-    on_failure: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue("stop", []))
-    failure_notification: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue(None, []))
-    cleanup_on_failure: EnvironmentSpecificValue[bool] = field(default_factory=lambda: EnvironmentSpecificValue(True, []))
+    on_failure: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue("stop"))
+    failure_notification: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue(None))
+    cleanup_on_failure: EnvironmentSpecificValue[bool] = field(default_factory=lambda: EnvironmentSpecificValue(True))
 
     # Recovery options (environment-specific)
-    restart_from_checkpoint: EnvironmentSpecificValue[bool] = field(default_factory=lambda: EnvironmentSpecificValue(False, []))
-    partial_results: EnvironmentSpecificValue[bool] = field(default_factory=lambda: EnvironmentSpecificValue(False, []))
+    restart_from_checkpoint: EnvironmentSpecificValue[bool] = field(default_factory=lambda: EnvironmentSpecificValue(False))
+    partial_results: EnvironmentSpecificValue[bool] = field(default_factory=lambda: EnvironmentSpecificValue(False))
 
     # Priority and scheduling (environment-specific)
-    priority: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(0, []))
+    priority: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(0))
 
     # File transfer (environment-specific)
-    file_transfer_mode: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue("auto", []))
-    staging_required: EnvironmentSpecificValue[bool] = field(default_factory=lambda: EnvironmentSpecificValue(False, []))
-    cleanup_after: EnvironmentSpecificValue[bool] = field(default_factory=lambda: EnvironmentSpecificValue(False, []))
+    file_transfer_mode: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue("auto"))
+    staging_required: EnvironmentSpecificValue[bool] = field(default_factory=lambda: EnvironmentSpecificValue(False))
+    cleanup_after: EnvironmentSpecificValue[bool] = field(default_factory=lambda: EnvironmentSpecificValue(False))
 
     # Cloud-specific options (environment-specific)
-    cloud_provider: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue(None, []))
-    cloud_storage_class: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue(None, []))
-    cloud_encryption: EnvironmentSpecificValue[bool] = field(default_factory=lambda: EnvironmentSpecificValue(False, []))
+    cloud_provider: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue(None))
+    cloud_storage_class: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue(None))
+    cloud_encryption: EnvironmentSpecificValue[bool] = field(default_factory=lambda: EnvironmentSpecificValue(False))
 
     # Performance options (environment-specific)
-    parallel_transfers: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(1, []))
-    bandwidth_limit: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue(None, []))
+    parallel_transfers: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(1))
+    bandwidth_limit: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue(None))
 
     # Requirements and hints (environment-specific)
-    requirements: EnvironmentSpecificValue[List[RequirementSpec]] = field(default_factory=lambda: EnvironmentSpecificValue([], []))
-    hints: EnvironmentSpecificValue[List[RequirementSpec]] = field(default_factory=lambda: EnvironmentSpecificValue([], []))
+    requirements: EnvironmentSpecificValue[List[RequirementSpec]] = field(default_factory=lambda: EnvironmentSpecificValue([]))
+    hints: EnvironmentSpecificValue[List[RequirementSpec]] = field(default_factory=lambda: EnvironmentSpecificValue([]))
 
     # Add new environment-specific advanced features
-    checkpointing: EnvironmentSpecificValue[CheckpointSpec] = field(default_factory=lambda: EnvironmentSpecificValue(None, []))
-    logging: EnvironmentSpecificValue[LoggingSpec] = field(default_factory=lambda: EnvironmentSpecificValue(None, []))
-    security: EnvironmentSpecificValue[SecuritySpec] = field(default_factory=lambda: EnvironmentSpecificValue(None, []))
-    networking: EnvironmentSpecificValue[NetworkingSpec] = field(default_factory=lambda: EnvironmentSpecificValue(None, []))
+    checkpointing: EnvironmentSpecificValue[CheckpointSpec] = field(default_factory=lambda: EnvironmentSpecificValue(None))
+    logging: EnvironmentSpecificValue[LoggingSpec] = field(default_factory=lambda: EnvironmentSpecificValue(None))
+    security: EnvironmentSpecificValue[SecuritySpec] = field(default_factory=lambda: EnvironmentSpecificValue(None))
+    networking: EnvironmentSpecificValue[NetworkingSpec] = field(default_factory=lambda: EnvironmentSpecificValue(None))
 
     # Metadata and provenance (environment-agnostic)
     provenance: Optional[ProvenanceSpec] = None
@@ -722,10 +757,10 @@ class Task:
         """Get all values applicable to the given environment."""
         result = {}
         
-        # Get all environment-specific values
+        # Get all environment-specific values with default fallback
         for field_name, field_value in self.__dict__.items():
             if isinstance(field_value, EnvironmentSpecificValue):
-                value = field_value.get_value_for(environment)
+                value = field_value.get_value_with_default(environment)
                 if value is not None:
                     result[field_name] = value
             elif field_name not in ['id', 'label', 'doc', 'provenance', 'documentation', 'intent', 'inputs', 'outputs', 'extra']:
@@ -833,8 +868,8 @@ class Workflow:
     outputs: List[ParameterSpec] = field(default_factory=list)
 
     # Requirements and hints (environment-specific)
-    requirements: EnvironmentSpecificValue[List[RequirementSpec]] = field(default_factory=lambda: EnvironmentSpecificValue([], []))
-    hints: EnvironmentSpecificValue[List[RequirementSpec]] = field(default_factory=lambda: EnvironmentSpecificValue([], []))
+    requirements: EnvironmentSpecificValue[List[RequirementSpec]] = field(default_factory=lambda: EnvironmentSpecificValue([]))
+    hints: EnvironmentSpecificValue[List[RequirementSpec]] = field(default_factory=lambda: EnvironmentSpecificValue([]))
 
     # Metadata and provenance (environment-agnostic)
     provenance: Optional[ProvenanceSpec] = None
@@ -846,7 +881,7 @@ class Workflow:
     bco_spec: Optional[BCOSpec] = None
 
     # Execution model specification (environment-agnostic)
-    execution_model: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue("unknown", []))
+    execution_model: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue("unknown"))
 
     # Loss mapping entries captured during export (optional)
     loss_map: List[Dict[str, Any]] = field(default_factory=list)
@@ -934,7 +969,7 @@ class Workflow:
     def to_json(self, *, indent: int = 2) -> str:
         """Return JSON representation using custom encoder."""
         import json
-        
+
         return json.dumps(self.to_dict(), indent=indent, cls=WF2WFJSONEncoder, sort_keys=True)
 
     def save_json(self, path: Union[str, Path], *, indent: int = 2):
@@ -967,6 +1002,25 @@ class Workflow:
         # Tasks
         tasks_data = data.pop("tasks", {})
         tasks = {}
+        
+        # Define _make_params function before using it
+        def _make_params(items):
+            converted = []
+            for p in items:
+                if isinstance(p, ParameterSpec):
+                    converted.append(p)
+                elif isinstance(p, str):
+                    converted.append(ParameterSpec(id=p, type="string"))
+                elif isinstance(p, dict):
+                    # Handle EnvironmentSpecificValue fields in ParameterSpec
+                    for field_name, field_value in p.items():
+                        if isinstance(field_value, dict) and "values" in field_value:
+                            p[field_name] = WF2WFJSONDecoder.decode_environment_specific_value(field_value)
+                    converted.append(ParameterSpec(**p))
+                else:
+                    raise TypeError(f"Unsupported parameter spec item: {p}")
+            return converted
+        
         for tid, tdict in tasks_data.items():
             tdict = tdict.copy()
             
@@ -992,28 +1046,17 @@ class Workflow:
                     
                     tdict[field_name] = env_value
             
+            # Convert inputs and outputs to ParameterSpec objects
+            if "inputs" in tdict:
+                tdict["inputs"] = _make_params(tdict["inputs"])
+            if "outputs" in tdict:
+                tdict["outputs"] = _make_params(tdict["outputs"])
+
             tasks[tid] = Task(id=tid, **{k: v for k, v in tdict.items() if k != "id"})
 
         edges = [Edge(**e) for e in data.pop("edges", [])]
 
         # Workflow-level inputs / outputs
-        def _make_params(items):
-            converted = []
-            for p in items:
-                if isinstance(p, ParameterSpec):
-                    converted.append(p)
-                elif isinstance(p, str):
-                    converted.append(ParameterSpec(id=p, type="string"))
-                elif isinstance(p, dict):
-                    # Handle EnvironmentSpecificValue fields in ParameterSpec
-                    for field_name, field_value in p.items():
-                        if isinstance(field_value, dict) and "values" in field_value:
-                            p[field_name] = WF2WFJSONDecoder.decode_environment_specific_value(field_value)
-                    converted.append(ParameterSpec(**p))
-                else:
-                    raise TypeError(f"Unsupported parameter spec item: {p}")
-            return converted
-
         if "inputs" in data:
             data["inputs"] = _make_params(data["inputs"])
         if "outputs" in data:
@@ -1150,24 +1193,58 @@ class WF2WFJSONDecoder:
         if not isinstance(data, dict):
             return EnvironmentSpecificValue()
         env_value = EnvironmentSpecificValue()
+        
+        # Handle default_value field
+        if "default_value" in data:
+            env_value.default_value = data["default_value"]
+        
         try:
             if "values" in data and isinstance(data["values"], list):
                 for value_entry in data["values"]:
                     if isinstance(value_entry, dict):
                         value = value_entry.get("value")
                         environments = value_entry.get("environments", [])
-                        # Normalize: if environments is [None] or contains only None, use []
-                        if not environments or all(e is None for e in environments):
-                            environments = []
+                        
+                        # Normalize environments: flatten nested lists and remove None values
+                        if isinstance(environments, list):
+                            # Flatten any nested lists
+                            flat_envs = []
+                            for env in environments:
+                                if isinstance(env, list):
+                                    flat_envs.extend(env)
+                                elif env is not None:
+                                    flat_envs.append(env)
+                            environments = flat_envs
                         else:
-                            environments = [e for e in environments if e is not None]
+                            environments = []
+                        
+                        # Remove any remaining None values
+                        environments = [e for e in environments if e is not None]
+                        
                         if value is not None:
-                            env_value.set_for_environment(
-                                value,
-                                environments[0] if environments else None
-                            )
-                            for env in environments[1:]:
-                                env_value.add_environment(env)
+                            # Remove any existing values for these environments
+                            for env in environments:
+                                env_value.remove_environment(env)
+                            # Add new value with all environments
+                            env_value.values.append({
+                                "value": value,
+                                "environments": environments
+                            })
+                        else:
+                            # For each environment, check if it has a None value
+                            envs_needing_none = []
+                            for env in environments:
+                                current_value = env_value.get_value_for(env)
+                                if current_value is None:
+                                    env_value.remove_environment(env)
+                                    envs_needing_none.append(env)
+                            
+                            # Add None value for environments that need it
+                            if envs_needing_none:
+                                env_value.values.append({
+                                    "value": None,
+                                    "environments": envs_needing_none
+                                })
         except Exception as e:
             print(f"Warning: Failed to decode EnvironmentSpecificValue: {e}")
             return EnvironmentSpecificValue()
@@ -1197,10 +1274,11 @@ class WF2WFJSONEncoder(json.JSONEncoder):
         # Handle EnvironmentSpecificValue objects
         if isinstance(obj, EnvironmentSpecificValue):
             try:
-                if not obj.values:
+                if not obj.values and obj.default_value is None:
                     return {
                         "values": [],
-                        "environments": []
+                        "environments": [],
+                        "default_value": None
                     }
                 
                 # Convert all values with proper environment handling
@@ -1214,13 +1292,15 @@ class WF2WFJSONEncoder(json.JSONEncoder):
                 
                 return {
                     "values": serialized_values,
-                    "environments": list(obj.all_environments())  # Convert set to list
+                    "environments": list(obj.all_environments()),  # Convert set to list
+                    "default_value": obj.default_value
                 }
             except Exception as e:
                 # Fallback for malformed EnvironmentSpecificValue
                 return {
                     "values": [],
                     "environments": [],
+                    "default_value": None,
                     "_error": f"Failed to serialize EnvironmentSpecificValue: {str(e)}"
                 }
         
@@ -1272,6 +1352,8 @@ class WF2WFJSONEncoder(json.JSONEncoder):
                     result["load_contents"] = obj.load_contents
                 if obj.load_listing is not None:
                     result["load_listing"] = obj.load_listing
+                if obj.wildcard_pattern is not None:
+                    result["wildcard_pattern"] = obj.wildcard_pattern
                 if obj.input_binding is not None:
                     result["input_binding"] = obj.input_binding
                 if obj.output_binding is not None:

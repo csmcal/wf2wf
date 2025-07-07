@@ -13,9 +13,9 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from wf2wf.core import Workflow, Task
+from wf2wf.core import Workflow, Task, Edge
 from wf2wf.importers.loss_integration import detect_and_apply_loss_sidecar, create_loss_sidecar_summary
-from wf2wf.importers.inference import infer_environment_specific_values, infer_execution_model, infer_resource_requirements
+from wf2wf.importers.inference import infer_environment_specific_values, infer_execution_model
 from wf2wf.importers.interactive import prompt_for_missing_information
 from wf2wf.environ import EnvironmentManager
 
@@ -474,9 +474,6 @@ class BaseImporter(ABC):
         # Infer execution model
         execution_model = infer_execution_model(workflow, source_format)
         workflow.execution_model.set_for_environment(execution_model, 'shared_filesystem')
-        
-        # Infer resource requirements
-        infer_resource_requirements(workflow)
         
         # Infer environment-specific values
         infer_environment_specific_values(workflow, source_format)

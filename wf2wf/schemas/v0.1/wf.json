@@ -58,6 +58,7 @@
                   {"$ref": "#/definitions/logging_spec"},
                   {"$ref": "#/definitions/security_spec"},
                   {"$ref": "#/definitions/networking_spec"},
+                  {"$ref": "#/definitions/scatter_spec"},
                   {"type": "object", "additionalProperties": {"type": "string"}},
                   {"type": "array", "items": {"type": "string"}}
                 ]
@@ -73,6 +74,18 @@
         "environments": {
           "type": "array",
           "items": {"type": "string"}
+        },
+        "default_value": {
+          "oneOf": [
+            {"type": ["string", "number", "boolean", "null"]},
+            {"$ref": "#/definitions/checkpoint_spec"},
+            {"$ref": "#/definitions/logging_spec"},
+            {"$ref": "#/definitions/security_spec"},
+            {"$ref": "#/definitions/networking_spec"},
+            {"$ref": "#/definitions/scatter_spec"},
+            {"type": "object", "additionalProperties": {"type": "string"}},
+            {"type": "array", "items": {"type": "string"}}
+          ]
         }
       },
       "additionalProperties": false
@@ -99,7 +112,8 @@
         "environments": {
           "type": "array",
           "items": {"type": ["string", "null"]}
-        }
+        },
+        "default_value": {"type": ["string", "null"]}
       },
       "additionalProperties": false
     },
@@ -125,7 +139,8 @@
         "environments": {
           "type": "array",
           "items": {"type": ["string", "null"]}
-        }
+        },
+        "default_value": {"type": ["integer", "null"]}
       },
       "additionalProperties": false
     },
@@ -151,7 +166,8 @@
         "environments": {
           "type": "array",
           "items": {"type": ["string", "null"]}
-        }
+        },
+        "default_value": {"type": ["boolean", "null"]}
       },
       "additionalProperties": false
     },
@@ -177,7 +193,8 @@
         "environments": {
           "type": "array",
           "items": {"type": ["string", "null"]}
-        }
+        },
+        "default_value": {"type": ["array", "null"], "items": {"type": "string"}}
       },
       "additionalProperties": false
     },
@@ -203,7 +220,8 @@
         "environments": {
           "type": "array",
           "items": {"type": ["string", "null"]}
-        }
+        },
+        "default_value": {"type": ["object", "null"], "additionalProperties": {"type": "string"}}
       },
       "additionalProperties": false
     },
@@ -229,7 +247,8 @@
         "environments": {
           "type": "array",
           "items": {"type": ["string", "null"]}
-        }
+        },
+        "default_value": {"type": ["array", "null"], "items": {"$ref": "#/definitions/requirement_spec"}}
       },
       "additionalProperties": false
     },
@@ -255,6 +274,12 @@
         "environments": {
           "type": "array",
           "items": {"type": ["string", "null"]}
+        },
+        "default_value": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/definitions/checkpoint_spec"}
+          ]
         }
       },
       "additionalProperties": false
@@ -281,6 +306,12 @@
         "environments": {
           "type": "array",
           "items": {"type": ["string", "null"]}
+        },
+        "default_value": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/definitions/logging_spec"}
+          ]
         }
       },
       "additionalProperties": false
@@ -307,6 +338,12 @@
         "environments": {
           "type": "array",
           "items": {"type": ["string", "null"]}
+        },
+        "default_value": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/definitions/security_spec"}
+          ]
         }
       },
       "additionalProperties": false
@@ -333,6 +370,12 @@
         "environments": {
           "type": "array",
           "items": {"type": ["string", "null"]}
+        },
+        "default_value": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/definitions/networking_spec"}
+          ]
         }
       },
       "additionalProperties": false
@@ -381,6 +424,16 @@
       },
       "additionalProperties": false
     },
+    "scatter_spec": {
+      "type": "object",
+      "required": ["scatter"],
+      "properties": {
+        "scatter": {"type": "array", "items": {"type": "string"}},
+        "scatter_method": {"type": "string", "default": "dotproduct"},
+        "wildcard_instances": {"type": "array", "items": {"type": "object", "additionalProperties": {"type": "string"}}}
+      },
+      "additionalProperties": false
+    },
     "edge": {
       "type": "object",
       "required": ["parent", "child"],
@@ -407,6 +460,7 @@
         "input_binding": {"type": ["object", "null"]},
         "output_binding": {"type": ["object", "null"]},
         "value_from": {"type": ["string", "null"]},
+        "wildcard_pattern": {"type": ["string", "null"]},
         "transfer_mode": {"$ref": "#/definitions/environment_specific_string"},
         "staging_required": {"$ref": "#/definitions/environment_specific_boolean"},
         "cleanup_after": {"$ref": "#/definitions/environment_specific_boolean"}

@@ -13,33 +13,31 @@ from typing import Any, Dict, List, Optional
 from wf2wf.core import Workflow, Task, EnvironmentSpecificValue
 
 
-def prompt_for_missing_values(workflow: Workflow, target_format: str) -> None:
-    """Prompt user for missing values based on target format requirements."""
+def prompt_for_missing_values(workflow: Workflow, target_format: str, target_environment: str = "shared_filesystem") -> None:
+    """Prompt user for missing values based on target format requirements and target environment."""
     
     # Check if interactive mode is disabled via environment variable
     if os.environ.get("WF2WF_NO_PROMPT") == "1":
         return
     
     if target_format == "cwl":
-        _prompt_cwl_values(workflow)
+        _prompt_cwl_values(workflow, target_environment)
     elif target_format == "dagman":
-        _prompt_dagman_values(workflow)
+        _prompt_dagman_values(workflow, target_environment)
     elif target_format == "snakemake":
-        _prompt_snakemake_values(workflow)
+        _prompt_snakemake_values(workflow, target_environment)
     elif target_format == "nextflow":
-        _prompt_nextflow_values(workflow)
+        _prompt_nextflow_values(workflow, target_environment)
     elif target_format == "wdl":
-        _prompt_wdl_values(workflow)
+        _prompt_wdl_values(workflow, target_environment)
     elif target_format == "galaxy":
-        _prompt_galaxy_values(workflow)
+        _prompt_galaxy_values(workflow, target_environment)
     else:
         print(f"Warning: No interactive prompts for format '{target_format}'")
 
 
-def _prompt_cwl_values(workflow: Workflow) -> None:
+def _prompt_cwl_values(workflow: Workflow, environment: str) -> None:
     """Prompt for missing values for CWL export."""
-    
-    environment = "shared_filesystem"
     
     print("\n=== CWL Export Configuration ===")
     
@@ -69,10 +67,8 @@ def _prompt_cwl_values(workflow: Workflow) -> None:
                     getattr(task, field_name).set_for_environment(value, environment)
 
 
-def _prompt_dagman_values(workflow: Workflow) -> None:
+def _prompt_dagman_values(workflow: Workflow, environment: str) -> None:
     """Prompt for missing values for DAGMan export."""
-    
-    environment = "distributed_computing"
     
     print("\n=== DAGMan Export Configuration ===")
     
@@ -112,10 +108,8 @@ def _prompt_dagman_values(workflow: Workflow) -> None:
                     getattr(task, field_name).set_for_environment(value, environment)
 
 
-def _prompt_snakemake_values(workflow: Workflow) -> None:
+def _prompt_snakemake_values(workflow: Workflow, environment: str) -> None:
     """Prompt for missing values for Snakemake export."""
-    
-    environment = "shared_filesystem"
     
     print("\n=== Snakemake Export Configuration ===")
     
@@ -156,10 +150,8 @@ def _prompt_snakemake_values(workflow: Workflow) -> None:
                     getattr(task, field_name).set_for_environment(value, environment)
 
 
-def _prompt_nextflow_values(workflow: Workflow) -> None:
+def _prompt_nextflow_values(workflow: Workflow, environment: str) -> None:
     """Prompt for missing values for Nextflow export."""
-    
-    environment = "cloud_native"
     
     print("\n=== Nextflow Export Configuration ===")
     
@@ -193,10 +185,8 @@ def _prompt_nextflow_values(workflow: Workflow) -> None:
                     getattr(task, field_name).set_for_environment(value, environment)
 
 
-def _prompt_wdl_values(workflow: Workflow) -> None:
+def _prompt_wdl_values(workflow: Workflow, environment: str) -> None:
     """Prompt for missing values for WDL export."""
-    
-    environment = "shared_filesystem"
     
     print("\n=== WDL Export Configuration ===")
     
@@ -229,10 +219,8 @@ def _prompt_wdl_values(workflow: Workflow) -> None:
                     getattr(task, field_name).set_for_environment(value, environment)
 
 
-def _prompt_galaxy_values(workflow: Workflow) -> None:
+def _prompt_galaxy_values(workflow: Workflow, environment: str) -> None:
     """Prompt for missing values for Galaxy export."""
-    
-    environment = "shared_filesystem"
     
     print("\n=== Galaxy Export Configuration ===")
     

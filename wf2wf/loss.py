@@ -94,13 +94,13 @@ def record(
         status = "lost_again"
 
     entry = {
-        "json_pointer": json_pointer,
-        "field": field,
-        "lost_value": lost_value,
-        "reason": reason,
-        "origin": origin,
-        "status": status,
-        "severity": severity,
+            "json_pointer": json_pointer,
+            "field": field,
+            "lost_value": lost_value,
+            "reason": reason,
+            "origin": origin,
+            "status": status,
+            "severity": severity,
         "category": category,
     }
 
@@ -441,9 +441,11 @@ def as_list() -> List[LossEntry]:
 
 def write(doc: Dict[str, Any], path: Union[str, Path], **kwargs) -> None:
     """Write loss document to file."""
+    from wf2wf.core import WF2WFJSONEncoder
+    
     _p = Path(path)
     _p.parent.mkdir(parents=True, exist_ok=True)
-    _p.write_text(json.dumps(doc, indent=2, **kwargs))
+    _p.write_text(json.dumps(doc, indent=2, cls=WF2WFJSONEncoder, **kwargs))
 
 
 def create_loss_document(
@@ -491,7 +493,7 @@ def apply(workflow: "Workflow", entries: List[LossEntry]) -> None:
     for entry in entries:
         if entry["status"] in ["reapplied", "adapted"]:
             continue
-            
+
         try:
             # Parse JSON pointer to navigate to the target location
             pointer_parts = entry["json_pointer"].split("/")[1:]  # Skip empty first part

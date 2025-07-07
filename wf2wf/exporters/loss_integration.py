@@ -13,32 +13,32 @@ from wf2wf.core import Workflow, Task, EnvironmentSpecificValue
 from wf2wf.loss import record as loss_record
 
 
-def detect_and_record_losses(workflow: Workflow, target_format: str, verbose: bool = False) -> None:
-    """Detect and record losses when converting to target format."""
+def detect_and_record_losses(workflow: Workflow, target_format: str, target_environment: str = "shared_filesystem", verbose: bool = False) -> None:
+    """Detect and record losses when converting to target format for specific environment."""
     
     if target_format == "cwl":
-        _record_cwl_losses(workflow, verbose)
+        _record_cwl_losses(workflow, target_environment, verbose)
     elif target_format == "dagman":
-        _record_dagman_losses(workflow, verbose)
+        _record_dagman_losses(workflow, target_environment, verbose)
     elif target_format == "snakemake":
-        _record_snakemake_losses(workflow, verbose)
+        _record_snakemake_losses(workflow, target_environment, verbose)
     elif target_format == "nextflow":
-        _record_nextflow_losses(workflow, verbose)
+        _record_nextflow_losses(workflow, target_environment, verbose)
     elif target_format == "wdl":
-        _record_wdl_losses(workflow, verbose)
+        _record_wdl_losses(workflow, target_environment, verbose)
     elif target_format == "galaxy":
-        _record_galaxy_losses(workflow, verbose)
+        _record_galaxy_losses(workflow, target_environment, verbose)
     else:
         if verbose:
             print(f"Warning: No loss detection rules for format '{target_format}'")
 
 
-def _record_cwl_losses(workflow: Workflow, verbose: bool = False) -> None:
+def _record_cwl_losses(workflow: Workflow, target_environment: str, verbose: bool = False) -> None:
     """Record losses when converting to CWL format."""
     
     for task in workflow.tasks.values():
         # GPU resources not fully supported in CWL ResourceRequirement
-        gpu_value = _get_env_value(task.gpu, "shared_filesystem")
+        gpu_value = _get_env_value(task.gpu, target_environment)
         if gpu_value:
             loss_record(
                 f"/tasks/{task.id}/gpu",
@@ -48,7 +48,7 @@ def _record_cwl_losses(workflow: Workflow, verbose: bool = False) -> None:
                 "user"
             )
         
-        gpu_mem_value = _get_env_value(task.gpu_mem_mb, "shared_filesystem")
+        gpu_mem_value = _get_env_value(task.gpu_mem_mb, target_environment)
         if gpu_mem_value:
             loss_record(
                 f"/tasks/{task.id}/gpu_mem_mb",
@@ -59,7 +59,7 @@ def _record_cwl_losses(workflow: Workflow, verbose: bool = False) -> None:
             )
         
         # Priority and retry not part of CWL core spec
-        priority_value = _get_env_value(task.priority, "shared_filesystem")
+        priority_value = _get_env_value(task.priority, target_environment)
         if priority_value:
             loss_record(
                 f"/tasks/{task.id}/priority",
@@ -69,7 +69,7 @@ def _record_cwl_losses(workflow: Workflow, verbose: bool = False) -> None:
                 "user"
             )
         
-        retry_value = _get_env_value(task.retry_count, "shared_filesystem")
+        retry_value = _get_env_value(task.retry_count, target_environment)
         if retry_value:
             loss_record(
                 f"/tasks/{task.id}/retry_count",
@@ -80,7 +80,7 @@ def _record_cwl_losses(workflow: Workflow, verbose: bool = False) -> None:
             )
         
         # Advanced features not supported in CWL
-        checkpointing = _get_env_value(task.checkpointing, "shared_filesystem")
+        checkpointing = _get_env_value(task.checkpointing, target_environment)
         if checkpointing:
             loss_record(
                 f"/tasks/{task.id}/checkpointing",
@@ -90,7 +90,7 @@ def _record_cwl_losses(workflow: Workflow, verbose: bool = False) -> None:
                 "user"
             )
         
-        logging = _get_env_value(task.logging, "shared_filesystem")
+        logging = _get_env_value(task.logging, target_environment)
         if logging:
             loss_record(
                 f"/tasks/{task.id}/logging",
@@ -100,7 +100,7 @@ def _record_cwl_losses(workflow: Workflow, verbose: bool = False) -> None:
                 "user"
             )
         
-        security = _get_env_value(task.security, "shared_filesystem")
+        security = _get_env_value(task.security, target_environment)
         if security:
             loss_record(
                 f"/tasks/{task.id}/security",
@@ -110,7 +110,7 @@ def _record_cwl_losses(workflow: Workflow, verbose: bool = False) -> None:
                 "user"
             )
         
-        networking = _get_env_value(task.networking, "shared_filesystem")
+        networking = _get_env_value(task.networking, target_environment)
         if networking:
             loss_record(
                 f"/tasks/{task.id}/networking",
@@ -121,12 +121,12 @@ def _record_cwl_losses(workflow: Workflow, verbose: bool = False) -> None:
             )
 
 
-def _record_dagman_losses(workflow: Workflow, verbose: bool = False) -> None:
+def _record_dagman_losses(workflow: Workflow, target_environment: str, verbose: bool = False) -> None:
     """Record losses when converting to DAGMan format."""
     
     for task in workflow.tasks.values():
         # Scatter operations not supported in DAGMan
-        scatter_value = _get_env_value(task.scatter, "distributed_computing")
+        scatter_value = _get_env_value(task.scatter, target_environment)
         if scatter_value:
             loss_record(
                 f"/tasks/{task.id}/scatter",
@@ -137,7 +137,7 @@ def _record_dagman_losses(workflow: Workflow, verbose: bool = False) -> None:
             )
         
         # Conditional execution not supported
-        when_value = _get_env_value(task.when, "distributed_computing")
+        when_value = _get_env_value(task.when, target_environment)
         if when_value:
             loss_record(
                 f"/tasks/{task.id}/when",
@@ -160,7 +160,7 @@ def _record_dagman_losses(workflow: Workflow, verbose: bool = False) -> None:
                     )
         
         # Advanced features not supported
-        checkpointing = _get_env_value(task.checkpointing, "distributed_computing")
+        checkpointing = _get_env_value(task.checkpointing, target_environment)
         if checkpointing:
             loss_record(
                 f"/tasks/{task.id}/checkpointing",
@@ -170,7 +170,7 @@ def _record_dagman_losses(workflow: Workflow, verbose: bool = False) -> None:
                 "user"
             )
         
-        logging = _get_env_value(task.logging, "distributed_computing")
+        logging = _get_env_value(task.logging, target_environment)
         if logging:
             loss_record(
                 f"/tasks/{task.id}/logging",
@@ -180,7 +180,7 @@ def _record_dagman_losses(workflow: Workflow, verbose: bool = False) -> None:
                 "user"
             )
         
-        security = _get_env_value(task.security, "distributed_computing")
+        security = _get_env_value(task.security, target_environment)
         if security:
             loss_record(
                 f"/tasks/{task.id}/security",
@@ -190,7 +190,7 @@ def _record_dagman_losses(workflow: Workflow, verbose: bool = False) -> None:
                 "user"
             )
         
-        networking = _get_env_value(task.networking, "distributed_computing")
+        networking = _get_env_value(task.networking, target_environment)
         if networking:
             loss_record(
                 f"/tasks/{task.id}/networking",
@@ -201,7 +201,7 @@ def _record_dagman_losses(workflow: Workflow, verbose: bool = False) -> None:
             )
 
 
-def _record_snakemake_losses(workflow: Workflow, verbose: bool = False) -> None:
+def _record_snakemake_losses(workflow: Workflow, target_environment: str, verbose: bool = False) -> None:
     """Record losses when converting to Snakemake format."""
     
     # Workflow-level intent not representable
@@ -216,7 +216,7 @@ def _record_snakemake_losses(workflow: Workflow, verbose: bool = False) -> None:
     
     for task in workflow.tasks.values():
         # Scatter operations not natively supported
-        scatter_value = _get_env_value(task.scatter, "shared_filesystem")
+        scatter_value = _get_env_value(task.scatter, target_environment)
         if scatter_value:
             loss_record(
                 f"/tasks/{task.id}/scatter",
@@ -227,7 +227,7 @@ def _record_snakemake_losses(workflow: Workflow, verbose: bool = False) -> None:
             )
         
         # Conditional execution not directly supported
-        when_value = _get_env_value(task.when, "shared_filesystem")
+        when_value = _get_env_value(task.when, target_environment)
         if when_value:
             loss_record(
                 f"/tasks/{task.id}/when",
@@ -238,7 +238,7 @@ def _record_snakemake_losses(workflow: Workflow, verbose: bool = False) -> None:
             )
         
         # GPU scheduling not expressible
-        gpu_value = _get_env_value(task.gpu, "shared_filesystem")
+        gpu_value = _get_env_value(task.gpu, target_environment)
         if gpu_value:
             loss_record(
                 f"/tasks/{task.id}/gpu",
@@ -260,7 +260,7 @@ def _record_snakemake_losses(workflow: Workflow, verbose: bool = False) -> None:
                 )
         
         # Advanced features not supported
-        checkpointing = _get_env_value(task.checkpointing, "shared_filesystem")
+        checkpointing = _get_env_value(task.checkpointing, target_environment)
         if checkpointing:
             loss_record(
                 f"/tasks/{task.id}/checkpointing",
@@ -270,7 +270,7 @@ def _record_snakemake_losses(workflow: Workflow, verbose: bool = False) -> None:
                 "user"
             )
         
-        logging = _get_env_value(task.logging, "shared_filesystem")
+        logging = _get_env_value(task.logging, target_environment)
         if logging:
             loss_record(
                 f"/tasks/{task.id}/logging",
@@ -280,7 +280,7 @@ def _record_snakemake_losses(workflow: Workflow, verbose: bool = False) -> None:
                 "user"
             )
         
-        security = _get_env_value(task.security, "shared_filesystem")
+        security = _get_env_value(task.security, target_environment)
         if security:
             loss_record(
                 f"/tasks/{task.id}/security",
@@ -290,7 +290,7 @@ def _record_snakemake_losses(workflow: Workflow, verbose: bool = False) -> None:
                 "user"
             )
         
-        networking = _get_env_value(task.networking, "shared_filesystem")
+        networking = _get_env_value(task.networking, target_environment)
         if networking:
             loss_record(
                 f"/tasks/{task.id}/networking",
@@ -301,7 +301,7 @@ def _record_snakemake_losses(workflow: Workflow, verbose: bool = False) -> None:
             )
 
 
-def _record_nextflow_losses(workflow: Workflow, verbose: bool = False) -> None:
+def _record_nextflow_losses(workflow: Workflow, target_environment: str, verbose: bool = False) -> None:
     """Record losses when converting to Nextflow format."""
     
     for task in workflow.tasks.values():
@@ -337,7 +337,7 @@ def _record_nextflow_losses(workflow: Workflow, verbose: bool = False) -> None:
             )
 
 
-def _record_wdl_losses(workflow: Workflow, verbose: bool = False) -> None:
+def _record_wdl_losses(workflow: Workflow, target_environment: str, verbose: bool = False) -> None:
     """Record losses when converting to WDL format."""
     
     for task in workflow.tasks.values():
@@ -383,7 +383,7 @@ def _record_wdl_losses(workflow: Workflow, verbose: bool = False) -> None:
             )
 
 
-def _record_galaxy_losses(workflow: Workflow, verbose: bool = False) -> None:
+def _record_galaxy_losses(workflow: Workflow, target_environment: str, verbose: bool = False) -> None:
     """Record losses when converting to Galaxy format."""
     
     for task in workflow.tasks.values():

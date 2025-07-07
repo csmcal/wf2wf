@@ -629,17 +629,24 @@ def _create_task_from_job(
     task.inputs = submit_info.get("input", [])
     task.outputs = submit_info.get("output", [])
     
-    # Set resource values from submit info
-    if submit_info.get("resources"):
-        resources = submit_info["resources"]
-        if "cpu" in resources:
-            task.cpu.set_for_environment(resources["cpu"], "distributed_computing")
-        if "mem_mb" in resources:
-            task.mem_mb.set_for_environment(resources["mem_mb"], "distributed_computing")
-        if "disk_mb" in resources:
-            task.disk_mb.set_for_environment(resources["disk_mb"], "distributed_computing")
-        if "gpu" in resources:
-            task.gpu.set_for_environment(resources["gpu"], "distributed_computing")
+    # Set resource values from submit info, or use defaults for distributed_computing
+    resources = submit_info.get("resources", {})
+    
+    # Always set CPU value for distributed_computing (use default if not specified)
+    cpu_value = resources.get("cpu", 1)
+    task.cpu.set_for_environment(cpu_value, "distributed_computing")
+    
+    # Always set memory value for distributed_computing (use default if not specified)
+    mem_value = resources.get("mem_mb", 4096)
+    task.mem_mb.set_for_environment(mem_value, "distributed_computing")
+    
+    # Always set disk value for distributed_computing (use default if not specified)
+    disk_value = resources.get("disk_mb", 4096)
+    task.disk_mb.set_for_environment(disk_value, "distributed_computing")
+    
+    # Always set GPU value for distributed_computing (use default if not specified)
+    gpu_value = resources.get("gpu", 0)
+    task.gpu.set_for_environment(gpu_value, "distributed_computing")
     
     # Set environment values
     if submit_info.get("environment"):

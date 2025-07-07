@@ -12,31 +12,31 @@ from typing import Any, Dict, List
 from wf2wf.core import Workflow, Task, EnvironmentSpecificValue
 
 
-def infer_missing_values(workflow: Workflow, target_format: str, verbose: bool = False) -> None:
-    """Infer missing values based on target format requirements."""
+def infer_missing_values(workflow: Workflow, target_format: str, target_environment: str = "shared_filesystem", verbose: bool = False) -> None:
+    """Infer missing values based on target format requirements and target environment."""
     
     if target_format == "cwl":
-        _infer_cwl_values(workflow, verbose)
+        _infer_cwl_values(workflow, target_environment, verbose)
     elif target_format == "dagman":
-        _infer_dagman_values(workflow, verbose)
+        _infer_dagman_values(workflow, target_environment, verbose)
     elif target_format == "snakemake":
-        _infer_snakemake_values(workflow, verbose)
+        _infer_snakemake_values(workflow, target_environment, verbose)
     elif target_format == "nextflow":
-        _infer_nextflow_values(workflow, verbose)
+        _infer_nextflow_values(workflow, target_environment, verbose)
     elif target_format == "wdl":
-        _infer_wdl_values(workflow, verbose)
+        _infer_wdl_values(workflow, target_environment, verbose)
     elif target_format == "galaxy":
-        _infer_galaxy_values(workflow, verbose)
+        _infer_galaxy_values(workflow, target_environment, verbose)
     else:
         if verbose:
             print(f"Warning: No inference rules for format '{target_format}'")
 
 
-def _infer_cwl_values(workflow: Workflow, verbose: bool = False) -> None:
+def _infer_cwl_values(workflow: Workflow, environment: str, verbose: bool = False) -> None:
     """Infer missing values for CWL export."""
     
     # CWL typically runs in shared filesystem environment
-    environment = "shared_filesystem"
+    # environment = "shared_filesystem" # This line is removed as environment is now a parameter
     
     for task in workflow.tasks.values():
         # Infer resource requirements if missing
@@ -76,11 +76,11 @@ def _infer_cwl_values(workflow: Workflow, verbose: bool = False) -> None:
                     print(f"Inferred command from script for task {task.id}")
 
 
-def _infer_dagman_values(workflow: Workflow, verbose: bool = False) -> None:
+def _infer_dagman_values(workflow: Workflow, environment: str, verbose: bool = False) -> None:
     """Infer missing values for DAGMan export."""
     
     # DAGMan typically runs in distributed computing environment
-    environment = "distributed_computing"
+    # environment = "distributed_computing" # This line is removed as environment is now a parameter
     
     for task in workflow.tasks.values():
         # Infer resource requirements if missing
@@ -132,11 +132,11 @@ def _infer_dagman_values(workflow: Workflow, verbose: bool = False) -> None:
                 print(f"Inferred staging_required=True for task {task.id}")
 
 
-def _infer_snakemake_values(workflow: Workflow, verbose: bool = False) -> None:
+def _infer_snakemake_values(workflow: Workflow, environment: str, verbose: bool = False) -> None:
     """Infer missing values for Snakemake export."""
     
     # Snakemake typically runs in shared filesystem environment
-    environment = "shared_filesystem"
+    # environment = "shared_filesystem" # This line is removed as environment is now a parameter
     
     for task in workflow.tasks.values():
         # Infer resource requirements if missing
@@ -184,11 +184,11 @@ def _infer_snakemake_values(workflow: Workflow, verbose: bool = False) -> None:
                     print(f"Inferred command from script for task {task.id}")
 
 
-def _infer_nextflow_values(workflow: Workflow, verbose: bool = False) -> None:
+def _infer_nextflow_values(workflow: Workflow, environment: str, verbose: bool = False) -> None:
     """Infer missing values for Nextflow export."""
     
     # Nextflow typically runs in cloud-native environment
-    environment = "cloud_native"
+    # environment = "cloud_native" # This line is removed as environment is now a parameter
     
     for task in workflow.tasks.values():
         # Infer resource requirements if missing
@@ -237,11 +237,11 @@ def _infer_nextflow_values(workflow: Workflow, verbose: bool = False) -> None:
                     print(f"Inferred command from script for task {task.id}")
 
 
-def _infer_wdl_values(workflow: Workflow, verbose: bool = False) -> None:
+def _infer_wdl_values(workflow: Workflow, environment: str, verbose: bool = False) -> None:
     """Infer missing values for WDL export."""
     
     # WDL typically runs in shared filesystem environment
-    environment = "shared_filesystem"
+    # environment = "shared_filesystem" # This line is removed as environment is now a parameter
     
     for task in workflow.tasks.values():
         # Infer resource requirements if missing
@@ -286,11 +286,11 @@ def _infer_wdl_values(workflow: Workflow, verbose: bool = False) -> None:
                     print(f"Inferred command from script for task {task.id}")
 
 
-def _infer_galaxy_values(workflow: Workflow, verbose: bool = False) -> None:
+def _infer_galaxy_values(workflow: Workflow, environment: str, verbose: bool = False) -> None:
     """Infer missing values for Galaxy export."""
     
     # Galaxy typically runs in shared filesystem environment
-    environment = "shared_filesystem"
+    # environment = "shared_filesystem" # This line is removed as environment is now a parameter
     
     for task in workflow.tasks.values():
         # Infer resource requirements if missing

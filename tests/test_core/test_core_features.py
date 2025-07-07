@@ -217,7 +217,7 @@ class TestRunBlocksAndScripts:
         task.command.set_for_environment("echo 'hello world' > output.txt", "shared_filesystem")
         script_path = tmp_path / "shell_task.sh"
 
-        dag_exporter._write_task_wrapper_script(task, script_path)
+        dag_exporter._write_task_wrapper_script(task, script_path, "shared_filesystem")
 
         assert script_path.exists()
         assert script_path.is_file()
@@ -225,7 +225,7 @@ class TestRunBlocksAndScripts:
         assert os.access(script_path, os.X_OK)
 
         content = script_path.read_text()
-        assert "#!/usr/bin/env bash" in content
+        assert "#!/bin/bash" in content
         assert "set -euo pipefail" in content
         assert "echo 'hello world' > output.txt" in content
 
@@ -234,13 +234,13 @@ class TestRunBlocksAndScripts:
         task = Task(id="python_task", script=EnvironmentSpecificValue("analyze.py", ["shared_filesystem"]))
         script_path = tmp_path / "python_task.sh"
 
-        dag_exporter._write_task_wrapper_script(task, script_path)
+        dag_exporter._write_task_wrapper_script(task, script_path, "shared_filesystem")
 
         assert script_path.exists()
         assert os.access(script_path, os.X_OK)
 
         content = script_path.read_text()
-        assert "#!/usr/bin/env bash" in content
+        assert "#!/bin/bash" in content
         assert "python analyze.py" in content
 
     def test_write_task_wrapper_script_r(self, tmp_path):
@@ -248,13 +248,13 @@ class TestRunBlocksAndScripts:
         task = Task(id="r_task", script=EnvironmentSpecificValue("plot.R", ["shared_filesystem"]))
         script_path = tmp_path / "r_task.sh"
 
-        dag_exporter._write_task_wrapper_script(task, script_path)
+        dag_exporter._write_task_wrapper_script(task, script_path, "shared_filesystem")
 
         assert script_path.exists()
         assert os.access(script_path, os.X_OK)
 
         content = script_path.read_text()
-        assert "#!/usr/bin/env bash" in content
+        assert "#!/bin/bash" in content
         assert "Rscript plot.R" in content
 
     def test_write_task_wrapper_script_unknown_extension(self, tmp_path):
@@ -262,13 +262,13 @@ class TestRunBlocksAndScripts:
         task = Task(id="unknown_task", script=EnvironmentSpecificValue("process.xyz", ["shared_filesystem"]))
         script_path = tmp_path / "unknown_task.sh"
 
-        dag_exporter._write_task_wrapper_script(task, script_path)
+        dag_exporter._write_task_wrapper_script(task, script_path, "shared_filesystem")
 
         assert script_path.exists()
         assert os.access(script_path, os.X_OK)
 
         content = script_path.read_text()
-        assert "#!/usr/bin/env bash" in content
+        assert "#!/bin/bash" in content
         assert "bash process.xyz" in content
 
     def test_write_task_wrapper_script_no_command_or_script(self, tmp_path):
@@ -276,13 +276,13 @@ class TestRunBlocksAndScripts:
         task = Task(id="empty_task")
         script_path = tmp_path / "empty_task.sh"
 
-        dag_exporter._write_task_wrapper_script(task, script_path)
+        dag_exporter._write_task_wrapper_script(task, script_path, "shared_filesystem")
 
         assert script_path.exists()
         assert os.access(script_path, os.X_OK)
 
         content = script_path.read_text()
-        assert "#!/usr/bin/env bash" in content
+        assert "#!/bin/bash" in content
         assert "echo 'No command defined'" in content
 
     def test_run_block_snakemake_parsing(self, tmp_path):
@@ -603,11 +603,30 @@ class TestIntegrationWorkflows:
             submit_files = list(tmp_path.glob("*.sub"))
             assert len(submit_files) > 0, "No submit files found"
 
-            # All submit files should use vanilla universe for conda
+            # Check that tasks with conda environments have universe = vanilla
+            # and tasks without conda/container don't have universe = docker
             for submit_file in submit_files:
                 content = submit_file.read_text()
-                assert "universe = vanilla" in content
-                assert "universe = docker" not in content
+                submit_name = submit_file.stem
+                
+                # Find corresponding task
+                task = None
+                for task_id, t in wf.tasks.items():
+                    if dag_exporter._sanitize_condor_job_name(task_id) == submit_name:
+                        task = t
+                        break
+                
+                if task:
+                    conda_env = task.conda.get_value_for("shared_filesystem")
+                    container = task.container.get_value_for("shared_filesystem")
+                    
+                    if conda_env and not container:
+                        # Task has conda but no container - should have universe = vanilla
+                        assert "universe = vanilla" in content, f"Task {task.id} has conda but no universe = vanilla"
+                        assert "+CondaEnv" in content, f"Task {task.id} has conda but no +CondaEnv"
+                    elif not conda_env and not container:
+                        # Task has no conda and no container - should not have universe = docker
+                        assert "universe = docker" not in content, f"Task {task.id} has no container but has universe = docker"
 
         except RuntimeError as e:
             if "snakemake" in str(e):

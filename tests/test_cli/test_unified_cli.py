@@ -22,7 +22,7 @@ if "wf2wf" not in sys.modules:
     assert spec and spec.loader
     spec.loader.exec_module(module)  # type: ignore[arg-type]
 
-from wf2wf.core import Workflow, Task, ResourceSpec, ParameterSpec
+from wf2wf.core import Workflow, Task, ParameterSpec, MetadataSpec
 
 try:
     from wf2wf.cli import (
@@ -155,8 +155,9 @@ class TestWorkflowSerialization:
         task = Task(
             id="task1",
             command="echo 'hello'",
-            resources=ResourceSpec(cpu=2, mem_mb=1024),
         )
+        task.cpu.set_for_environment(2, "shared_filesystem")
+        task.mem_mb.set_for_environment(1024, "shared_filesystem")
         wf.add_task(task)
 
         # Save to YAML
@@ -169,8 +170,8 @@ class TestWorkflowSerialization:
         # Compare
         assert wf_loaded.name == wf.name
         assert len(wf_loaded.tasks) == len(wf.tasks)
-        assert wf_loaded.tasks["task1"].resources.cpu == 2
-        assert wf_loaded.tasks["task1"].resources.mem_mb == 1024
+        assert wf_loaded.tasks["task1"].cpu.get_value_for("shared_filesystem") == 2
+        assert wf_loaded.tasks["task1"].mem_mb.get_value_for("shared_filesystem") == 1024
 
 
 @pytest.mark.skipif(not CLI_AVAILABLE, reason="CLI module not available")
@@ -266,8 +267,10 @@ class TestClickCLI:
         wf.add_task(Task(id="task1", command="echo 'test'"))
         wf.add_task(Task(id="task2", command="echo 'test2'"))
         wf.add_edge("task1", "task2")
-        wf.config = {"test_config": "value"}
-        wf.meta = {"description": "Test workflow"}
+        # Use metadata field instead of config/meta
+        wf.metadata = MetadataSpec()
+        wf.metadata.format_specific["test_config"] = "value"
+        wf.metadata.annotations["description"] = "Test workflow"
 
         json_path = tmp_path / "test.json"
         wf.save_json(json_path)
@@ -284,8 +287,8 @@ class TestClickCLI:
         assert info_data["version"] == "2.0"
         assert info_data["tasks"] == 2
         assert info_data["edges"] == 1
-        assert info_data["config"]["test_config"] == "value"
-        assert info_data["meta"]["description"] == "Test workflow"
+        assert info_data["metadata"]["format_specific"]["test_config"] == "value"
+        assert info_data["metadata"]["annotations"]["description"] == "Test workflow"
 
     def test_convert_single_input_ir_default_warning(self, tmp_path):
         """Test that single input file shows IR default warning."""

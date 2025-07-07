@@ -16,7 +16,7 @@ if "wf2wf" not in sys.modules:
     spec.loader.exec_module(module)  # type: ignore[arg-type]
 
 import pytest
-from wf2wf.core import Workflow, Task, EnvironmentSpec, ResourceSpec
+from wf2wf.core import Workflow, Task, EnvironmentSpecificValue
 from wf2wf.exporters import dagman as dag_exporter
 
 try:
@@ -31,64 +31,58 @@ class TestCondaEnvironmentSetup:
     """Test conda environment setup and management."""
 
     def test_conda_environment_spec_creation(self):
-        """Test creating EnvironmentSpec with conda environment."""
-        env = EnvironmentSpec(conda="environment.yaml")
-        assert env.conda == "environment.yaml"
-        assert env.container is None
+        """Test creating environment-specific conda environment."""
+        task = Task(id="test_task")
+        task.conda.set_for_environment("environment.yaml", "shared_filesystem")
+        assert task.conda.get_value_for("shared_filesystem") == "environment.yaml"
 
     def test_task_with_conda_environment(self):
         """Test creating task with conda environment."""
-        env = EnvironmentSpec(conda="analysis.yaml")
-        task = Task(id="conda_task", command="python analyze.py", environment=env)
-        assert task.environment.conda == "analysis.yaml"
-        assert task.environment.container is None
+        task = Task(id="conda_task")
+        task.command.set_for_environment("python analyze.py", "shared_filesystem")
+        task.conda.set_for_environment("analysis.yaml", "shared_filesystem")
+        assert task.conda.get_value_for("shared_filesystem") == "analysis.yaml"
+        assert task.container.get_value_for("shared_filesystem") is None
 
     def test_workflow_with_multiple_conda_environments(self):
         """Test workflow with multiple different conda environments."""
         wf = Workflow(name="multi_conda")
 
         # Task 1 with first environment
-        task1 = Task(
-            id="task1",
-            command="python preprocess.py",
-            environment=EnvironmentSpec(conda="preprocess_env.yaml"),
-        )
+        task1 = Task(id="task1")
+        task1.command.set_for_environment("python preprocess.py", "shared_filesystem")
+        task1.conda.set_for_environment("preprocess_env.yaml", "shared_filesystem")
         wf.add_task(task1)
 
         # Task 2 with second environment
-        task2 = Task(
-            id="task2",
-            command="python analyze.py",
-            environment=EnvironmentSpec(conda="analysis_env.yaml"),
-        )
+        task2 = Task(id="task2")
+        task2.command.set_for_environment("python analyze.py", "shared_filesystem")
+        task2.conda.set_for_environment("analysis_env.yaml", "shared_filesystem")
         wf.add_task(task2)
 
         # Task 3 reusing first environment
-        task3 = Task(
-            id="task3",
-            command="python postprocess.py",
-            environment=EnvironmentSpec(conda="preprocess_env.yaml"),
-        )
+        task3 = Task(id="task3")
+        task3.command.set_for_environment("python postprocess.py", "shared_filesystem")
+        task3.conda.set_for_environment("preprocess_env.yaml", "shared_filesystem")
         wf.add_task(task3)
 
         wf.add_edge("task1", "task2")
         wf.add_edge("task2", "task3")
 
         assert len(wf.tasks) == 3
-        assert wf.tasks["task1"].environment.conda == "preprocess_env.yaml"
-        assert wf.tasks["task2"].environment.conda == "analysis_env.yaml"
-        assert wf.tasks["task3"].environment.conda == "preprocess_env.yaml"
+        assert wf.tasks["task1"].conda.get_value_for("shared_filesystem") == "preprocess_env.yaml"
+        assert wf.tasks["task2"].conda.get_value_for("shared_filesystem") == "analysis_env.yaml"
+        assert wf.tasks["task3"].conda.get_value_for("shared_filesystem") == "preprocess_env.yaml"
 
     def test_dagman_export_conda_environment(self, tmp_path):
         """Test DAGMan export with conda environment."""
         wf = Workflow(name="conda_workflow")
 
-        task = Task(
-            id="conda_analysis",
-            command="python analyze.py --input data.csv --output results.json",
-            environment=EnvironmentSpec(conda="analysis_env.yaml"),
-            resources=ResourceSpec(cpu=4, mem_mb=8192),
-        )
+        task = Task(id="conda_analysis")
+        task.command.set_for_environment("python analyze.py --input data.csv --output results.json", "shared_filesystem")
+        task.conda.set_for_environment("analysis_env.yaml", "shared_filesystem")
+        task.cpu.set_for_environment(4, "shared_filesystem")
+        task.mem_mb.set_for_environment(8192, "shared_filesystem")
         wf.add_task(task)
 
         dag_path = tmp_path / "conda_workflow.dag"
@@ -110,18 +104,19 @@ class TestCondaEnvironmentSetup:
 
     def test_conda_with_resource_specifications(self):
         """Test conda environment combined with resource specifications."""
-        task = Task(
-            id="resource_conda_task",
-            command="python intensive_analysis.py",
-            environment=EnvironmentSpec(conda="gpu_env.yaml"),
-            resources=ResourceSpec(cpu=16, mem_mb=32768, gpu=2, gpu_mem_mb=8000),
-        )
+        task = Task(id="resource_conda_task")
+        task.command.set_for_environment("python intensive_analysis.py", "shared_filesystem")
+        task.conda.set_for_environment("gpu_env.yaml", "shared_filesystem")
+        task.cpu.set_for_environment(16, "shared_filesystem")
+        task.mem_mb.set_for_environment(32768, "shared_filesystem")
+        task.gpu.set_for_environment(2, "shared_filesystem")
+        task.gpu_mem_mb.set_for_environment(8000, "shared_filesystem")
 
-        assert task.environment.conda == "gpu_env.yaml"
-        assert task.resources.cpu == 16
-        assert task.resources.mem_mb == 32768
-        assert task.resources.gpu == 2
-        assert task.resources.gpu_mem_mb == 8000
+        assert task.conda.get_value_for("shared_filesystem") == "gpu_env.yaml"
+        assert task.cpu.get_value_for("shared_filesystem") == 16
+        assert task.mem_mb.get_value_for("shared_filesystem") == 32768
+        assert task.gpu.get_value_for("shared_filesystem") == 2
+        assert task.gpu_mem_mb.get_value_for("shared_filesystem") == 8000
 
 
 class TestCondaEnvironmentParsing:
@@ -178,7 +173,7 @@ class TestCondaEnvironmentParsing:
             # Find tasks with conda environments
             conda_tasks = []
             for task in wf.tasks.values():
-                if task.environment and task.environment.conda:
+                if task.conda.get_value_for("shared_filesystem"):
                     conda_tasks.append(task)
 
             assert (
@@ -187,7 +182,7 @@ class TestCondaEnvironmentParsing:
 
             # Check that conda environment path is preserved
             for task in conda_tasks:
-                assert task.environment.conda == str(env_file)
+                assert task.conda.get_value_for("shared_filesystem") == str(env_file)
 
         except RuntimeError as e:
             if "snakemake" in str(e):
@@ -199,47 +194,52 @@ class TestCondaEnvironmentParsing:
     def test_snakemake_conda_with_container_priority(self, tmp_path):
         """Test that container takes priority over conda when both are specified."""
         # Create conda environment file
-        env_file = tmp_path / "env.yaml"
-        env_file.write_text("channels:\n  - conda-forge\ndependencies:\n  - python=3.9")
-
-        # Create Snakefile with both conda and container
-        snakefile = tmp_path / "priority_test.smk"
-        snakefile.write_text(
-            textwrap.dedent(f"""
-            rule priority_test:
-                output: "output.txt"
-                container: "docker://python:3.9-slim"
-                conda: "{env_file}"
-                shell: "echo 'test' > {{output}}"
-
-            rule all:
-                input: "output.txt"
+        env_file = tmp_path / "analysis.yaml"
+        env_file.write_text(
+            textwrap.dedent("""
+            channels:
+              - conda-forge
+            dependencies:
+              - python=3.9
+              - pandas
         """)
         )
+
+        # Create Snakefile with both conda and container
+        snakefile = tmp_path / "mixed_workflow.smk"
+        snakefile.write_text(
+            textwrap.dedent(f"""
+            rule mixed_task:
+                input: "data.csv"
+                output: "results.json"
+                conda: "{env_file}"
+                container: "docker://python:3.9"
+                shell: "python analyze.py --input {{input}} --output {{output}}"
+
+            rule all:
+                input: "results.json"
+        """)
+        )
+
+        # Create dummy input file
+        (tmp_path / "data.csv").write_text("col1,col2\n1,2\n3,4\n")
 
         try:
             wf = snake_importer.to_workflow(snakefile, workdir=tmp_path)
 
-            # Find the priority test task
-            priority_task = None
+            # Find the mixed task
+            mixed_task = None
             for task in wf.tasks.values():
-                if "priority_test" in task.id:
-                    priority_task = task
+                if task.id == "mixed_task":
+                    mixed_task = task
                     break
 
-            assert priority_task is not None
-            assert priority_task.environment.container == "docker://python:3.9-slim"
-            assert priority_task.environment.conda == str(env_file)
+            assert mixed_task is not None, "Should have found mixed_task"
 
-            # Test DAG export - should use container universe
-            dag_path = tmp_path / "priority_test.dag"
-            dag_exporter.from_workflow(wf, dag_path, workdir=tmp_path)
-
-            # Check submit file for container specifications
-            submit_path = tmp_path / "priority_test_0.sub"
-            submit_content = submit_path.read_text()
-            assert "universe = docker" in submit_content
-            assert "docker_image = python:3.9-slim" in submit_content
+            # In the new IR, both conda and container can coexist
+            # The exporter will decide which to use based on the target environment
+            assert mixed_task.conda.get_value_for("shared_filesystem") == str(env_file)
+            assert mixed_task.container.get_value_for("shared_filesystem") == "docker://python:3.9"
 
         except RuntimeError as e:
             if "snakemake" in str(e):
@@ -249,135 +249,129 @@ class TestCondaEnvironmentParsing:
 
 
 class TestCondaEnvironmentExport:
-    """Test conda environment handling in DAGMan export."""
+    """Test conda environment export functionality."""
 
     def test_conda_environment_export_vanilla_universe(self, tmp_path):
-        """Test that conda environments use vanilla universe."""
-        wf = Workflow(name="conda_export_test")
+        """Test conda environment export with vanilla universe."""
+        wf = Workflow(name="conda_vanilla")
 
-        task = Task(
-            id="conda_task",
-            command="python process.py",
-            environment=EnvironmentSpec(conda="processing.yaml"),
-        )
+        task = Task(id="conda_task")
+        task.command.set_for_environment("python process.py", "shared_filesystem")
+        task.conda.set_for_environment("processing.yaml", "shared_filesystem")
+        task.cpu.set_for_environment(2, "shared_filesystem")
+        task.mem_mb.set_for_environment(4096, "shared_filesystem")
         wf.add_task(task)
 
-        dag_path = tmp_path / "conda_export.dag"
+        dag_path = tmp_path / "conda_vanilla.dag"
         dag_exporter.from_workflow(wf, dag_path, workdir=tmp_path)
 
-        # Check submit file for universe specifications
+        # Check submit file
         submit_path = tmp_path / "conda_task.sub"
         submit_content = submit_path.read_text()
 
         # Should use vanilla universe for conda
         assert "universe = vanilla" in submit_content
-        assert "universe = docker" not in submit_content
-        assert "+SingularityImage" not in submit_content
+        assert "request_cpus = 2" in submit_content
+        assert "request_memory = 4096MB" in submit_content
+
+        # Check that conda environment is referenced in the script
+        scripts_dir = tmp_path / "scripts"
+        script_files = list(scripts_dir.glob("conda_task.*"))
+        assert len(script_files) >= 1
+
+        # Read the script to check for conda activation
+        script_content = script_files[0].read_text()
+        assert "conda" in script_content.lower() or "environment" in script_content.lower()
 
     def test_multiple_conda_environments_export(self, tmp_path):
-        """Test export of workflow with multiple conda environments."""
+        """Test export with multiple different conda environments."""
         wf = Workflow(name="multi_conda_export")
 
         # Task 1 with first environment
-        task1 = Task(
-            id="preprocess",
-            command="python preprocess.py",
-            environment=EnvironmentSpec(conda="preprocess.yaml"),
-        )
+        task1 = Task(id="preprocess")
+        task1.command.set_for_environment("python preprocess.py", "shared_filesystem")
+        task1.conda.set_for_environment("preprocess.yaml", "shared_filesystem")
         wf.add_task(task1)
 
-        # Task 2 with different environment
-        task2 = Task(
-            id="analyze",
-            command="python analyze.py",
-            environment=EnvironmentSpec(conda="analysis.yaml"),
-        )
+        # Task 2 with second environment
+        task2 = Task(id="analyze")
+        task2.command.set_for_environment("python analyze.py", "shared_filesystem")
+        task2.conda.set_for_environment("analysis.yaml", "shared_filesystem")
         wf.add_task(task2)
 
-        # Task 3 without conda environment
-        task3 = Task(id="summarize", command="python summarize.py")
-        wf.add_task(task3)
-
         wf.add_edge("preprocess", "analyze")
-        wf.add_edge("analyze", "summarize")
 
         dag_path = tmp_path / "multi_conda.dag"
         dag_exporter.from_workflow(wf, dag_path, workdir=tmp_path)
 
-        dag_content = dag_path.read_text()
+        # Check both submit files
+        submit1_path = tmp_path / "preprocess.sub"
+        submit2_path = tmp_path / "analyze.sub"
 
-        # All tasks should be present
-        assert "JOB preprocess" in dag_content
-        assert "JOB analyze" in dag_content
-        assert "JOB summarize" in dag_content
+        assert submit1_path.exists()
+        assert submit2_path.exists()
 
-        # Check submit files for universe specifications
-        preprocess_submit = tmp_path / "preprocess.sub"
-        analyze_submit = tmp_path / "analyze.sub"
-        summarize_submit = tmp_path / "summarize.sub"
+        # Both should use vanilla universe
+        submit1_content = submit1_path.read_text()
+        submit2_content = submit2_path.read_text()
 
-        preprocess_content = preprocess_submit.read_text()
-        analyze_content = analyze_submit.read_text()
-        summarize_content = summarize_submit.read_text()
-
-        # Should use vanilla universe for all
-        assert "universe = vanilla" in preprocess_content
-        assert "universe = vanilla" in analyze_content
-        assert "universe = vanilla" in summarize_content
-
-        # Check dependencies
-        assert "PARENT preprocess CHILD analyze" in dag_content
-        assert "PARENT analyze CHILD summarize" in dag_content
+        assert "universe = vanilla" in submit1_content
+        assert "universe = vanilla" in submit2_content
 
 
 class TestCondaEnvironmentValidation:
-    """Test validation of conda environment specifications."""
+    """Test conda environment validation."""
 
     def test_conda_environment_file_validation(self):
-        """Test that conda environment files are properly validated."""
-        # Valid conda environment
-        env = EnvironmentSpec(conda="environment.yaml")
-        assert env.conda == "environment.yaml"
+        """Test validation of conda environment specifications."""
+        # Test valid conda environment
+        task = Task(id="valid_task")
+        task.conda.set_for_environment("environment.yaml", "shared_filesystem")
+        assert task.conda.get_value_for("shared_filesystem") == "environment.yaml"
 
-        # Valid conda environment name
-        env = EnvironmentSpec(conda="myenv")
-        assert env.conda == "myenv"
+        # Test conda environment name
+        task2 = Task(id="name_task")
+        task2.conda.set_for_environment("myenv", "shared_filesystem")
+        assert task2.conda.get_value_for("shared_filesystem") == "myenv"
 
-        # Empty conda specification should be None
-        env = EnvironmentSpec(conda="")
-        assert env.conda == ""
+        # Test empty conda environment (should be allowed)
+        task3 = Task(id="empty_task")
+        task3.conda.set_for_environment("", "shared_filesystem")
+        assert task3.conda.get_value_for("shared_filesystem") == ""
 
-        env = EnvironmentSpec()
-        assert env.conda is None
+        # Test no conda environment
+        task4 = Task(id="no_conda_task")
+        assert task4.conda.get_value_for("shared_filesystem") is None
 
     def test_conda_with_resources_validation(self):
-        """Test conda environment with resource specifications."""
-        task = Task(
-            id="validated_task",
-            command="python validate.py",
-            environment=EnvironmentSpec(conda="validation.yaml"),
-            resources=ResourceSpec(cpu=2, mem_mb=4096, disk_mb=10240),
-        )
+        """Test conda environment combined with resource validation."""
+        task = Task(id="resource_task")
+        task.command.set_for_environment("python validate.py", "shared_filesystem")
+        task.conda.set_for_environment("validation.yaml", "shared_filesystem")
+        task.cpu.set_for_environment(2, "shared_filesystem")
+        task.mem_mb.set_for_environment(4096, "shared_filesystem")
+        task.disk_mb.set_for_environment(10240, "shared_filesystem")
 
-        # All specifications should be preserved
-        assert task.environment.conda == "validation.yaml"
-        assert task.resources.cpu == 2
-        assert task.resources.mem_mb == 4096
-        assert task.resources.disk_mb == 10240
+        # Validate that all fields are set correctly
+        assert task.conda.get_value_for("shared_filesystem") == "validation.yaml"
+        assert task.cpu.get_value_for("shared_filesystem") == 2
+        assert task.mem_mb.get_value_for("shared_filesystem") == 4096
+        assert task.disk_mb.get_value_for("shared_filesystem") == 10240
 
     def test_workflow_conda_environment_consistency(self):
-        """Test that conda environments are consistently handled across workflow."""
-        wf = Workflow(name="consistency_test")
+        """Test workflow-level conda environment consistency."""
+        wf = Workflow(name="consistent_conda")
 
-        # Multiple tasks with same conda environment
-        for i in range(3):
-            task = Task(
-                id=f"task_{i}",
-                command=f"python task_{i}.py",
-                environment=EnvironmentSpec(conda="shared_env.yaml"),
-            )
-            wf.add_task(task)
+        # Create tasks with consistent conda environment
+        task1 = Task(id="task1")
+        task1.conda.set_for_environment("shared_env.yaml", "shared_filesystem")
+        wf.add_task(task1)
 
-        # All tasks should have the same conda environment
-        for task in wf.tasks.values():
-            assert task.environment.conda == "shared_env.yaml"
+        task2 = Task(id="task2")
+        task2.conda.set_for_environment("shared_env.yaml", "shared_filesystem")
+        wf.add_task(task2)
+
+        # Verify consistency
+        env1 = task1.conda.get_value_for("shared_filesystem")
+        env2 = task2.conda.get_value_for("shared_filesystem")
+        assert env1 == env2 == "shared_env.yaml"

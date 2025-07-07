@@ -33,6 +33,7 @@ class GalaxyExporter(BaseExporter):
         add_tool_configs = opts.get("add_tool_configs", True)
         tool_config_dir = opts.get("tool_config_dir", "tool_configs")
         workflow_format = opts.get("workflow_format", "json")  # json or yaml
+        target_env = self.target_environment
 
         if self.verbose:
             print(f"Exporting workflow '{workflow.name}' to Galaxy format")
@@ -47,6 +48,7 @@ class GalaxyExporter(BaseExporter):
                 preserve_metadata=preserve_metadata,
                 add_tool_configs=add_tool_configs,
                 verbose=self.verbose,
+                target_environment=target_env,
             )
 
             # Write workflow file
@@ -68,6 +70,7 @@ class GalaxyExporter(BaseExporter):
                         task,
                         preserve_metadata=preserve_metadata,
                         verbose=self.verbose,
+                        target_environment=target_env,
                     )
                     
                     tool_file = tool_config_path / f"{task.id}.xml"
@@ -100,6 +103,7 @@ def _generate_galaxy_workflow_enhanced(
     preserve_metadata: bool = True,
     add_tool_configs: bool = True,
     verbose: bool = False,
+    target_environment: str = "shared_filesystem",
 ) -> Dict[str, Any]:
     """Generate enhanced Galaxy workflow."""
     galaxy_workflow = {
@@ -137,7 +141,7 @@ def _generate_galaxy_workflow_enhanced(
     for task in workflow.tasks.values():
         step_id += 1
         galaxy_workflow["steps"][str(step_id)] = _generate_tool_step_enhanced(
-            step_id, task, workflow, input_steps, verbose
+            step_id, task, workflow, input_steps, verbose, target_environment
         )
     
     return galaxy_workflow
@@ -174,6 +178,7 @@ def _generate_tool_step_enhanced(
     workflow: Workflow,
     input_steps: Dict[str, int],
     verbose: bool = False,
+    target_environment: str = "shared_filesystem",
 ) -> Dict[str, Any]:
     """Generate enhanced Galaxy tool step."""
     # Get input connections
@@ -203,7 +208,7 @@ def _generate_tool_step_enhanced(
             }
     
     # Generate tool state
-    tool_state = _generate_tool_state_enhanced(task)
+    tool_state = _generate_tool_state_enhanced(task, target_environment)
     
     return {
         "id": step_id,
@@ -224,19 +229,18 @@ def _generate_tool_step_enhanced(
     }
 
 
-def _generate_tool_state_enhanced(task: Task) -> Dict[str, Any]:
+def _generate_tool_state_enhanced(task: Task, target_environment: str) -> Dict[str, Any]:
     """Generate enhanced Galaxy tool state."""
     tool_state = {}
     
     # Add command
-    command = task.command.get_value_for("shared_filesystem")
+    command = task.command.get_value_for(target_environment)
     if command:
         tool_state["command"] = command
     
     # Add resource requirements
-    environment = "shared_filesystem"
-    cpu = task.cpu.get_value_for(environment)
-    mem_mb = task.mem_mb.get_value_for(environment)
+    cpu = task.cpu.get_value_for(target_environment)
+    mem_mb = task.mem_mb.get_value_for(target_environment)
     
     if cpu:
         tool_state["cpu"] = cpu
@@ -244,12 +248,12 @@ def _generate_tool_state_enhanced(task: Task) -> Dict[str, Any]:
         tool_state["memory"] = f"{mem_mb}MB"
     
     # Add container specification
-    container = task.container.get_value_for(environment)
+    container = task.container.get_value_for(target_environment)
     if container:
         tool_state["container"] = container
     
     # Add conda environment
-    conda = task.conda.get_value_for(environment)
+    conda = task.conda.get_value_for(target_environment)
     if conda:
         tool_state["conda_env"] = conda
     
@@ -281,6 +285,7 @@ def _generate_tool_config_enhanced(
     task: Task,
     preserve_metadata: bool = True,
     verbose: bool = False,
+    target_environment: str = "shared_filesystem",
 ) -> str:
     """Generate enhanced Galaxy tool configuration."""
     lines = []
@@ -294,7 +299,7 @@ def _generate_tool_config_enhanced(
         lines.append('    <description>' + task.doc + '</description>')
     
     # Add command
-    command = task.command.get_value_for("shared_filesystem")
+    command = task.command.get_value_for(target_environment)
     if command:
         lines.append('    <command><![CDATA[')
         lines.append('        ' + command)

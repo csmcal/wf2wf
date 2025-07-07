@@ -34,6 +34,7 @@ class NextflowExporter(BaseExporter):
         add_channels = opts.get("add_channels", True)
         preserve_metadata = opts.get("preserve_metadata", True)
         container_mode = opts.get("container_mode", "docker")
+        target_env = self.target_environment
 
         if self.verbose:
             print(f"Exporting workflow '{workflow.name}' to Nextflow DSL2")
@@ -50,6 +51,7 @@ class NextflowExporter(BaseExporter):
                 preserve_metadata=preserve_metadata,
                 container_mode=container_mode,
                 verbose=self.verbose,
+                target_environment=target_env,
             )
 
             with output_path.open('w') as f:
@@ -66,6 +68,7 @@ class NextflowExporter(BaseExporter):
                         preserve_metadata=preserve_metadata,
                         container_mode=container_mode,
                         verbose=self.verbose,
+                        target_environment=target_env,
                     )
                     
                     module_file = modules_path / f"{task.id}.nf"
@@ -81,6 +84,7 @@ class NextflowExporter(BaseExporter):
                     workflow,
                     container_mode=container_mode,
                     verbose=self.verbose,
+                    target_environment=target_env,
                 )
                 
                 config_path = output_path.parent / config_file
@@ -115,6 +119,7 @@ def _generate_main_nf_enhanced(
     preserve_metadata: bool = True,
     container_mode: str = "docker",
     verbose: bool = False,
+    target_environment: str = "shared_filesystem",
 ) -> str:
     """Generate enhanced main.nf file."""
     lines = []
@@ -247,6 +252,7 @@ def _generate_module_nf_enhanced(
     preserve_metadata: bool = True,
     container_mode: str = "docker",
     verbose: bool = False,
+    target_environment: str = "shared_filesystem",
 ) -> str:
     """Generate enhanced module.nf file."""
     lines = []
@@ -263,10 +269,9 @@ def _generate_module_nf_enhanced(
         lines.append("")
     
     # Add resource requirements
-    environment = "shared_filesystem"
-    cpu = task.cpu.get_value_for(environment)
-    mem_mb = task.mem_mb.get_value_for(environment)
-    disk_mb = task.disk_mb.get_value_for(environment)
+    cpu = task.cpu.get_value_for(target_environment)
+    mem_mb = task.mem_mb.get_value_for(target_environment)
+    disk_mb = task.disk_mb.get_value_for(target_environment)
     
     if cpu or mem_mb or disk_mb:
         lines.append("    // Resource requirements")
@@ -279,7 +284,7 @@ def _generate_module_nf_enhanced(
         lines.append("")
     
     # Add container specification
-    container = task.container.get_value_for(environment)
+    container = task.container.get_value_for(target_environment)
     if container:
         lines.append("    // Container specification")
         if container_mode == "docker":
@@ -289,14 +294,14 @@ def _generate_module_nf_enhanced(
         lines.append("")
     
     # Add conda environment
-    conda = task.conda.get_value_for(environment)
+    conda = task.conda.get_value_for(target_environment)
     if conda:
         lines.append("    // Conda environment")
         lines.append(f"    conda '{conda}'")
         lines.append("")
     
     # Add error handling
-    retry_count = task.retry_count.get_value_for(environment)
+    retry_count = task.retry_count.get_value_for(target_environment)
     if retry_count:
         lines.append("    // Error handling")
         lines.append(f"    maxRetries {retry_count}")
@@ -331,7 +336,7 @@ def _generate_module_nf_enhanced(
         lines.append("")
     
     # Add script
-    command = task.command.get_value_for(environment)
+    command = task.command.get_value_for(target_environment)
     if command:
         lines.append("    script:")
         if isinstance(command, str):
@@ -354,6 +359,7 @@ def _generate_nextflow_config_enhanced(
     workflow: Workflow,
     container_mode: str = "docker",
     verbose: bool = False,
+    target_environment: str = "shared_filesystem",
 ) -> str:
     """Generate enhanced nextflow.config file."""
     lines = []

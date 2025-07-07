@@ -75,34 +75,42 @@ def _infer_task_environment_values(task: Task, environment: str, source_format: 
         environment: Target environment name
         source_format: Source format name
     """
-    # Infer resource requirements
-    cpu = _infer_cpu_from_command(task.command.get_value_for('shared_filesystem'), environment, source_format)
-    if cpu is not None:
-        task.cpu.set_for_environment(cpu, environment)
+    # Infer resource requirements - only if not already set
+    if task.cpu.get_value_for(environment) is None:
+        cpu = _infer_cpu_from_command(task.command.get_value_for('shared_filesystem'), environment, source_format)
+        if cpu is not None:
+            task.cpu.set_for_environment(cpu, environment)
     
-    memory = _infer_memory_from_command(task.command.get_value_for('shared_filesystem'), environment, source_format)
-    if memory is not None:
-        task.mem_mb.set_for_environment(memory, environment)
+    if task.mem_mb.get_value_for(environment) is None:
+        memory = _infer_memory_from_command(task.command.get_value_for('shared_filesystem'), environment, source_format)
+        if memory is not None:
+            task.mem_mb.set_for_environment(memory, environment)
     
-    disk = _infer_disk_from_command(task.command.get_value_for('shared_filesystem'), environment, source_format)
-    if disk is not None:
-        task.disk_mb.set_for_environment(disk, environment)
+    if task.disk_mb.get_value_for(environment) is None:
+        disk = _infer_disk_from_command(task.command.get_value_for('shared_filesystem'), environment, source_format)
+        if disk is not None:
+            task.disk_mb.set_for_environment(disk, environment)
     
-    gpu = _infer_gpu_from_command(task.command.get_value_for('shared_filesystem'), environment, source_format)
-    if gpu is not None:
-        task.gpu.set_for_environment(gpu, environment)
+    if task.gpu.get_value_for(environment) is None:
+        gpu = _infer_gpu_from_command(task.command.get_value_for('shared_filesystem'), environment, source_format)
+        if gpu is not None:
+            task.gpu.set_for_environment(gpu, environment)
     
-    # Infer environment isolation
-    _infer_environment_isolation(task, environment, source_format)
+    # Infer environment isolation - only if not already set
+    if task.conda.get_value_for(environment) is None:
+        _infer_environment_isolation(task, environment, source_format)
     
-    # Infer error handling
-    _infer_error_handling(task, environment, source_format)
+    # Infer error handling - only if not already set
+    if task.retry_count.get_value_for(environment) is None:
+        _infer_error_handling(task, environment, source_format)
     
-    # Infer file transfer behavior
-    _infer_file_transfer_behavior(task, environment, source_format)
+    # Infer file transfer behavior - only if not already set
+    if task.file_transfer_mode.get_value_for(environment) is None:
+        _infer_file_transfer_behavior(task, environment, source_format)
     
-    # Infer advanced features
-    _infer_advanced_features(task, environment, source_format)
+    # Infer advanced features - only if not already set
+    if task.logging.get_value_for(environment) is None:
+        _infer_advanced_features(task, environment, source_format)
 
 
 def _infer_resource_requirements(task: Task, environment: str, source_format: str):
@@ -809,3 +817,74 @@ def infer_execution_model(workflow: Workflow, source_format: str) -> str:
         return "sequential"
     else:
         return "pipeline" 
+
+
+def infer_condor_attributes(workflow: Workflow, target_environment: str = "distributed_computing") -> None:
+    """Infer Condor-specific attributes from Snakemake metadata and task properties.
+    
+    This function analyzes tasks and their metadata to generate appropriate
+    Condor-specific attributes for distributed computing environments.
+    """
+    for task in workflow.tasks.values():
+        # Skip if no metadata or no Snakemake-specific data
+        if not task.metadata or "snakemake_rule" not in task.metadata.format_specific:
+            continue
+            
+        rule_data = task.metadata.format_specific["snakemake_rule"]
+        
+        # Infer Condor requirements based on resources and environment
+        requirements = []
+        
+        # GPU requirements
+        gpu_value = task.gpu.get_value_for("shared_filesystem")
+        if gpu_value and gpu_value > 0:
+            requirements.append("(HasGPU == True)")
+            # Add GPU memory requirement if specified
+            gpu_mem = task.gpu_mem_mb.get_value_for("shared_filesystem")
+            if gpu_mem and gpu_mem > 0:
+                requirements.append(f"(GPUMemory >= {gpu_mem})")
+        
+        # Memory requirements
+        mem_value = task.mem_mb.get_value_for("shared_filesystem")
+        if mem_value and mem_value > 0:
+            requirements.append(f"(Memory >= {mem_value})")
+        
+        # CPU requirements
+        cpu_value = task.cpu.get_value_for("shared_filesystem")
+        if cpu_value and cpu_value > 1:
+            requirements.append(f"(Cpus >= {cpu_value})")
+        
+        # Disk requirements
+        disk_value = task.disk_mb.get_value_for("shared_filesystem")
+        if disk_value and disk_value > 0:
+            requirements.append(f"(Disk >= {disk_value})")
+        
+        # Add requirements to task if any were found
+        if requirements:
+            requirements_str = " && ".join(requirements)
+            task.extra["requirements"] = EnvironmentSpecificValue(requirements_str, [target_environment])
+        
+        # Infer Condor rank based on priority
+        priority_value = task.priority.get_value_for("shared_filesystem")
+        if priority_value and priority_value > 0:
+            task.extra["rank"] = EnvironmentSpecificValue(f"({priority_value} * 1000)", [target_environment])
+        
+        # Infer GPU lab preference based on GPU usage
+        if gpu_value and gpu_value > 0:
+            task.extra["+WantGPULab"] = EnvironmentSpecificValue("true", [target_environment])
+        
+        # Infer universe based on container usage
+        container_value = task.container.get_value_for("shared_filesystem")
+        if container_value:
+            task.extra["universe"] = EnvironmentSpecificValue("docker", [target_environment])
+            task.extra["docker_image"] = EnvironmentSpecificValue(container_value, [target_environment])
+        
+        # Infer job class based on resource usage
+        if gpu_value and gpu_value > 0:
+            task.extra["+JobClass"] = EnvironmentSpecificValue("gpu", [target_environment])
+        elif mem_value and mem_value > 8192:  # 8GB
+            task.extra["+JobClass"] = EnvironmentSpecificValue("highmem", [target_environment])
+        elif cpu_value and cpu_value > 4:
+            task.extra["+JobClass"] = EnvironmentSpecificValue("multicore", [target_environment])
+        else:
+            task.extra["+JobClass"] = EnvironmentSpecificValue("standard", [target_environment]) 

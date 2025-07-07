@@ -116,11 +116,15 @@ def test_resource_requests(mock_run, tmp_path, snakemake_examples):
     a_task = next(t for t in wf.tasks.values() if t.id.startswith("A_mem"))
     b_task = next(t for t in wf.tasks.values() if t.id.startswith("B_disk_cpu"))
 
-    assert a_task.resources.mem_mb == 10240
-    assert (
-        b_task.resources.disk_mb == 100 * 1024 or b_task.resources.disk_mb == 0
-    )  # depending on importer
-    assert b_task.resources.threads == 8 or b_task.resources.cpu == 8
+    assert a_task.mem_mb.get_value_for("shared_filesystem") == 10240
+    # Check disk and CPU values using environment-specific access
+    b_disk = b_task.disk_mb.get_value_for("shared_filesystem")
+    b_cpu = b_task.cpu.get_value_for("shared_filesystem")
+    b_threads = b_task.threads.get_value_for("shared_filesystem")
+    
+    # Depending on importer implementation, either disk_mb or threads might be set
+    assert (b_disk == 100 * 1024 or b_disk == 0)  # depending on importer
+    assert (b_threads == 8 or b_cpu == 8)  # depending on importer
 
     dag_path = tmp_path / "resources.dag"
     dag_exporter.from_workflow(

@@ -150,9 +150,9 @@ class CWLImporter(BaseImporter):
         # Add tasks to workflow
         for task in parsed_data.get("tasks", []):
             workflow.add_task(task)
-        
+
         return workflow
-    
+
     def _extract_tasks(self, parsed_data: Dict[str, Any]) -> List[Task]:
         """Extract tasks from parsed CWL data."""
         return parsed_data.get("tasks", [])
@@ -267,7 +267,7 @@ def _parse_cwl_workflow_data(
     steps = cwl_doc.get("steps", {})
     tasks = []
     edges = []
-    
+
     for step_name, step_def in steps.items():
         task, step_edges = _parse_cwl_step(
             step_name,
@@ -279,7 +279,7 @@ def _parse_cwl_workflow_data(
         )
         tasks.append(task)
         edges.extend(step_edges)
-    
+
     return {
         "name": workflow_name,
         "version": "1.0",
@@ -323,97 +323,68 @@ def _parse_cwl_step(
     # Extract command
     command = _extract_command_from_tool(tool_def)
     
-    # Extract resources
-    cpu = EnvironmentSpecificValue(1, ["shared_filesystem"])
-    mem_mb = EnvironmentSpecificValue(4096, ["shared_filesystem"])
-    disk_mb = EnvironmentSpecificValue(4096, ["shared_filesystem"])
-    gpu = EnvironmentSpecificValue(0, ["shared_filesystem"])
-    
-    resource_reqs = _extract_resource_requirements(tool_def)
-    if resource_reqs:
-        if "cpu" in resource_reqs:
-            cpu = resource_reqs["cpu"]
-        if "mem_mb" in resource_reqs:
-            mem_mb = resource_reqs["mem_mb"]
-        if "disk_mb" in resource_reqs:
-            disk_mb = resource_reqs["disk_mb"]
-        if "gpu" in resource_reqs:
-            gpu = resource_reqs["gpu"]
-    
-    # Extract environment
-    conda = EnvironmentSpecificValue(None, ["shared_filesystem"])
-    container = EnvironmentSpecificValue(None, ["shared_filesystem"])
-    workdir = EnvironmentSpecificValue(None, ["shared_filesystem"])
-    env_vars = EnvironmentSpecificValue({}, ["shared_filesystem"])
-    modules = EnvironmentSpecificValue([], ["shared_filesystem"])
-    
-    env_spec = _extract_environment_spec(tool_def)
-    if env_spec:
-        if "conda" in env_spec:
-            conda = env_spec["conda"]
-        if "container" in env_spec:
-            container = env_spec["container"]
-        if "workdir" in env_spec:
-            workdir = env_spec["workdir"]
-        if "env_vars" in env_spec:
-            env_vars = env_spec["env_vars"]
-        if "modules" in env_spec:
-            modules = env_spec["modules"]
-    
-    # Extract inputs and outputs
-    inputs = _extract_step_inputs(step_def, tool_def)
-    outputs = _extract_step_outputs(step_def, tool_def)
-    
-    # Extract conditional execution
-    when = EnvironmentSpecificValue(None, ["shared_filesystem"])
-    if "when" in step_def:
-        when = EnvironmentSpecificValue(step_def["when"], ["shared_filesystem"])
-    
-    # Extract scatter
-    scatter = EnvironmentSpecificValue(None, ["shared_filesystem"])
-    if "scatter" in step_def:
-        scatter_spec = _parse_scatter_spec(step_def)
-        if scatter_spec:
-            scatter = EnvironmentSpecificValue(scatter_spec, ["shared_filesystem"])
-    
-    # Extract requirements and hints
-    requirements = EnvironmentSpecificValue([], ["shared_filesystem"])
-    hints = EnvironmentSpecificValue([], ["shared_filesystem"])
-    
-    step_reqs = _parse_requirements(step_def.get("requirements", []))
-    if step_reqs:
-        requirements = EnvironmentSpecificValue(step_reqs, ["shared_filesystem"])
-    
-    step_hints = _parse_requirements(step_def.get("hints", []))
-    if step_hints:
-        hints = EnvironmentSpecificValue(step_hints, ["shared_filesystem"])
-    
-    # Create task
+    # Create task with default values
     task = Task(
         id=task_id,
         label=label,
         doc=doc,
         command=command,
-        inputs=inputs,
-        outputs=outputs,
-        when=when,
-        scatter=scatter,
-        cpu=cpu,
-        mem_mb=mem_mb,
-        disk_mb=disk_mb,
-        gpu=gpu,
-        conda=conda,
-        container=container,
-        workdir=workdir,
-        env_vars=env_vars,
-        modules=modules,
-        requirements=requirements,
-        hints=hints,
     )
+    
+    # Extract and set resources
+    resource_reqs = _extract_resource_requirements(tool_def)
+    if resource_reqs:
+        if "cpu" in resource_reqs:
+            task.cpu.set_for_environment(resource_reqs["cpu"].get_value_for("shared_filesystem"), "shared_filesystem")
+        if "mem_mb" in resource_reqs:
+            task.mem_mb.set_for_environment(resource_reqs["mem_mb"].get_value_for("shared_filesystem"), "shared_filesystem")
+        if "disk_mb" in resource_reqs:
+            task.disk_mb.set_for_environment(resource_reqs["disk_mb"].get_value_for("shared_filesystem"), "shared_filesystem")
+        if "gpu" in resource_reqs:
+            task.gpu.set_for_environment(resource_reqs["gpu"].get_value_for("shared_filesystem"), "shared_filesystem")
+    
+    # Extract and set environment
+    env_spec = _extract_environment_spec(tool_def)
+    if env_spec:
+        if "conda" in env_spec:
+            task.conda.set_for_environment(env_spec["conda"].get_value_for("shared_filesystem"), "shared_filesystem")
+        if "container" in env_spec:
+            task.container.set_for_environment(env_spec["container"].get_value_for("shared_filesystem"), "shared_filesystem")
+        if "workdir" in env_spec:
+            task.workdir.set_for_environment(env_spec["workdir"].get_value_for("shared_filesystem"), "shared_filesystem")
+        if "env_vars" in env_spec:
+            task.env_vars.set_for_environment(env_spec["env_vars"].get_value_for("shared_filesystem"), "shared_filesystem")
+        if "modules" in env_spec:
+            task.modules.set_for_environment(env_spec["modules"].get_value_for("shared_filesystem"), "shared_filesystem")
+    
+    # Extract inputs and outputs
+    inputs = _extract_step_inputs(step_def, tool_def)
+    outputs = _extract_step_outputs(step_def, tool_def)
+    task.inputs = inputs
+    task.outputs = outputs
+    
+    # Extract conditional execution
+    if "when" in step_def:
+        task.when.set_for_environment(step_def["when"], "shared_filesystem")
+    
+    # Extract scatter
+    if "scatter" in step_def:
+        scatter_spec = _parse_scatter_spec(step_def)
+        if scatter_spec:
+            task.scatter.set_for_environment(scatter_spec, "shared_filesystem")
+    
+    # Extract requirements and hints
+    step_reqs = _parse_requirements(step_def.get("requirements", []))
+    if step_reqs:
+        task.requirements.set_for_environment(step_reqs, "shared_filesystem")
+    
+    step_hints = _parse_requirements(step_def.get("hints", []))
+    if step_hints:
+        task.hints.set_for_environment(step_hints, "shared_filesystem")
     
     # Extract dependencies
     edges = _parse_step_dependencies(step_name, step_def)
-    
+
     return task, edges
 
 
@@ -424,7 +395,7 @@ def _load_tool_definition(
     verbose: bool = False,
 ) -> Dict[str, Any]:
     """Load tool definition from run reference."""
-    
+
     if isinstance(run_ref, dict):
         return run_ref
     
@@ -437,7 +408,7 @@ def _load_tool_definition(
         tool_path = cwl_path.parent / run_ref
         if tool_path.exists():
             return _load_cwl_document(tool_path)
-        
+
         if verbose:
             print(f"Warning: Could not load tool definition for {run_ref}")
     
@@ -559,7 +530,7 @@ def _parse_step_dependencies(step_name: str, step_def: Dict[str, Any]) -> List[E
             # This is a step reference
             parent_step = input_binding
             edges.append(Edge(parent=parent_step, child=step_name))
-    
+
     return edges
 
 
@@ -628,7 +599,7 @@ def _extract_provenance_spec(cwl_doc: Dict[str, Any]) -> Optional[ProvenanceSpec
     # Extract basic provenance information
     authors = []
     contributors = []
-    
+
     # Look for common provenance fields
     if "author" in cwl_doc:
         authors.append({"name": cwl_doc["author"]})
@@ -726,14 +697,14 @@ def _parse_single_parameter_spec(
             output_binding=param_def.get("outputBinding"),
             value_from=param_def.get("valueFrom"),
         )
-    
+
     return None
 
 
 def _parse_requirements(requirements: List[Dict[str, Any]]) -> List[RequirementSpec]:
     """Parse CWL requirements."""
     result = []
-    
+
     for req in requirements:
         if isinstance(req, dict) and "class" in req:
             # Extract all fields except 'class' into data
@@ -742,7 +713,7 @@ def _parse_requirements(requirements: List[Dict[str, Any]]) -> List[RequirementS
                 class_name=req["class"],
                 data=req_data
             ))
-    
+
     return result
 
 
@@ -750,7 +721,7 @@ def _parse_scatter_spec(step_def: Dict[str, Any]) -> Optional[ScatterSpec]:
     """Parse scatter specification."""
     scatter = step_def.get("scatter")
     scatter_method = step_def.get("scatterMethod", "dotproduct")
-    
+
     if scatter:
         if isinstance(scatter, str):
             scatter_list = [scatter]
@@ -758,7 +729,7 @@ def _parse_scatter_spec(step_def: Dict[str, Any]) -> Optional[ScatterSpec]:
             scatter_list = scatter
         else:
             return None
-        
+            
         return ScatterSpec(
             scatter=scatter_list,
             scatter_method=scatter_method

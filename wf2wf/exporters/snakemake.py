@@ -32,6 +32,7 @@ class SnakemakeExporter(BaseExporter):
         include_containers = opts.get("include_containers", True)
         script_dir = opts.get("script_dir", "scripts")
         debug = opts.get("debug", False)
+        target_env = self.target_environment
         
         # Analyze workflow structure
         final_outputs = _find_final_outputs(workflow)
@@ -78,6 +79,7 @@ class SnakemakeExporter(BaseExporter):
                 include_containers=include_containers,
                 script_dir=script_dir_path,
                 debug=debug,
+                target_environment=target_env,
             )
             snakefile_lines.extend(rule_lines)
             snakefile_lines.append("")
@@ -214,92 +216,78 @@ def _generate_rule(
     include_containers: bool = True,
     script_dir: Optional[Path] = None,
     debug: bool = False,
+    target_environment: str = "shared_filesystem",
 ) -> List[str]:
-    """Generate Snakemake rule for a task."""
-    rule_lines = []
-    
-    # Rule header
+    """Generate a Snakemake rule for a task, using the target environment."""
+    lines = []
     rule_name = _sanitize_rule_name(task.id)
-    rule_lines.append(f"rule {rule_name}:")
+    lines.append(f"rule {rule_name}:")
     
     # Inputs
     if task.inputs:
-        rule_lines.append("    input:")
-        for input_param in task.inputs:
-            if isinstance(input_param, ParameterSpec):
-                rule_lines.append(f'        "{input_param.id}",')
+        lines.append("    input:")
+        for param in task.inputs:
+            if hasattr(param, 'id'):
+                lines.append(f'        "{param.id}",')
             else:
-                rule_lines.append(f'        "{input_param}",')
+                lines.append(f'        "{param}",')
     
     # Outputs
     if task.outputs:
-        rule_lines.append("    output:")
-        for output in task.outputs:
-            if isinstance(output, ParameterSpec):
-                rule_lines.append(f'        "{output.id}",')
+        lines.append("    output:")
+        for param in task.outputs:
+            if hasattr(param, 'id'):
+                lines.append(f'        "{param.id}",')
             else:
-                rule_lines.append(f'        "{output}",')
+                lines.append(f'        "{param}",')
     
     # Resources
     if include_resources:
-        resources = _get_task_resources_snakemake(task)
+        resources = _get_task_resources_snakemake(task, target_environment)
         if resources:
-            rule_lines.append("    resources:")
-            for key, value in resources.items():
-                rule_lines.append(f"        {key}={value}")
+            lines.append("    resources:")
+            for k, v in resources.items():
+                lines.append(f"        {k}={v}")
     
     # Conda environment
     if include_conda:
-        conda_env = task.conda.get_value_for("shared_filesystem")
+        conda_env = task.conda.get_value_for(target_environment)
         if conda_env:
-            rule_lines.append(f"    conda:")
-            rule_lines.append(f'        "{conda_env}"')
+            lines.append(f"    conda: '{conda_env}'")
     
     # Container
     if include_containers:
-        container = task.container.get_value_for("shared_filesystem")
+        container = task.container.get_value_for(target_environment)
         if container:
-            rule_lines.append(f"    container:")
-            rule_lines.append(f'        "{container}"')
+            lines.append(f"    container: '{container}'")
     
-    # Script or shell
-    command = task.command.get_value_for("shared_filesystem")
-    script = task.script.get_value_for("shared_filesystem")
-    
-    if script and script_dir:
-        # External script
-        script_path = script_dir / f"{task.id}.sh"
-        rule_lines.append(f"    script:")
-        rule_lines.append(f'        "{script_path}"')
+    # Script or shell command
+    script = task.script.get_value_for(target_environment)
+    command = task.command.get_value_for(target_environment)
+    if script:
+        lines.append(f"    script: '{script}'")
     elif command:
-        # Shell command
-        rule_lines.append("    shell:")
-        rule_lines.append(f'        "{command}"')
+        lines.append(f"    shell: '{command}'")
     else:
-        # Default placeholder
-        rule_lines.append("    shell:")
-        rule_lines.append(f'        "echo \'Task {task.id} placeholder\'"')
+        lines.append("    shell: 'echo No command defined'")
     
-    return rule_lines
+    return lines
 
-
-def _get_task_resources_snakemake(task: Task) -> Dict[str, Any]:
-    """Get task resources for Snakemake format."""
+def _get_task_resources_snakemake(task: Task, target_environment: str = "shared_filesystem") -> Dict[str, Any]:
+    """Get task resources for Snakemake for the target environment."""
     resources = {}
-    environment = "shared_filesystem"
-    
-    # Get resource values
-    cpu = task.cpu.get_value_for(environment)
-    mem_mb = task.mem_mb.get_value_for(environment)
-    threads = task.threads.get_value_for(environment)
-    
+    cpu = task.cpu.get_value_for(target_environment)
+    mem_mb = task.mem_mb.get_value_for(target_environment)
+    disk_mb = task.disk_mb.get_value_for(target_environment)
+    threads = task.threads.get_value_for(target_environment)
     if cpu:
-        resources["cpus"] = cpu
+        resources["cpu"] = cpu
     if mem_mb:
         resources["mem_mb"] = mem_mb
+    if disk_mb:
+        resources["disk_mb"] = disk_mb
     if threads:
         resources["threads"] = threads
-    
     return resources
 
 

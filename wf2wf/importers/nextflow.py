@@ -12,6 +12,7 @@ It parses main.nf files, module files, and nextflow.config files to extract:
 from __future__ import annotations
 
 import re
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional, Union
 
@@ -28,44 +29,67 @@ from wf2wf.core import (
     MetadataSpec,
 )
 from wf2wf.importers.base import BaseImporter
+from wf2wf.importers.utils import (
+    extract_balanced_braces,
+    parse_memory_string,
+    parse_disk_string,
+    parse_time_string,
+    parse_resource_value,
+    normalize_task_id,
+    extract_resource_specifications,
+    extract_environment_specifications,
+    extract_error_handling_specifications,
+    GenericSectionParser
+)
+
+# Configure logger for this module
+logger = logging.getLogger(__name__)
+
+
+class NextflowParseError(Exception):
+    """Base exception for Nextflow parsing errors."""
+    pass
+
+
+class NextflowFileNotFoundError(NextflowParseError):
+    """Raised when required Nextflow files are not found."""
+    pass
+
+
+class NextflowInvalidSyntaxError(NextflowParseError):
+    """Raised when Nextflow syntax is invalid."""
+    pass
+
+
+class NextflowConfigError(NextflowParseError):
+    """Raised when Nextflow configuration is invalid."""
+    pass
 
 
 class NextflowImporter(BaseImporter):
-    """Nextflow importer using shared base infrastructure."""
-    
+    """Nextflow importer that converts Nextflow DSL2 workflows to the IR."""
+
     def _parse_source(self, path: Path, **opts: Any) -> Dict[str, Any]:
-        """Parse Nextflow workflow and extract all information."""
+        """Parse Nextflow workflow source."""
         debug = opts.get("debug", False)
-        verbose = self.verbose
-
-        if verbose:
-            print(f"Parsing Nextflow workflow: {path}")
-
-        # Handle directory vs file input
-        if path.is_dir():
-            main_nf = path / "main.nf"
-            config_file = path / "nextflow.config"
-            workflow_dir = path
-        else:
-            main_nf = path
-            workflow_dir = path.parent
-            # Look for config files in order of preference
-            config_file = None
-            for config_name in ["nextflow.config", "test.config", "config.nf"]:
-                potential_config = workflow_dir / config_name
-                if potential_config.exists():
-                    config_file = potential_config
-                    break
+        workflow_dir = path if path.is_dir() else path.parent
+        main_nf = path if path.suffix == ".nf" else workflow_dir / "main.nf"
 
         if not main_nf.exists():
-            raise FileNotFoundError(f"Nextflow main file not found: {main_nf}")
+            raise NextflowFileNotFoundError(f"Nextflow file not found: {main_nf}")
 
-        # Parse configuration first (for defaults)
-        config = (
-            _parse_nextflow_config(config_file, debug=debug)
-            if config_file and config_file.exists()
-            else {}
-        )
+        if debug:
+            logger.debug(f"DEBUG: Parsing Nextflow workflow from {workflow_dir}")
+            logger.debug(f"DEBUG: Main file: {main_nf}")
+
+        # Parse nextflow.config if it exists
+        config_path = workflow_dir / "nextflow.config"
+        config = {}
+        if config_path.exists():
+            config = _parse_nextflow_config(config_path, debug=debug)
+
+        if debug:
+            logger.debug(f"Parsed config: {config}")
 
         # Parse main workflow file
         processes, workflow_def, includes = _parse_main_nf(main_nf, debug=debug)
@@ -79,13 +103,23 @@ class NextflowImporter(BaseImporter):
                 module_path = workflow_dir / (include_path + ".nf")
 
             if module_path.exists():
+                if debug:
+                    logger.debug(f"Parsing module file: {module_path}")
                 mod_processes = _parse_module_file(module_path, debug=debug)
+                if debug:
+                    logger.debug(f"Found {len(mod_processes)} processes in module: {list(mod_processes.keys())}")
                 module_processes.update(mod_processes)
             elif debug:
-                print(f"DEBUG: Module file not found: {module_path}")
+                logger.debug(f"Module file not found: {module_path}")
 
         # Combine all processes
         all_processes = {**processes, **module_processes}
+        if debug:
+            logger.debug(f"Total processes found: {len(all_processes)}")
+            logger.debug(f"Process names: {list(all_processes.keys())}")
+            logger.debug(f"Main processes: {list(processes.keys())}")
+            logger.debug(f"Module processes: {list(module_processes.keys())}")
+            logger.debug(f"Includes found: {includes}")
 
         # Extract dependencies from workflow definition
         dependencies = _extract_dependencies(workflow_def, debug=debug)
@@ -95,55 +129,152 @@ class NextflowImporter(BaseImporter):
             workflow_dir.name if workflow_dir.name != "." else "nextflow_workflow"
         )
 
-        return {
-            "workflow_name": workflow_name,
+        # Convert processes to tasks format expected by base importer
+        tasks = {}
+        for proc_name, proc_info in all_processes.items():
+            task_data = _convert_process_to_task_data(proc_name, proc_info, config, debug=debug)
+            tasks[proc_name] = task_data
+
+        # Convert dependencies to edges format expected by base importer
+        edges = []
+        for parent, child in dependencies:
+            edges.append({"parent": parent, "child": child})
+
+        result = {
+            "name": workflow_name,
+            "version": "1.0",
+            "tasks": tasks,
+            "edges": edges,
+            "inputs": [],  # Nextflow inputs are handled at process level
+            "outputs": [],  # Nextflow outputs are handled at process level
             "config": config,
-            "processes": all_processes,
-            "dependencies": dependencies,
-            "workflow_def": workflow_def,
-            "includes": includes,
             "workflow_dir": workflow_dir,
+            "debug": debug,
         }
-    
+        
+        if debug:
+            logger.debug(f"Parsed {len(tasks)} tasks: {list(tasks.keys())}")
+            logger.debug(f"Parsed {len(edges)} edges")
+        
+        return result
+
     def _create_basic_workflow(self, parsed_data: Dict[str, Any]) -> Workflow:
         """Create basic workflow from parsed Nextflow data."""
-        workflow_name = parsed_data["workflow_name"]
-        config = parsed_data["config"]
+        # Call parent method to create basic workflow structure
+        workflow = super()._create_basic_workflow(parsed_data)
         
-        # Create workflow with Nextflow-specific execution model
-        workflow = Workflow(
-            name=workflow_name,
-            version="1.0",
-            execution_model=EnvironmentSpecificValue("shared_filesystem", ["shared_filesystem"]),
-        )
-        
-        # Add metadata
+        # Add Nextflow-specific metadata
         workflow.metadata = MetadataSpec(
             source_format="nextflow",
             source_file=str(parsed_data.get("workflow_dir", "")),
-            format_specific={"nextflow_config": config},
+            format_specific={
+                "nextflow_config": parsed_data.get("config", {}),
+                "workflow_dir": str(parsed_data.get("workflow_dir", "")),
+            }
         )
         
         return workflow
-    
-    def _extract_tasks(self, parsed_data: Dict[str, Any]) -> List[Task]:
-        """Extract tasks from parsed Nextflow data."""
-        processes = parsed_data["processes"]
-        config = parsed_data["config"]
-        debug = parsed_data.get("debug", False)
+
+    def _extract_environment_specific_values(self, task: Task, task_data: Dict[str, Any]):
+        """
+        Extract environment-specific values from task data.
         
-        tasks = []
-        for proc_name, proc_info in processes.items():
-            task = _create_task_from_process(proc_name, proc_info, config, debug=debug)
-            tasks.append(task)
+        Override base implementation to set values for multiple environments.
+        Nextflow workflows can run in various environments, so we set values
+        for shared_filesystem, distributed_computing, and cloud_native.
         
-        return tasks
-    
-    def _extract_edges(self, parsed_data: Dict[str, Any]) -> List[Edge]:
-        """Extract edges from parsed Nextflow data."""
-        dependencies = parsed_data["dependencies"]
-        return [Edge(parent=parent, child=child) for parent, child in dependencies]
-    
+        Args:
+            task: Task object to populate
+            task_data: Dictionary containing task data
+        """
+        # Map of field names to their environment-specific counterparts
+        field_mapping = {
+            'command': 'command',
+            'script': 'script',
+            'cpu': 'cpu',
+            'mem_mb': 'mem_mb',
+            'disk_mb': 'disk_mb',
+            'gpu': 'gpu',
+            'gpu_mem_mb': 'gpu_mem_mb',
+            'time_s': 'time_s',
+            'threads': 'threads',
+            'conda': 'conda',
+            'container': 'container',
+            'workdir': 'workdir',
+            'env_vars': 'env_vars',
+            'modules': 'modules',
+            'retry_count': 'retry_count',
+            'retry_delay': 'retry_delay',
+            'retry_backoff': 'retry_backoff',
+            'max_runtime': 'max_runtime',
+            'checkpoint_interval': 'checkpoint_interval',
+            'on_failure': 'on_failure',
+            'failure_notification': 'failure_notification',
+            'cleanup_on_failure': 'cleanup_on_failure',
+            'restart_from_checkpoint': 'restart_from_checkpoint',
+            'partial_results': 'partial_results',
+            'priority': 'priority',
+            'file_transfer_mode': 'file_transfer_mode',
+            'staging_required': 'staging_required',
+            'cleanup_after': 'cleanup_after',
+            'cloud_provider': 'cloud_provider',
+            'cloud_storage_class': 'cloud_storage_class',
+            'cloud_encryption': 'cloud_encryption',
+            'parallel_transfers': 'parallel_transfers',
+            'bandwidth_limit': 'bandwidth_limit',
+            'requirements': 'requirements',
+            'hints': 'hints',
+            'checkpointing': 'checkpointing',
+            'logging': 'logging',
+            'security': 'security',
+            'networking': 'networking'
+        }
+        
+        # Nextflow workflows can run in various environments
+        environments = ["shared_filesystem", "distributed_computing", "cloud_native"]
+        
+        # Extract each field
+        for source_field, target_field in field_mapping.items():
+            if source_field in task_data:
+                value = task_data[source_field]
+                if value is not None:
+                    # Set for all applicable environments
+                    for env in environments:
+                        task.set_for_environment(target_field, value, env)
+
+    def _create_task_from_data(self, task_id: str, task_data: Dict[str, Any]) -> Task:
+        """
+        Create a Task object from task data.
+        
+        Use base implementation but ensure values are set for multiple environments.
+        
+        Args:
+            task_id: ID of the task
+            task_data: Dictionary containing task data
+            
+        Returns:
+            Task object
+        """
+        # Use base implementation to create the task
+        task = super()._create_task_from_data(task_id, task_data)
+        
+        # Nextflow workflows can run in various environments, so ensure values
+        # are set for multiple environments if they're only set for shared_filesystem
+        environments = ["shared_filesystem", "distributed_computing", "cloud_native"]
+        
+        # Check each environment-specific field and extend to other environments if needed
+        for field_name in ['cpu', 'mem_mb', 'disk_mb', 'time_s', 'gpu', 'container', 'conda']:
+            field_value = getattr(task, field_name)
+            if isinstance(field_value, EnvironmentSpecificValue):
+                # If value is only set for shared_filesystem, extend to other environments
+                shared_value = field_value.get_value_for("shared_filesystem")
+                if shared_value is not None:
+                    for env in environments:
+                        if not field_value.is_applicable_to(env):
+                            field_value.set_for_environment(shared_value, env)
+        
+        return task
+
     def _get_source_format(self) -> str:
         """Get the source format name."""
         return "nextflow"
@@ -178,132 +309,128 @@ def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
 def _parse_nextflow_config(config_path: Path, debug: bool = False) -> Dict[str, Any]:
     """Parse nextflow.config file."""
     if debug:
-        print(f"DEBUG: Parsing config file: {config_path}")
+        logger.debug(f"Parsing config file: {config_path}")
 
-    config = {"params": {}, "process": {}, "executor": {}, "profiles": {}}
+    config = {"params": {}, "process": {"defaults": {}, "withName": {}}, "executor": {}, "profiles": {}}
 
     try:
         content = config_path.read_text()
+        if debug:
+            logger.debug(f"Config content: {content}")
 
         # Parse params block
         params_match = re.search(r"params\s*\{([^}]*)\}", content, re.DOTALL)
         if params_match:
             params_content = params_match.group(1)
-            config["params"] = _parse_config_block(params_content)
+            if debug:
+                logger.debug(f"Params content: {params_content}")
+            config["params"] = NextflowSectionParser.parse_config_block(params_content)
+            if debug:
+                logger.debug(f"Parsed params: {config['params']}")
 
-        # Parse process block
+        # Parse process block with special handling for withName
         process_match = re.search(r"process\s*\{([^}]*)\}", content, re.DOTALL)
         if process_match:
             process_content = process_match.group(1)
-            config["process"] = _parse_process_config(process_content)
+            
+            # Parse withName blocks first
+            with_name_matches = re.finditer(r"withName:\s*['\"]?(\w+)['\"]?\s*\{([^}]*)\}", process_content, re.DOTALL)
+            for match in with_name_matches:
+                process_name = match.group(1)
+                with_name_content = match.group(2)
+                config["process"]["withName"][process_name] = NextflowSectionParser.parse_config_block(with_name_content)
+            
+            # Parse the rest of the process block (defaults)
+            # Remove withName blocks from content to avoid double parsing
+            process_content_clean = re.sub(r"withName:\s*['\"]?\w+['\"]?\s*\{[^}]*\}", "", process_content, flags=re.DOTALL)
+            config["process"]["defaults"] = NextflowSectionParser.parse_config_block(process_content_clean)
 
         # Parse executor block
         executor_match = re.search(r"executor\s*\{([^}]*)\}", content, re.DOTALL)
         if executor_match:
             executor_content = executor_match.group(1)
-            config["executor"] = _parse_config_block(executor_content)
+            config["executor"] = NextflowSectionParser.parse_config_block(executor_content)
 
         if debug:
-            print(f"DEBUG: Parsed config with {len(config['params'])} params")
+            logger.debug(f"Parsed config with {len(config['params'])} params")
+            logger.debug(f"Process config: {config['process']}")
 
     except Exception as e:
         if debug:
-            print(f"DEBUG: Error parsing config: {e}")
+            logger.debug(f"Error parsing config: {e}")
 
     return config
 
 
-def _parse_config_block(content: str) -> Dict[str, Any]:
-    """Parse a configuration block (params, executor, etc.)."""
-    config = {}
+class NextflowSectionParser:
+    """Parser for Nextflow sections using shared utilities."""
+    
+    @staticmethod
+    def parse_config_block(content: str) -> Dict[str, Any]:
+        """Parse Nextflow config block."""
+        return GenericSectionParser.parse_key_value_section(content, comment_chars=["//", "#"])
 
-    # Simple key-value parsing
-    for line in content.split("\n"):
-        line = line.strip()
-        if not line or line.startswith("//"):
-            continue
+    @staticmethod
+    def parse_process_config(content: str) -> Dict[str, Any]:
+        """Parse Nextflow process config section."""
+        return GenericSectionParser.parse_key_value_section(content, comment_chars=["//", "#"])
 
-        # Match key = value
-        match = re.match(r"(\w+)\s*=\s*(.+)", line)
-        if match:
-            key = match.group(1)
-            value = match.group(2).strip()
+    @staticmethod
+    def parse_process_inputs(input_content: str) -> List[ParameterSpec]:
+        """Parse Nextflow process inputs."""
+        inputs = []
+        params = GenericSectionParser.parse_parameters(input_content, "input", comment_chars=["//", "#"])
+        
+        for param_name, param_info in params.items():
+            param = ParameterSpec(
+                id=param_name,
+                type=param_info.get("type", "string"),
+                default=param_info.get("default"),
+            )
+            inputs.append(param)
+        
+        return inputs
 
-            # Remove quotes and parse basic types
-            if value.startswith('"') and value.endswith('"'):
-                value = value[1:-1]
-            elif value.startswith("'") and value.endswith("'"):
-                value = value[1:-1]
-            elif value.lower() in ["true", "false"]:
-                value = value.lower() == "true"
-            elif value.isdigit():
-                value = int(value)
-            elif re.match(r"^\d+\.\d+$", value):
-                value = float(value)
+    @staticmethod
+    def parse_process_outputs(output_content: str) -> List[ParameterSpec]:
+        """Parse Nextflow process outputs."""
+        outputs = []
+        params = GenericSectionParser.parse_parameters(output_content, "output", comment_chars=["//", "#"])
+        
+        for param_name, param_info in params.items():
+            param = ParameterSpec(
+                id=param_name,
+                type=param_info.get("type", "string"),
+                default=param_info.get("default"),
+            )
+            outputs.append(param)
+        
+        return outputs
 
-            config[key] = value
-
-    return config
-
-
-def _parse_process_config(content: str) -> Dict[str, Any]:
-    """Parse process configuration block with withName directives."""
-    config = {"defaults": {}, "withName": {}}
-
-    lines = content.split("\n")
-    i = 0
-
-    while i < len(lines):
-        line = lines[i].strip()
-
-        if not line or line.startswith("//"):
-            i += 1
-            continue
-
-        # Parse withName directive
-        with_name_match = re.match(r'withName\s*:\s*["\']?([^"\']+)["\']?\s*\{', line)
-        if with_name_match:
-            process_name = with_name_match.group(1)
-            # Find the closing brace
-            brace_count = 1
-            j = i + 1
-            process_config = []
-            while j < len(lines) and brace_count > 0:
-                if "{" in lines[j]:
-                    brace_count += lines[j].count("{")
-                if "}" in lines[j]:
-                    brace_count -= lines[j].count("}")
-                if brace_count > 0:
-                    process_config.append(lines[j])
-                j += 1
-            config["withName"][process_name] = _parse_config_block("\n".join(process_config))
-            i = j
-        else:
-            # Parse default configuration
-            match = re.match(r"(\w+)\s*=\s*(.+)", line)
-            if match:
-                key = match.group(1)
-                value = match.group(2).strip()
-                config["defaults"][key] = value
-            i += 1
-
-    return config
+    @staticmethod
+    def parse_resource_value(value_str: Any) -> Any:
+        """Parse a resource value using shared utility."""
+        return parse_resource_value(value_str)
 
 
 def _parse_main_nf(main_path: Path, debug: bool = False) -> Tuple[Dict, str, List[str]]:
     """Parse main.nf file."""
     if debug:
-        print(f"DEBUG: Parsing main file: {main_path}")
+        logger.debug(f"DEBUG: Parsing main file: {main_path}")
 
     content = main_path.read_text()
     
     # Extract includes
     includes = []
-    include_matches = re.finditer(r'include\s+["\']([^"\']+)["\']', content)
+    include_matches = re.finditer(r'include\s*\{\s*(\w+)\s*\}\s*from\s*["\']([^"\']+)["\']', content)
     for match in include_matches:
-        includes.append(match.group(1))
+        process_name = match.group(1)
+        module_path = match.group(2)
+        includes.append(module_path)
+        if debug:
+            logger.debug(f"DEBUG: Found include: {process_name} from {module_path}")
 
-    # Extract processes
+    # Extract processes from main file
     processes = _extract_processes(content, debug=debug)
 
     # Extract workflow definition
@@ -316,7 +443,7 @@ def _parse_main_nf(main_path: Path, debug: bool = False) -> Tuple[Dict, str, Lis
 def _parse_module_file(module_path: Path, debug: bool = False) -> Dict[str, Dict]:
     """Parse a module file."""
     if debug:
-        print(f"DEBUG: Parsing module: {module_path}")
+        logger.debug(f"DEBUG: Parsing module: {module_path}")
     
     content = module_path.read_text()
     return _extract_processes(content, debug=debug)
@@ -351,6 +478,8 @@ def _extract_processes(content: str, debug: bool = False) -> Dict[str, Dict]:
         if process_body:
             process_info = _parse_process_definition(process_body, debug=debug)
             processes[process_name] = process_info
+            if debug:
+                logger.debug(f"DEBUG: Extracted process: {process_name}")
 
     return processes
 
@@ -358,8 +487,8 @@ def _extract_processes(content: str, debug: bool = False) -> Dict[str, Dict]:
 def _parse_process_definition(process_body: str, debug: bool = False) -> Dict[str, Any]:
     """Parse a process definition."""
     process = {
-        "inputs": {},
-        "outputs": {},
+        "inputs": [],
+        "outputs": [],
         "script": "",
         "publishDir": "",
         "publishDirMode": "copy",
@@ -368,6 +497,7 @@ def _parse_process_definition(process_body: str, debug: bool = False) -> Dict[st
         "maxRetries": 3,
         "maxErrors": -1,
         "memory": None,
+        "mem_mb": None,
         "cpus": None,
         "disk": None,
         "time": None,
@@ -382,122 +512,98 @@ def _parse_process_definition(process_body: str, debug: bool = False) -> Dict[st
     input_match = re.search(r"input\s*:\s*\{([^}]*)\}", process_body, re.DOTALL)
     if input_match:
         input_content = input_match.group(1)
-        process["inputs"] = _parse_process_inputs(input_content)
+        process["inputs"] = NextflowSectionParser.parse_process_inputs(input_content)
 
     # Extract output section
     output_match = re.search(r"output\s*:\s*\{([^}]*)\}", process_body, re.DOTALL)
     if output_match:
         output_content = output_match.group(1)
-        process["outputs"] = _parse_process_outputs(output_content)
+        process["outputs"] = NextflowSectionParser.parse_process_outputs(output_content)
 
-    # Extract script section
+    # Extract script section - handle both single and triple quotes
     script_match = re.search(r"script\s*:\s*['\"`]([^'\"`]*)['\"`]", process_body, re.DOTALL)
     if script_match:
-        process["script"] = script_match.group(1)
+        script_content = script_match.group(1)
+        process["script"] = script_content
+        process["command"] = script_content  # Also set command for compatibility
     else:
-        # Try shell script block
-        shell_match = re.search(r"shell\s*:\s*['\"`]([^'\"`]*)['\"`]", process_body, re.DOTALL)
-        if shell_match:
-            process["script"] = shell_match.group(1)
+        # Try triple-quoted script block
+        script_match = re.search(r"script\s*:\s*'''([^']*)'''", process_body, re.DOTALL)
+        if script_match:
+            script_content = script_match.group(1)
+            process["script"] = script_content
+            process["command"] = script_content  # Also set command for compatibility
+        else:
+            # Try shell script block
+            shell_match = re.search(r"shell\s*:\s*['\"`]([^'\"`]*)['\"`]", process_body, re.DOTALL)
+            if shell_match:
+                script_content = shell_match.group(1)
+                process["script"] = script_content
+                process["command"] = script_content  # Also set command for compatibility
 
     # Extract publishDir
     publish_match = re.search(r'publishDir\s*["\']([^"\']+)["\']', process_body)
     if publish_match:
         process["publishDir"] = publish_match.group(1)
 
-    # Extract resource specifications
-    resource_patterns = {
-        "memory": r"memory\s*=\s*['\"`]([^'\"`]+)['\"`]",
-        "cpus": r"cpus\s*=\s*(\d+)",
-        "disk": r"disk\s*=\s*['\"`]([^'\"`]+)['\"`]",
-        "time": r"time\s*=\s*['\"`]([^'\"`]+)['\"`]",
-        "container": r'container\s*["\']([^"\']+)["\']',
-        "conda": r'conda\s*["\']([^"\']+)["\']',
-        "module": r'module\s*["\']([^"\']+)["\']',
-        "tag": r'tag\s*["\']([^"\']+)["\']',
-        "label": r'label\s*["\']([^"\']+)["\']',
-    }
+    # Extract resource specifications - handle different formats
+    # CPU can be specified as "cpus 4" or "cpus = 4"
+    cpus_match = re.search(r"cpus\s+(?:=\s*)?(\d+)", process_body)
+    if cpus_match:
+        process["cpus"] = int(cpus_match.group(1))
+    
+    # Memory
+    mem_match = re.search(r"memory\s+(?:=\s*)?(.+)", process_body)
+    if mem_match:
+        mem_val = mem_match.group(1).strip().strip("'\"` ")
+        process["memory"] = mem_val
+        process["mem_mb"] = parse_memory_string(mem_val)
 
-    for key, pattern in resource_patterns.items():
-        match = re.search(pattern, process_body)
-        if match:
-            process[key] = match.group(1)
+    # Disk
+    disk_match = re.search(r"disk\s+(?:=\s*)?(.+)", process_body)
+    if disk_match:
+        disk_val = disk_match.group(1).strip().strip("'\"` ")
+        process["disk_mb"] = parse_disk_string(disk_val)
+
+    # Time
+    time_match = re.search(r"time\s+(?:=\s*)?(.+)", process_body)
+    if time_match:
+        time_val = time_match.group(1).strip().strip("'\"` ")
+        process["time_s"] = parse_time_string(time_val)
+    
+    # Container can be specified as "container 'image:tag'" or "container = 'image:tag'"
+    container_match = re.search(r"container\s+(?:=\s*)?['\"`]([^'\"`]+)['\"`]", process_body)
+    if container_match:
+        process["container"] = container_match.group(1)
+    
+    # Conda
+    conda_match = re.search(r"conda\s+['\"]([^'\"]+)['\"]", process_body)
+    if conda_match:
+        process["conda"] = conda_match.group(1)
+    
+    # Tag can be specified as "tag 'tag_name'" or "tag = 'tag_name'"
+    tag_match = re.search(r"tag\s+(?:=\s*)?['\"`]([^'\"`]+)['\"`]", process_body)
+    if tag_match:
+        process["tag"] = tag_match.group(1)
+    
+    # Label can be specified as "label 'label_name'" or "label = 'label_name'"
+    label_match = re.search(r"label\s+(?:=\s*)?['\"`]([^'\"`]+)['\"`]", process_body)
+    if label_match:
+        process["label"] = label_match.group(1)
+
+    # Accelerator can be specified as "accelerator 2, type: 'nvidia-tesla-v100'"
+    accelerator_match = re.search(r"accelerator\s+(\d+)(?:,\s*type:\s*['\"`]([^'\"`]+)['\"`])?", process_body)
+    if accelerator_match:
+        process["gpu"] = int(accelerator_match.group(1))
+        if accelerator_match.group(2):
+            process["gpu_type"] = accelerator_match.group(2)
+
+    # maxRetries
+    max_retries_match = re.search(r"maxRetries\s+(\d+)", process_body)
+    if max_retries_match:
+        process["retry_count"] = int(max_retries_match.group(1))
 
     return process
-
-
-def _parse_process_inputs(input_content: str) -> Dict[str, Any]:
-    """Parse process input section."""
-    inputs = {}
-    
-    for line in input_content.split("\n"):
-        line = line.strip()
-        if not line or line.startswith("//"):
-            continue
-        
-        # Match input declarations
-        match = re.match(r"(\w+)\s*(\w+)\s*(\w+)", line)
-        if match:
-            qualifier = match.group(1)  # val, path, env, etc.
-            type_name = match.group(2)  # file, string, int, etc.
-            var_name = match.group(3)   # variable name
-            inputs[var_name] = {"qualifier": qualifier, "type": type_name}
-    
-    return inputs
-
-
-def _parse_process_outputs(output_content: str) -> Dict[str, Any]:
-    """Parse process output section."""
-    outputs = {}
-    
-    for line in output_content.split("\n"):
-        line = line.strip()
-        if not line or line.startswith("//"):
-            continue
-        
-        # Match output declarations
-        match = re.match(r"(\w+)\s*(\w+)\s*(\w+)", line)
-        if match:
-            qualifier = match.group(1)  # val, path, env, etc.
-            type_name = match.group(2)  # file, string, int, etc.
-            var_name = match.group(3)   # variable name
-            outputs[var_name] = {"qualifier": qualifier, "type": type_name}
-    
-    return outputs
-
-
-def _parse_resource_value(value_str: str) -> Any:
-    """Parse resource value string."""
-    if not value_str:
-        return None
-    
-    # Remove quotes
-    value_str = value_str.strip('"\'')
-    
-    # Parse memory values
-    if value_str.endswith("GB"):
-        return int(float(value_str[:-2]) * 1024)  # Convert to MB
-    elif value_str.endswith("MB"):
-        return int(value_str[:-2])
-    elif value_str.endswith("KB"):
-        return int(value_str[:-2]) // 1024  # Convert to MB
-    
-    # Parse time values
-    if value_str.endswith("h"):
-        return int(float(value_str[:-1]) * 3600)  # Convert to seconds
-    elif value_str.endswith("m"):
-        return int(float(value_str[:-1]) * 60)  # Convert to seconds
-    elif value_str.endswith("s"):
-        return int(value_str[:-1])
-    
-    # Parse numeric values
-    try:
-        if "." in value_str:
-            return float(value_str)
-        else:
-            return int(value_str)
-    except ValueError:
-        return value_str
 
 
 def _extract_dependencies(
@@ -506,128 +612,160 @@ def _extract_dependencies(
     """Extract dependencies from workflow definition."""
     dependencies = []
     
-    # Look for collect operations which indicate dependencies
-    collect_matches = re.finditer(r"(\w+)\s*\.\s*collect\s*\(\s*\)", workflow_def)
-    for match in collect_matches:
-        channel_name = match.group(1)
-        # This is a simplified dependency extraction
-        # In a real implementation, you'd need to track channel definitions
+    if not workflow_def.strip():
+        return dependencies
+    
+    if debug:
+        logger.debug(f"DEBUG: Analyzing workflow definition: {workflow_def}")
+    
+    # Track process invocations and their outputs
+    process_invocations = []
+    
+    # Find process invocations in the workflow block
+    # Pattern: process_name(input_channel) or process_name()
+    process_calls = re.finditer(r'(\w+)\s*\(\s*([^)]*)\s*\)', workflow_def)
+    
+    for match in process_calls:
+        process_name = match.group(1)
+        input_args = match.group(2).strip()
+        
+        # Skip if it's not a process call (could be function calls)
+        if process_name.lower() in ['channel', 'frompath', 'fromlist', 'from', 'collect', 'map', 'filter']:
+            continue
+            
+        process_invocations.append((process_name, input_args))
         if debug:
-            print(f"DEBUG: Found collect operation on channel: {channel_name}")
+            logger.debug(f"DEBUG: Found process call: {process_name}({input_args})")
+    
+    # Extract dependencies based on process invocation order and input/output relationships
+    for i, (process_name, input_args) in enumerate(process_invocations):
+        if not input_args:
+            continue
+            
+        # Look for channel variables that might be outputs from previous processes
+        # This is a simplified approach - in a real implementation, you'd track channel definitions
+        for j, (prev_process, prev_args) in enumerate(process_invocations[:i]):
+            # If this process uses output from a previous process, create dependency
+            if prev_process in input_args or f"{prev_process}_ch" in input_args:
+                dependencies.append((prev_process, process_name))
+                if debug:
+                    logger.debug(f"DEBUG: Found dependency: {prev_process} -> {process_name}")
+    
+    # If no explicit dependencies found, create linear dependencies based on invocation order
+    if not dependencies and len(process_invocations) > 1:
+        for i in range(len(process_invocations) - 1):
+            prev_process = process_invocations[i][0]
+            next_process = process_invocations[i + 1][0]
+            dependencies.append((prev_process, next_process))
+            if debug:
+                logger.debug(f"DEBUG: Created linear dependency: {prev_process} -> {next_process}")
     
     return dependencies
 
 
-def _create_task_from_process(
-    process_name: str, process_info: Dict, config: Dict, debug: bool = False
-) -> Task:
-    """Create a Task from a Nextflow process definition."""
+def _convert_process_to_task_data(process_name: str, process_info: Dict, config: Dict, debug: bool = False) -> Dict[str, Any]:
+    """Convert Nextflow process data to task data format expected by base importer."""
+    task_data = {
+        "label": process_name,
+        "doc": process_info.get("doc", ""),
+        "inputs": process_info.get("inputs", []),
+        "outputs": process_info.get("outputs", []),  # Ensure this is a list, not dict
+    }
     
-    # Get default configuration
-    default_config = config.get("process", {}).get("defaults", {})
-    process_config = config.get("process", {}).get("withName", {}).get(process_name, {})
-    
-    # Merge configurations (process-specific overrides defaults)
-    merged_config = {**default_config, **process_config}
-    
-    # Extract script
-    script = process_info.get("script", "")
-    if not script:
-        script = merged_config.get("script", "")
-    
-    # Extract resources
-    memory = process_info.get("memory") or merged_config.get("memory")
-    cpus = process_info.get("cpus") or merged_config.get("cpus")
-    disk = process_info.get("disk") or merged_config.get("disk")
-    time = process_info.get("time") or merged_config.get("time")
-    
-    # Convert memory to MB
-    mem_mb = _convert_memory_to_mb(memory) if memory else 4096
-    
-    # Convert time to seconds
-    time_s = _convert_time_to_seconds(time) if time else 3600
-    
-    # Extract environment
-    container = process_info.get("container") or merged_config.get("container")
-    conda = process_info.get("conda") or merged_config.get("conda")
-    module = process_info.get("module") or merged_config.get("module")
-    
-    # Convert inputs and outputs to ParameterSpec
-    inputs = []
-    for var_name, var_info in process_info.get("inputs", {}).items():
-        inputs.append(ParameterSpec(
-            id=var_name,
-            type=var_info.get("type", "string"),
-            label=var_name,
-        ))
-    
-    outputs = []
-    for var_name, var_info in process_info.get("outputs", {}).items():
-        outputs.append(ParameterSpec(
-            id=var_name,
-            type=var_info.get("type", "string"),
-            label=var_name,
-        ))
-    
-    # Create task with environment-specific values
-    task = Task(
-        id=process_name,
-        label=process_info.get("label", process_name),
-        doc=process_info.get("tag", ""),
-        script=EnvironmentSpecificValue(script, ["shared_filesystem"]) if script else EnvironmentSpecificValue(None, ["shared_filesystem"]),
-        inputs=inputs,
-        outputs=outputs,
-        cpu=EnvironmentSpecificValue(int(cpus) if cpus else 1, ["shared_filesystem"]),
-        mem_mb=EnvironmentSpecificValue(mem_mb, ["shared_filesystem"]),
-        disk_mb=EnvironmentSpecificValue(_convert_memory_to_mb(disk) if disk else 4096, ["shared_filesystem"]),
-        time_s=EnvironmentSpecificValue(time_s, ["shared_filesystem"]),
-        container=EnvironmentSpecificValue(container, ["shared_filesystem"]) if container else EnvironmentSpecificValue(None, ["shared_filesystem"]),
-        conda=EnvironmentSpecificValue(conda, ["shared_filesystem"]) if conda else EnvironmentSpecificValue(None, ["shared_filesystem"]),
-        modules=EnvironmentSpecificValue([module] if module else [], ["shared_filesystem"]),
-        retry_count=EnvironmentSpecificValue(process_info.get("maxRetries", 3), ["shared_filesystem"]),
-        on_failure=EnvironmentSpecificValue(process_info.get("errorStrategy", "terminate"), ["shared_filesystem"]),
-    )
-    
-    return task
+    # CPU
+    if "cpus" in process_info:
+        cpu_value = NextflowSectionParser.parse_resource_value(process_info["cpus"])
+        if cpu_value is not None:
+            task_data["cpu"] = cpu_value
+    # Memory
+    if "mem_mb" in process_info:
+        mem_value = process_info["mem_mb"]
+        mem_value = parse_memory_string(mem_value) if not isinstance(mem_value, int) else mem_value
+        if mem_value is not None:
+            task_data["mem_mb"] = mem_value
+    # Disk
+    if "disk_mb" in process_info:
+        disk_value = process_info["disk_mb"]
+        disk_value = parse_disk_string(disk_value) if not isinstance(disk_value, int) else disk_value
+        if disk_value is not None:
+            task_data["disk_mb"] = disk_value
+    # Time
+    if "time_s" in process_info:
+        time_value = process_info["time_s"]
+        time_value = parse_time_string(time_value) if not isinstance(time_value, int) else time_value
+        if time_value is not None:
+            task_data["time_s"] = time_value
+    # Container
+    if "container" in process_info:
+        task_data["container"] = process_info["container"]
+    # Command/script
+    if "script" in process_info:
+        task_data["script"] = process_info["script"]
+        task_data["command"] = process_info["script"]  # Also set command
+    elif "command" in process_info:
+        task_data["command"] = process_info["command"]
+    # GPU
+    if "gpu" in process_info:
+        gpu_value = NextflowSectionParser.parse_resource_value(process_info["gpu"])
+        if gpu_value is not None:
+            task_data["gpu"] = gpu_value
+    # Conda
+    if "conda" in process_info:
+        conda_value = process_info["conda"]
+        if conda_value:
+            task_data["conda"] = conda_value
+    # Retry count
+    if "retry_count" in process_info:
+        retry_value = NextflowSectionParser.parse_resource_value(process_info["retry_count"])
+        if retry_value is not None:
+            task_data["retry_count"] = retry_value
+    # Apply config defaults if not specified
+    process_config = config.get("process", {})
+    defaults = process_config.get("defaults", {})
+    with_name = process_config.get("withName", {})
+    # Apply withName specific config
+    if process_name in with_name:
+        specific_config = with_name[process_name]
+        if "cpus" in specific_config and "cpu" not in task_data:
+            cpu_value = NextflowSectionParser.parse_resource_value(specific_config["cpus"])
+            if cpu_value is not None:
+                task_data["cpu"] = cpu_value
+        if "memory" in specific_config and "mem_mb" not in task_data:
+            mem_value = parse_memory_string(specific_config["memory"])
+            if mem_value is not None:
+                task_data["mem_mb"] = mem_value
+        if "disk" in specific_config and "disk_mb" not in task_data:
+            disk_value = parse_disk_string(specific_config["disk"])
+            if disk_value is not None:
+                task_data["disk_mb"] = disk_value
+        if "container" in specific_config and "container" not in task_data:
+            task_data["container"] = specific_config["container"]
+    # Apply defaults if still not specified
+    if "cpu" not in task_data and "cpus" in defaults:
+        cpu_value = NextflowSectionParser.parse_resource_value(defaults["cpus"])
+        if cpu_value is not None:
+            task_data["cpu"] = cpu_value
+    if "mem_mb" not in task_data and "memory" in defaults:
+        mem_value = parse_memory_string(defaults["memory"])
+        if mem_value is not None:
+            task_data["mem_mb"] = mem_value
+    if "disk_mb" not in task_data and "disk" in defaults:
+        disk_value = parse_disk_string(defaults["disk"])
+        if disk_value is not None:
+            task_data["disk_mb"] = disk_value
+    if "container" not in task_data and "container" in defaults:
+        task_data["container"] = defaults["container"]
+    return task_data
+
+
+
 
 
 def _convert_memory_to_mb(memory_str: str) -> Optional[int]:
-    """Convert memory string to MB."""
-    if not memory_str:
-        return None
-    
-    memory_str = memory_str.strip()
-    
-    if memory_str.endswith("GB"):
-        return int(float(memory_str[:-2]) * 1024)
-    elif memory_str.endswith("MB"):
-        return int(memory_str[:-2])
-    elif memory_str.endswith("KB"):
-        return int(memory_str[:-2]) // 1024
-    else:
-        # Assume MB if no unit specified
-        try:
-            return int(memory_str)
-        except ValueError:
-            return None
+    """Convert memory string to MB using shared utility."""
+    return parse_memory_string(memory_str)
 
 
 def _convert_time_to_seconds(time_str: str) -> Optional[int]:
-    """Convert time string to seconds."""
-    if not time_str:
-        return None
-    
-    time_str = time_str.strip()
-    
-    if time_str.endswith("h"):
-        return int(float(time_str[:-1]) * 3600)
-    elif time_str.endswith("m"):
-        return int(float(time_str[:-1]) * 60)
-    elif time_str.endswith("s"):
-        return int(time_str[:-1])
-    else:
-        # Assume seconds if no unit specified
-        try:
-            return int(time_str)
-        except ValueError:
-            return None
+    """Convert time string to seconds using shared utility."""
+    return parse_time_string(time_str)

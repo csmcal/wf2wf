@@ -38,29 +38,36 @@ class DAGManExporter(BaseExporter):
         default_cpus = opts.get("default_cpus", 1)
         inline_submit = opts.get("inline_submit", False)
         debug = opts.get("debug", False)
+        # Use self.target_environment for all environment-specific logic
+        target_env = self.target_environment
+        
+        # Apply Condor-specific inference to generate appropriate attributes
+        from wf2wf.importers.inference import infer_condor_attributes
+        infer_condor_attributes(workflow, target_environment=target_env)
         
         # Resolve paths & directories
         scripts_dir = Path(scripts_dir) if scripts_dir else output_path.with_name("scripts")
         scripts_dir.mkdir(parents=True, exist_ok=True)
-        
+
         workdir = Path(workdir) if workdir else output_path.parent
-        
+
         if self.verbose:
             print(f"[wf2wf.dagman] Writing DAG to {output_path}")
             print(f"  scripts_dir = {scripts_dir}")
             print(f"  workdir     = {workdir}")
-        
+            print(f"  target_env  = {target_env}")
+
         # Write wrapper shell scripts (one per task)
         script_paths: Dict[str, Path] = {}
-        
+
         for task in workflow.tasks.values():
             script_file = scripts_dir / f"{_sanitize_condor_job_name(task.id)}.sh"
-            _write_task_wrapper_script(task, script_file)
+            _write_task_wrapper_script(task, script_file, target_env)
             script_paths[task.id] = script_file
-        
+
         if self.verbose:
             print(f"  wrote {len(script_paths)} wrapper scripts → {scripts_dir}")
-        
+
         # Report hook action for scripts dir as artefact
         try:
             from wf2wf import report as _rpt
@@ -68,10 +75,10 @@ class DAGManExporter(BaseExporter):
             _rpt.add_action("Exported DAGMan workflow")
         except ImportError:
             pass
-        
+
         # Ensure logs dir
         (workdir / "logs").mkdir(exist_ok=True)
-        
+
         # Generate DAG & submit-description blocks
         _write_dag_file(
             workflow,
@@ -82,6 +89,7 @@ class DAGManExporter(BaseExporter):
             default_disk=default_disk,
             default_cpus=default_cpus,
             inline_submit=inline_submit,
+            target_env=target_env,
         )
 
 
@@ -120,10 +128,15 @@ def _sanitize_condor_job_name(name: str) -> str:
     return sanitized
 
 
-def _write_task_wrapper_script(task: Task, path: Path):
+def _write_task_wrapper_script(task: Task, path: Path, target_env: str):
     """Write wrapper script for a task."""
-    command = task.command.get_value_for("distributed_computing")
-    script = task.script.get_value_for("distributed_computing")
+    # Try to get command from any environment, preferring distributed_computing
+    command = (task.command.get_value_for(target_env) or 
+               task.command.get_value_for("shared_filesystem") or 
+               task.command.get_value_for("cloud_native"))
+    script = (task.script.get_value_for(target_env) or 
+              task.script.get_value_for("shared_filesystem") or 
+              task.script.get_value_for("cloud_native"))
     
     if script:
         # Copy script file
@@ -133,16 +146,23 @@ def _write_task_wrapper_script(task: Task, path: Path):
             # Make executable
             path.chmod(0o755)
         else:
-            # Create placeholder script
-            path.write_text(f"#!/bin/bash\n# Placeholder for {script}\necho 'Script {script} not found'\nexit 1\n")
+            # Create placeholder script with proper format
+            script_ext = script_path.suffix
+            if script_ext in ('.py', '.PY'):
+                script_content = f"#!/bin/bash\nset -euo pipefail\npython {script}\n"
+            elif script_ext in ('.R', '.r'):
+                script_content = f"#!/bin/bash\nset -euo pipefail\nRscript {script}\n"
+            else:
+                script_content = f"#!/bin/bash\nset -euo pipefail\nbash {script}\n"
+            path.write_text(script_content)
             path.chmod(0o755)
     elif command:
         # Create wrapper script with command
-        path.write_text(f"#!/bin/bash\nset -e\n{command}\n")
+        path.write_text(f"#!/bin/bash\nset -euo pipefail\n{command}\n")
         path.chmod(0o755)
     else:
         # Create placeholder script
-        path.write_text(f"#!/bin/bash\n# Placeholder for task {task.id}\necho 'No command or script specified for task {task.id}'\nexit 1\n")
+        path.write_text(f"#!/bin/bash\nset -euo pipefail\necho 'No command defined'\nexit 1\n")
         path.chmod(0o755)
 
 
@@ -156,6 +176,7 @@ def _write_dag_file(
     default_disk: str,
     default_cpus: int,
     inline_submit: bool = False,
+    target_env: str,
 ):
     """Write DAG file with job definitions."""
     dag_lines = []
@@ -172,12 +193,12 @@ def _write_dag_file(
     for task in wf.tasks.values():
         script_path = script_paths[task.id]
         relative_script_path = script_path.relative_to(workdir)
-        
+
         if inline_submit:
             # Inline submit description
             dag_lines.append(f"JOB {task.id} {{")
             submit_lines = _generate_submit_content(
-                task, script_path, workdir, default_memory, default_disk, default_cpus
+                task, script_path, workdir, default_memory, default_disk, default_cpus, target_env
             )
             for line in submit_lines:
                 dag_lines.append(f"    {line}")
@@ -186,16 +207,28 @@ def _write_dag_file(
             # External submit file
             submit_file = dag_path.parent / f"{task.id}.sub"
             _write_submit_file(
-                task, submit_file, script_path, workdir, default_memory, default_disk, default_cpus
+                task, submit_file, script_path, workdir, default_memory, default_disk, default_cpus, target_env
             )
             dag_lines.append(f"JOB {task.id} {submit_file.name}")
         
+        # Emit RETRY and PRIORITY lines if set for any environment
+        retry = (task.retry_count.get_value_for(target_env) or
+                 task.retry_count.get_value_for("shared_filesystem") or
+                 task.retry_count.get_value_for("cloud_native"))
+        if retry and retry > 0:
+            dag_lines.append(f"RETRY {task.id} {retry}")
+        priority = (task.priority.get_value_for(target_env) or
+                    task.priority.get_value_for("shared_filesystem") or
+                    task.priority.get_value_for("cloud_native"))
+        if priority and priority > 0:
+            dag_lines.append(f"PRIORITY {task.id} {priority}")
+        
         dag_lines.append("")
-    
+
     # Dependencies
     for edge in wf.edges:
         dag_lines.append(f"PARENT {edge.parent} CHILD {edge.child}")
-    
+
     # Write DAG file
     dag_path.write_text("\n".join(dag_lines))
 
@@ -208,10 +241,11 @@ def _write_submit_file(
     default_memory: str,
     default_disk: str,
     default_cpus: int,
+    target_env: str,
 ):
     """Write submit file for a task."""
     submit_lines = _generate_submit_content(
-        task, script_path, workdir, default_memory, default_disk, default_cpus
+        task, script_path, workdir, default_memory, default_disk, default_cpus, target_env
     )
     submit_path.write_text("\n".join(submit_lines))
 
@@ -234,38 +268,55 @@ def _generate_submit_content(
     default_memory: str,
     default_disk: str,
     default_cpus: int,
+    target_env: str,
 ) -> List[str]:
     """Generate submit file content for a task."""
-    environment = "distributed_computing"
     submit_lines = []
     
     # Executable
     relative_script_path = script_path.relative_to(workdir)
     submit_lines.append(f"executable = {relative_script_path}")
     
-    # Resource requirements
-    cpu = task.cpu.get_value_for(environment) or default_cpus
-    mem_mb = task.mem_mb.get_value_for(environment) or _parse_memory_string(default_memory)
-    disk_mb = task.disk_mb.get_value_for(environment) or _parse_memory_string(default_disk)
+    # Resource requirements - use target environment values
+    cpu = task.cpu.get_value_for(target_env) or default_cpus
+    mem_mb = task.mem_mb.get_value_for(target_env) or _parse_memory_string(default_memory)
+    disk_mb = task.disk_mb.get_value_for(target_env) or _parse_memory_string(default_disk)
     
     submit_lines.append(f"request_cpus = {cpu}")
     submit_lines.append(f"request_memory = {mem_mb}MB")
     submit_lines.append(f"request_disk = {disk_mb}MB")
     
     # GPU if specified
-    gpu = task.gpu.get_value_for(environment)
+    gpu = task.gpu.get_value_for(target_env)
     if gpu:
         submit_lines.append(f"request_gpus = {gpu}")
     
+    # GPU memory if specified
+    gpu_mem = task.gpu_mem_mb.get_value_for(target_env)
+    if gpu_mem:
+        submit_lines.append(f"gpus_minimum_memory = {gpu_mem}")
+    
     # Container if specified
-    container = task.container.get_value_for(environment)
+    container = task.container.get_value_for(target_env)
     if container:
-        submit_lines.append("universe = docker")
-        submit_lines.append(f"docker_image = {container}")
+        if container.startswith("docker://"):
+            submit_lines.append("universe = docker")
+            # Strip docker:// prefix
+            container_image = container[len("docker://"):]
+            submit_lines.append(f"docker_image = {container_image}")
+        elif container.endswith(".sif") or container.startswith("apptainer://"):
+            submit_lines.append("universe = vanilla")
+            submit_lines.append(f'+SingularityImage = "{container}"')
+        else:
+            submit_lines.append("universe = vanilla")
+            submit_lines.append(f"executable = {container}")
     
     # Conda environment if specified
-    conda = task.conda.get_value_for(environment)
+    conda = task.conda.get_value_for(target_env)
     if conda:
+        # Only set universe = vanilla if not already set by container
+        if not container or not container.startswith("docker://"):
+            submit_lines.append("universe = vanilla")
         submit_lines.append(f"+CondaEnv = {conda}")
     
     # Working directory
@@ -277,20 +328,29 @@ def _generate_submit_content(
     submit_lines.append(f"output = logs/{task.id}.out")
     
     # Retry policy
-    retry_count = task.retry_count.get_value_for(environment)
+    retry_count = task.retry_count.get_value_for(target_env)
     if retry_count:
         submit_lines.append(f"retry = {retry_count}")
     
     # Priority
-    priority = task.priority.get_value_for(environment)
+    priority = task.priority.get_value_for(target_env)
     if priority:
         submit_lines.append(f"priority = {priority}")
     
     # Environment variables
-    env_vars = task.env_vars.get_value_for(environment)
+    env_vars = task.env_vars.get_value_for(target_env)
     if env_vars:
         for key, value in env_vars.items():
             submit_lines.append(f"environment = {key}={value}")
+    
+    # Extra attributes (custom Condor attributes)
+    for key, value in task.extra.items():
+        if isinstance(value, EnvironmentSpecificValue):
+            extra_value = value.get_value_for(target_env)
+            if extra_value is not None:
+                submit_lines.append(f"{key} = {extra_value}")
+        else:
+            submit_lines.append(f"{key} = {value}")
     
     # Queue
     submit_lines.append("queue")
