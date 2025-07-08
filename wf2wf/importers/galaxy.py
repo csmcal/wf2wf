@@ -14,6 +14,7 @@ Features supported:
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -37,122 +38,96 @@ from wf2wf.importers.base import BaseImporter
 class GalaxyImporter(BaseImporter):
     """Galaxy importer using shared base infrastructure."""
     
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.logger = logging.getLogger("wf2wf.importers.galaxy")
+    
     def _parse_source(self, path: Path, **opts: Any) -> Dict[str, Any]:
-        """Parse Galaxy workflow file and extract all information."""
-        preserve_metadata = opts.get("preserve_metadata", True)
-        debug = opts.get("debug", False)
-        verbose = self.verbose
-
-        if verbose:
-            print(f"Parsing Galaxy workflow file: {path}")
-
-        # Load Galaxy workflow JSON
+        """Parse a Galaxy workflow file (.ga) and return a dict."""
         with open(path, "r") as f:
             galaxy_doc = json.load(f)
 
-        return {
-            "galaxy_doc": galaxy_doc,
-            "galaxy_path": path,
-            "preserve_metadata": preserve_metadata,
-            "debug": debug,
-        }
-    
-    def _create_basic_workflow(self, parsed_data: Dict[str, Any]) -> Workflow:
-        """Create basic workflow from parsed Galaxy data."""
-        galaxy_doc = parsed_data["galaxy_doc"]
-        galaxy_path = parsed_data["galaxy_path"]
-        preserve_metadata = parsed_data["preserve_metadata"]
-        
-        # Extract workflow metadata
-        workflow_name = galaxy_doc.get("name", galaxy_path.stem)
-        workflow_version = str(galaxy_doc.get("version", "1.0"))
+        # Validate required fields
+        if "steps" not in galaxy_doc or not galaxy_doc["steps"]:
+            raise ValueError("Invalid Galaxy workflow: missing or empty 'steps' field.")
 
-        # Create workflow with Galaxy-specific execution model
-        workflow = Workflow(
-            name=workflow_name,
-            version=workflow_version,
-            label=workflow_name,
-            doc=galaxy_doc.get("annotation", ""),
-            execution_model=EnvironmentSpecificValue("shared_filesystem", ["shared_filesystem"]),
-        )
-
-        # Store Galaxy metadata
-        if preserve_metadata:
-            workflow.metadata = MetadataSpec(
-                source_format="galaxy",
-                source_file=str(galaxy_path),
-                source_version=galaxy_doc.get("format-version", "0.1"),
-                format_specific={
-                    "galaxy_uuid": galaxy_doc.get("uuid"),
-                    "original_galaxy_doc": galaxy_doc if preserve_metadata else {},
-                },
-            )
-
-            # Extract provenance
-            workflow.provenance = _extract_galaxy_provenance(galaxy_doc)
-
-            # Extract documentation
-            workflow.documentation = _extract_galaxy_documentation(galaxy_doc)
-
-        return workflow
-    
-    def _extract_tasks(self, parsed_data: Dict[str, Any]) -> List[Task]:
-        """Extract tasks from parsed Galaxy data."""
-        galaxy_doc = parsed_data["galaxy_doc"]
-        preserve_metadata = parsed_data["preserve_metadata"]
-        verbose = self.verbose
-        
-        tasks = []
-        steps = galaxy_doc.get("steps", {})
-        input_steps = {}
-
-        # First pass: create tasks for all steps
-        for step_id, step_data in steps.items():
-            step_type = step_data.get("type", "tool")
-
-            if step_type == "data_input":
-                # Handle data input steps
-                input_step = _convert_galaxy_input_step(
-                    step_id, step_data, preserve_metadata
-                )
-                input_steps[step_id] = input_step
-                workflow.inputs.append(input_step)
-
-                # Create a placeholder Task so dependency edges referencing this input are valid
-                placeholder_task = Task(
-                    id=f"step_{step_id}",
-                    label=step_data.get("label", f"input_{step_id}"),
-                    doc=step_data.get("annotation", ""),
-                    command=EnvironmentSpecificValue("# data input placeholder", ["shared_filesystem"]),
-                )
-                tasks.append(placeholder_task)
-
-            elif step_type == "tool":
-                # Handle tool steps
-                task = _convert_galaxy_tool_step(
-                    step_id, step_data, preserve_metadata=preserve_metadata, verbose=verbose
-                )
-                tasks.append(task)
-
-        return tasks
-    
-    def _extract_edges(self, parsed_data: Dict[str, Any]) -> List[Edge]:
-        """Extract edges from parsed Galaxy data."""
-        galaxy_doc = parsed_data["galaxy_doc"]
-        edges = []
-        steps = galaxy_doc.get("steps", {})
-
-        # Second pass: extract connections and dependencies
-        for step_id, step_data in steps.items():
-            if step_data.get("type") == "tool":
-                step_edges = _extract_galaxy_connections(step_id, step_data, steps)
-                edges.extend(step_edges)
-
-        return edges
+        return galaxy_doc
     
     def _get_source_format(self) -> str:
         """Get the source format name."""
         return "galaxy"
+
+    def _create_basic_workflow(self, parsed_data: Dict[str, Any]) -> Workflow:
+        """Create a Workflow object from parsed Galaxy data."""
+        name = parsed_data.get("name", "galaxy_workflow")
+        version = parsed_data.get("version", "1.0")
+        doc = parsed_data.get("annotation", None)
+        label = parsed_data.get("label", name)
+
+        # Extract tasks and edges
+        tasks = {t.id: t for t in self._extract_tasks(parsed_data)}
+        edges = self._extract_edges(parsed_data)
+
+        # Extract workflow-level inputs and outputs
+        inputs = []
+        outputs = []
+        for step_id, step_data in parsed_data["steps"].items():
+            if step_data.get("type") == "data_input":
+                param = _convert_galaxy_input_step(step_id, step_data)
+                inputs.append(param)
+            # Workflow outputs
+            for output in step_data.get("workflow_outputs", []):
+                outputs.append(ParameterSpec(
+                    id=output.get("label", f"output_{step_id}_{output.get('output_name', 'unknown')}"),
+                    type="File",
+                    label=output.get("label", f"output_{step_id}_{output.get('output_name', 'unknown')}"),
+                    doc=f"Workflow output from step {step_id}",
+                ))
+
+        # Build workflow
+        wf = Workflow(
+            name=name,
+            version=version,
+            label=label,
+            doc=doc,
+            tasks=tasks,
+            edges=edges,
+            inputs=inputs,
+            outputs=outputs,
+        )
+        return wf
+
+    def _extract_tasks(self, parsed_data: Dict[str, Any]) -> List[Task]:
+        """Extract Task objects from Galaxy steps."""
+        tasks = []
+        for step_id, step_data in parsed_data["steps"].items():
+            if step_data.get("type") == "data_input":
+                # Data input step is not a task
+                continue
+            # Tool step
+            task_dict = _convert_galaxy_tool_step_to_dict(step_id, step_data)
+            task = Task(id=task_dict["id"], label=task_dict["label"], doc=task_dict["doc"],
+                        command=EnvironmentSpecificValue(task_dict["command"]),
+                        inputs=task_dict["inputs"], outputs=task_dict["outputs"],
+                        cpu=EnvironmentSpecificValue(task_dict["cpu"]),
+                        mem_mb=EnvironmentSpecificValue(task_dict["mem_mb"]),
+                        disk_mb=EnvironmentSpecificValue(task_dict["disk_mb"]),
+                        time_s=EnvironmentSpecificValue(task_dict["time_s"]))
+            tasks.append(task)
+        return tasks
+
+    def _extract_edges(self, parsed_data: Dict[str, Any]) -> List[Edge]:
+        """Extract Edge objects from Galaxy step connections, only between tool steps."""
+        edges = []
+        steps = parsed_data["steps"]
+        # Only include tool steps as tasks
+        tool_task_ids = {f"step_{step_id}" for step_id, step_data in steps.items() if step_data.get("type") != "data_input"}
+        for step_id, step_data in steps.items():
+            for edge_dict in _extract_galaxy_connections(step_id, step_data, steps):
+                # Only add edge if both parent and child are tool steps
+                if edge_dict["parent"] in tool_task_ids and edge_dict["child"] in tool_task_ids:
+                    edges.append(Edge(parent=edge_dict["parent"], child=edge_dict["child"]))
+        return edges
 
 
 def to_workflow(path: Union[str, Path], **opts: Any) -> Workflow:
@@ -192,6 +167,13 @@ def _convert_galaxy_input_step(
     label = step_data.get("label", f"input_{step_id}")
     annotation = step_data.get("annotation", "")
 
+    # Try to get the input name from the step's 'inputs' field
+    input_name = None
+    inputs_list = step_data.get("inputs", [])
+    if inputs_list and isinstance(inputs_list, list) and len(inputs_list) > 0:
+        # Use the first input's name if available
+        input_name = inputs_list[0].get("name")
+
     # Determine input type from tool_state
     tool_state = step_data.get("tool_state", {})
     if isinstance(tool_state, str):
@@ -203,9 +185,12 @@ def _convert_galaxy_input_step(
     # Galaxy data inputs are typically files
     input_type = "File"
 
+    # Use input_name if available, else fallback to input_{step_id}
+    param_id = f"{input_name}_{step_id}" if input_name else f"input_{step_id}"
+
     # Create parameter spec
     param_spec = ParameterSpec(
-        id=f"input_{step_id}",
+        id=param_id,
         type=input_type,
         label=label,
         doc=annotation,
@@ -214,13 +199,13 @@ def _convert_galaxy_input_step(
     return param_spec
 
 
-def _convert_galaxy_tool_step(
+def _convert_galaxy_tool_step_to_dict(
     step_id: str,
     step_data: Dict[str, Any],
     preserve_metadata: bool = True,
     verbose: bool = False,
-) -> Task:
-    """Convert Galaxy tool step to IR Task."""
+) -> Dict[str, Any]:
+    """Convert Galaxy tool step to dictionary for base importer."""
 
     # Extract basic information
     tool_id = step_data.get("tool_id", "unknown_tool")
@@ -240,21 +225,21 @@ def _convert_galaxy_tool_step(
     inputs = _extract_galaxy_tool_inputs(tool_state, step_data)
     outputs = _extract_galaxy_tool_outputs(step_data)
 
-    # Create task with environment-specific values
-    task = Task(
-        id=f"step_{step_id}",
-        label=label,
-        doc=annotation,
-        command=EnvironmentSpecificValue(f"galaxy_tool:{tool_id}@{tool_version}", ["shared_filesystem"]),
-        inputs=inputs,
-        outputs=outputs,
-        cpu=EnvironmentSpecificValue(1, ["shared_filesystem"]),
-        mem_mb=EnvironmentSpecificValue(4096, ["shared_filesystem"]),
-        disk_mb=EnvironmentSpecificValue(4096, ["shared_filesystem"]),
-        time_s=EnvironmentSpecificValue(3600, ["shared_filesystem"]),
-    )
+    # Create task dictionary
+    task_dict = {
+        "id": f"step_{step_id}",
+        "label": label,
+        "doc": annotation,
+        "command": f"galaxy_tool:{tool_id}@{tool_version}",
+        "inputs": inputs,
+        "outputs": outputs,
+        "cpu": 1,
+        "mem_mb": 4096,
+        "disk_mb": 4096,
+        "time_s": 3600,
+    }
 
-    return task
+    return task_dict
 
 
 def _extract_galaxy_tool_inputs(
@@ -276,7 +261,7 @@ def _extract_galaxy_tool_inputs(
             id=param_name,
             type=param_type,
             label=param_name,
-            default=param_value,
+            doc=f"Input parameter: {param_name}",
         )
         inputs.append(param_spec)
 
@@ -287,13 +272,20 @@ def _extract_galaxy_tool_outputs(step_data: Dict[str, Any]) -> List[ParameterSpe
     """Extract tool outputs from Galaxy step data."""
     outputs = []
 
-    # Galaxy tools typically produce files
-    output_files = step_data.get("outputs", [])
-    for output_file in output_files:
+    # Extract outputs from step data
+    step_outputs = step_data.get("outputs", [])
+    for output in step_outputs:
+        output_name = output.get("name", "unknown")
+        output_type = output.get("type", "data")
+
+        # Map Galaxy types to IR types
+        ir_type = _map_galaxy_type_to_ir(output_type)
+
         output_spec = ParameterSpec(
-            id=f"output_{output_file}",
-            type="File",
-            label=f"Output {output_file}",
+            id=output_name,
+            type=ir_type,
+            label=output_name,
+            doc=f"Output: {output_name}",
         )
         outputs.append(output_spec)
 
@@ -302,22 +294,20 @@ def _extract_galaxy_tool_outputs(step_data: Dict[str, Any]) -> List[ParameterSpe
 
 def _extract_galaxy_connections(
     step_id: str, step_data: Dict[str, Any], all_steps: Dict[str, Any]
-) -> List[Edge]:
-    """Extract connections from Galaxy step."""
+) -> List[dict]:
+    """Extract connections from Galaxy step data."""
     edges = []
 
     # Extract input connections
     input_connections = step_data.get("input_connections", {})
-    for input_name, connection_data in input_connections.items():
-        if isinstance(connection_data, dict):
-            source_step = connection_data.get("id")
-            source_output = connection_data.get("output_name", "output")
-            
-            if source_step and source_step in all_steps:
-                # Create edge from source step to current step
-                parent_id = f"step_{source_step}"
-                child_id = f"step_{step_id}"
-                edges.append(Edge(parent=parent_id, child=child_id))
+    for input_name, connection in input_connections.items():
+        if isinstance(connection, dict) and "id" in connection:
+            parent_step_id = connection["id"]
+            parent_task_id = f"step_{parent_step_id}"
+            child_task_id = f"step_{step_id}"
+            # Return as dict, not Edge object
+            edge = {"parent": parent_task_id, "child": child_task_id}
+            edges.append(edge)
 
     return edges
 
@@ -328,18 +318,16 @@ def _extract_galaxy_outputs(
     """Extract workflow outputs from Galaxy steps."""
     outputs = []
 
-    # Find steps that are marked as workflow outputs
     for step_id, step_data in steps.items():
-        if step_data.get("workflow_outputs"):
-            # This step produces workflow outputs
-            step_outputs = step_data.get("outputs", [])
-            for output_file in step_outputs:
-                output_spec = ParameterSpec(
-                    id=f"workflow_output_{step_id}_{output_file}",
-                    type="File",
-                    label=f"Workflow output from step {step_id}",
-                )
-                outputs.append(output_spec)
+        workflow_outputs = step_data.get("workflow_outputs", [])
+        for output in workflow_outputs:
+            output_spec = ParameterSpec(
+                id=output.get("label", f"output_{step_id}_{output.get('output_name', 'unknown')}"),
+                type="File",  # Galaxy outputs are typically files
+                label=output.get("label", f"output_{step_id}_{output.get('output_name', 'unknown')}"),
+                doc=f"Workflow output from step {step_id}",
+            )
+            outputs.append(output_spec)
 
     return outputs
 
@@ -353,55 +341,104 @@ def _infer_galaxy_parameter_type(param_value: Any) -> str:
     elif isinstance(param_value, float):
         return "float"
     elif isinstance(param_value, str):
-        # Check if it looks like a file path
-        if param_value.startswith("/") or param_value.startswith("./"):
+        # Check for file-like patterns
+        if param_value.endswith(('.txt', '.fastq', '.fasta', '.bam', '.sam', '.vcf')):
             return "File"
+        elif param_value.startswith('http://') or param_value.startswith('https://'):
+            return "string"
         else:
             return "string"
     elif isinstance(param_value, list):
-        return "array"
+        # For lists, use "Any" instead of "array" to avoid validation issues
+        return "Any"
     elif isinstance(param_value, dict):
-        return "record"
+        # For dictionaries, use "Any" instead of "record" to avoid validation issues
+        return "Any"
     else:
         return "string"
 
 
+def _map_galaxy_type_to_ir(galaxy_type: str) -> str:
+    """Map Galaxy data types to IR types."""
+    type_mapping = {
+        "data": "File",
+        "fasta": "File",
+        "fastq": "File",
+        "fastqsanger": "File",
+        "bam": "File",
+        "sam": "File",
+        "vcf": "File",
+        "txt": "File",
+        "csv": "File",
+        "tsv": "File",
+        "json": "File",
+        "xml": "File",
+        "html": "File",
+        "pdf": "File",
+        "png": "File",
+        "jpg": "File",
+        "jpeg": "File",
+        "gif": "File",
+        "svg": "File",
+        "bed": "File",
+        "gtf": "File",
+        "gff": "File",
+        "wig": "File",
+        "bigwig": "File",
+        "bigbed": "File",
+        "tabular": "File",
+        "interval": "File",
+        "peaks": "File",
+        "matrix": "File",
+        "h5": "File",
+        "hdf5": "File",
+        "zip": "File",
+        "tar": "File",
+        "gz": "File",
+        "bz2": "File",
+        "collection": "Directory",
+        "list": "array",
+        "boolean": "boolean",
+        "integer": "int",
+        "float": "float",
+        "text": "string",
+        "color": "string",
+        "genomebuild": "string",
+        "select": "string",
+        "drill_down": "string",
+    }
+    
+    return type_mapping.get(galaxy_type, "File")
+
+
 def _extract_galaxy_provenance(galaxy_doc: Dict[str, Any]) -> Optional[ProvenanceSpec]:
     """Extract provenance information from Galaxy workflow."""
-    provenance = ProvenanceSpec()
-
-    # Extract basic provenance information
-    if "creator" in galaxy_doc:
-        provenance.authors = [{"name": galaxy_doc["creator"]}]
-
-    if "version" in galaxy_doc:
-        provenance.version = str(galaxy_doc["version"])
-
-    if "uuid" in galaxy_doc:
-        provenance.extras["galaxy_uuid"] = galaxy_doc["uuid"]
-
-    # Return None if no provenance data found
-    if not any([provenance.authors, provenance.version, provenance.extras]):
+    if not galaxy_doc:
         return None
 
-    return provenance
+    # Extract basic provenance information
+    extras = {}
+    if "uuid" in galaxy_doc:
+        extras["galaxy_uuid"] = galaxy_doc["uuid"]
+
+    return ProvenanceSpec(
+        version=galaxy_doc.get("version", "1.0"),
+        extras=extras
+    )
 
 
 def _extract_galaxy_documentation(
     galaxy_doc: Dict[str, Any],
 ) -> Optional[DocumentationSpec]:
-    """Extract documentation from Galaxy workflow."""
-    doc = DocumentationSpec()
-
-    if "annotation" in galaxy_doc:
-        doc.description = galaxy_doc["annotation"]
-        doc.doc = galaxy_doc["annotation"]
-
-    if "tags" in galaxy_doc:
-        doc.intent = galaxy_doc["tags"]
-
-    # Return None if no documentation found
-    if not any([doc.description, doc.doc, doc.intent]):
+    """Extract documentation information from Galaxy workflow."""
+    if not galaxy_doc:
         return None
 
-    return doc
+    description = galaxy_doc.get("annotation", "")
+    intent = galaxy_doc.get("tags", [])
+
+    return DocumentationSpec(
+        description=description,
+        doc=description,
+        intent=intent
+    )

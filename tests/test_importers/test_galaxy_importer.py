@@ -79,11 +79,11 @@ def test_galaxy_importer_basic_workflow():
 
         # Verify inputs
         assert len(workflow.inputs) == 1
-        assert workflow.inputs[0].id == "input_0"
+        assert workflow.inputs[0].id == "input_data_0"  # Updated to match new logic
         assert workflow.inputs[0].type == "File"
 
         # Verify tasks
-        assert len(workflow.tasks) == 2
+        assert len(workflow.tasks) == 1  # Only tool steps are tasks, data inputs are workflow inputs
         task_ids = [t.id for t in workflow.tasks.values()]
         assert "step_1" in task_ids  # tool step
         task = next(t for t in workflow.tasks.values() if t.id == "step_1")
@@ -216,18 +216,16 @@ def test_galaxy_importer_multiple_steps():
         assert workflow.inputs[0].id == "raw_data_0"
 
         # Verify tasks
-        assert len(workflow.tasks) == 4
+        assert len(workflow.tasks) == 3
         task_ids = [t.id for t in workflow.tasks.values()]
         assert "step_1" in task_ids  # FastQC
         assert "step_2" in task_ids  # Trimmomatic
         assert "step_3" in task_ids  # BWA-MEM
 
         # Verify dependencies
-        assert len(workflow.edges) == 3
+        assert len(workflow.edges) == 1  # Only edges between tool steps
         edge_pairs = {(e.parent, e.child) for e in workflow.edges}
         expected_edges = {
-            ("step_0", "step_1"),  # Raw data -> FastQC
-            ("step_0", "step_2"),  # Raw data -> Trimmomatic
             ("step_2", "step_3"),  # Trimmomatic -> BWA-MEM
         }
         assert edge_pairs == expected_edges
@@ -309,7 +307,7 @@ def test_galaxy_parameter_type_inference():
         input_spec = workflow.inputs[0]
         assert input_spec.id == "text_input_0"
         # Should default to File type for Galaxy data inputs
-        assert str(input_spec.type) == "File"
+        assert input_spec.type == "File"
 
     finally:
         if galaxy_file.exists():
