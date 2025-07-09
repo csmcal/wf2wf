@@ -17,6 +17,8 @@ This documentation site is still growing.  If something is missing, please [open
 Key features:
 
 * 🔄 **Universal conversion** – always *A → IR → B* for maximum fidelity.
+* 🧠 **Intelligent inference** – automatically fills in missing resource specifications and configurations.
+* 💬 **Interactive prompting** – guided assistance for complex conversions and missing information.
 * 🧬 **Loss mapping** – records unexpressed fields in side-cars so nothing vanishes.
 * 🐳 **Environment automation** – Conda → OCI → Apptainer with SBOM generation.
 * ⚖ **Regulatory support** – Emits BioCompute Objects and provenance metadata.
@@ -39,6 +41,46 @@ wf2wf convert -i Snakefile -o pipeline.dag --auto-env build --interactive
 
 # Convert CWL → Nextflow, aborting on information loss
 wf2wf convert -i analysis.cwl -o main.nf --out-format nextflow --fail-on-loss
+
+# Enhanced conversion with interactive resource specification
+wf2wf convert -i Snakefile -o pipeline.dag --interactive --infer-resources
+
+# Convert CWL → Nextflow with resource validation and loss detection
+wf2wf convert -i analysis.cwl -o main.nf --out-format nextflow --fail-on-loss --validate-resources
+
+# Comprehensive conversion with all enhanced features
+wf2wf convert -i workflow.smk -o workflow.dag \
+    --interactive \
+    --infer-resources \
+    --validate-resources \
+    --resource-profile cluster \
+    --target-env distributed \
+    --report-md
+```
+
+---
+
+## Enhanced Features 🆕
+
+### Intelligent Resource Inference
+Automatically detect and specify resource requirements based on command analysis:
+```bash
+wf2wf convert -i workflow.smk -o workflow.dag --infer-resources
+# Analyzes: "bwa mem" → 8GB memory, 4 CPU
+# Analyzes: "samtools sort" → 4GB memory, 2 CPU
+```
+
+### Interactive Conversion Mode
+Get guided assistance for complex conversions:
+```bash
+wf2wf convert -i workflow.smk -o workflow.dag --interactive
+# Prompts for: missing resources, containers, error handling, file transfers
+```
+
+### Resource Processing
+Validate and optimize resource specifications:
+```bash
+wf2wf convert -i workflow.smk -o workflow.dag --validate-resources --resource-profile cluster
 ```
 
 ---
@@ -51,6 +93,7 @@ wf2wf convert -i analysis.cwl -o main.nf --out-format nextflow --fail-on-loss
 user_guide/installation
 user_guide/prerequisites
 user_guide/quickstart
+user_guide/shared_infrastructure
 user_guide/environments
 user_guide/registry_auth
 user_guide/examples
@@ -123,6 +166,7 @@ CHANGELOG <https://github.com/csmcal/wf2wf/blob/main/CHANGELOG.md>
 ## Sections
 
 * **User Guide** – step-by-step tutorials and best practices.
+* **Shared Infrastructure** – comprehensive guide to intelligent inference and interactive features.
 * **CLI Reference** – exhaustive help for every command.
 * **Developer Guide** – IR schema, environment pipeline, contributor tips.
 * **Changelog** – project history and release notes.

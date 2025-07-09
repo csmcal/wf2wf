@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List, Optional
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -839,3 +840,98 @@ class GenericSectionParser:
                 sections[section_name] = match.group(1).strip()
         
         return sections 
+
+
+def parse_file_format(file_path: Path) -> str:
+    """
+    Parse file format based on file extension.
+    
+    This utility function can be used by any importer to determine
+    the format of a file based on its extension.
+    
+    Args:
+        file_path: Path to the file
+        
+    Returns:
+        File format string (json, yaml, yml, etc.)
+    """
+    extension = file_path.suffix.lower()
+    
+    format_map = {
+        '.json': 'json',
+        '.yaml': 'yaml',
+        '.yml': 'yaml',
+        '.cwl': 'cwl',  # CWL files can be either YAML or JSON
+        '.wdl': 'wdl',
+        '.nf': 'nextflow',
+        '.smk': 'snakemake',
+        '.dag': 'dagman',
+        '.sub': 'dagman',
+        '.ga': 'galaxy'
+    }
+    
+    return format_map.get(extension, 'unknown') 
+
+
+def parse_cwl_type(type_spec):
+    """Parse CWL type specification into TypeSpec object."""
+    from wf2wf.core import TypeSpec
+    try:
+        return TypeSpec.parse(type_spec)
+    except Exception as e:
+        logger.warning(f"Failed to parse CWL type {type_spec}: {e}")
+        return TypeSpec.parse('string')
+
+
+def parse_requirements(requirements):
+    """Parse CWL requirements and hints into RequirementSpec objects."""
+    from wf2wf.core import RequirementSpec
+    logger.debug(f"Parsing {len(requirements)} requirements/hints")
+    parsed_requirements = []
+    for req in requirements:
+        if isinstance(req, dict):
+            class_name = req.get('class')
+            if class_name:
+                requirement_spec = RequirementSpec(
+                    class_name=class_name,
+                    data={k: v for k, v in req.items() if k != 'class'}
+                )
+                parsed_requirements.append(requirement_spec)
+                logger.debug(f"Added requirement: {class_name}")
+    return parsed_requirements
+
+
+def parse_cwl_parameters(params, param_type):
+    """Parse CWL parameters (inputs or outputs) into ParameterSpec list."""
+    from wf2wf.core import ParameterSpec, TypeSpec
+    logger.debug(f"Parsing CWL {param_type} parameters")
+    parameters = []
+    if isinstance(params, dict):
+        for param_id, param_spec in params.items():
+            if isinstance(param_spec, dict):
+                type_spec = param_spec.get('type', 'string')
+                param_type_spec = parse_cwl_type(type_spec)
+                param = ParameterSpec(
+                    id=param_id,
+                    type=param_type_spec,
+                    label=param_spec.get('label'),
+                    doc=param_spec.get('doc'),
+                    default=param_spec.get('default')
+                )
+            else:
+                param_type_spec = parse_cwl_type(str(param_spec))
+                param = ParameterSpec(
+                    id=param_id,
+                    type=param_type_spec
+                )
+            parameters.append(param)
+            logger.debug(f"Added {param_type} parameter: {param_id} with type {param_type_spec}")
+    elif isinstance(params, list):
+        for param_id in params:
+            param = ParameterSpec(
+                id=param_id,
+                type=TypeSpec.parse('string')
+            )
+            parameters.append(param)
+            logger.debug(f"Added {param_type} parameter: {param_id}")
+    return parameters 

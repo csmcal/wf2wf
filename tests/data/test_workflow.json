@@ -8,7 +8,10 @@
       "id": "prepare_data",
       "label": "Prepare Data",
       "doc": "Prepare input data for analysis",
-      "command": "python prepare_data.py --input raw_data.txt --output prepared_data.txt",
+      "command": {
+        "default_value": "python prepare_data.py --input raw_data.txt --output prepared_data.txt",
+        "values": []
+      },
       "inputs": [
         {
           "id": "raw_data",
@@ -23,38 +26,43 @@
           "label": "Prepared data file"
         }
       ],
-      "resources": {
-        "cpu": 1,
-        "mem_mb": 1024,
-        "disk_mb": 0,
-        "gpu": 0,
-        "gpu_mem_mb": 0,
-        "time_s": 0,
-        "threads": 1,
-        "extra": {}
+      "cpu": {
+        "default_value": 1,
+        "values": []
       },
-      "environment": {
-        "conda": null,
-        "container": null,
-        "workdir": null,
-        "env_vars": {},
-        "modules": []
+      "mem_mb": {
+        "default_value": 1024,
+        "values": []
       },
-      "requirements": [],
-      "hints": [],
-      "provenance": null,
-      "documentation": null,
-      "intent": [],
-      "params": {},
-      "priority": 0,
-      "retry": 0,
-      "meta": {}
+      "disk_mb": {
+        "default_value": 0,
+        "values": []
+      },
+      "gpu": {
+        "default_value": 0,
+        "values": []
+      },
+      "gpu_mem_mb": {
+        "default_value": 0,
+        "values": []
+      },
+      "time_s": {
+        "default_value": 0,
+        "values": []
+      },
+      "threads": {
+        "default_value": 1,
+        "values": []
+      }
     },
-    "analyze": {
-      "id": "analyze",
+    "analyze_data": {
+      "id": "analyze_data",
       "label": "Analyze Data",
-      "doc": "Perform analysis on prepared data",
-      "command": "python analyze.py --input prepared_data.txt --output analysis_results.txt",
+      "doc": "Perform data analysis",
+      "command": {
+        "default_value": "python analyze_data.py --input prepared_data.txt --output analysis_results.txt",
+        "values": []
+      },
       "inputs": [
         {
           "id": "prepared_data",
@@ -69,38 +77,43 @@
           "label": "Analysis results"
         }
       ],
-      "resources": {
-        "cpu": 2,
-        "mem_mb": 2048,
-        "disk_mb": 0,
-        "gpu": 0,
-        "gpu_mem_mb": 0,
-        "time_s": 0,
-        "threads": 2,
-        "extra": {}
+      "cpu": {
+        "default_value": 2,
+        "values": []
       },
-      "environment": {
-        "conda": null,
-        "container": null,
-        "workdir": null,
-        "env_vars": {},
-        "modules": []
+      "mem_mb": {
+        "default_value": 2048,
+        "values": []
       },
-      "requirements": [],
-      "hints": [],
-      "provenance": null,
-      "documentation": null,
-      "intent": [],
-      "params": {},
-      "priority": 0,
-      "retry": 0,
-      "meta": {}
+      "disk_mb": {
+        "default_value": 0,
+        "values": []
+      },
+      "gpu": {
+        "default_value": 0,
+        "values": []
+      },
+      "gpu_mem_mb": {
+        "default_value": 0,
+        "values": []
+      },
+      "time_s": {
+        "default_value": 0,
+        "values": []
+      },
+      "threads": {
+        "default_value": 2,
+        "values": []
+      }
     },
     "generate_report": {
       "id": "generate_report",
       "label": "Generate Report",
-      "doc": "Generate final report from analysis results",
-      "command": "python generate_report.py --input analysis_results.txt --output final_report.pdf",
+      "doc": "Generate final report",
+      "command": {
+        "default_value": "python generate_report.py --input analysis_results.txt --output final_report.txt",
+        "values": []
+      },
       "inputs": [
         {
           "id": "analysis_results",
@@ -115,41 +128,43 @@
           "label": "Final report"
         }
       ],
-      "resources": {
-        "cpu": 1,
-        "mem_mb": 1024,
-        "disk_mb": 0,
-        "gpu": 0,
-        "gpu_mem_mb": 0,
-        "time_s": 0,
-        "threads": 1,
-        "extra": {}
+      "cpu": {
+        "default_value": 1,
+        "values": []
       },
-      "environment": {
-        "conda": null,
-        "container": null,
-        "workdir": null,
-        "env_vars": {},
-        "modules": []
+      "mem_mb": {
+        "default_value": 1024,
+        "values": []
       },
-      "requirements": [],
-      "hints": [],
-      "provenance": null,
-      "documentation": null,
-      "intent": [],
-      "params": {},
-      "priority": 0,
-      "retry": 0,
-      "meta": {}
+      "disk_mb": {
+        "default_value": 0,
+        "values": []
+      },
+      "gpu": {
+        "default_value": 0,
+        "values": []
+      },
+      "gpu_mem_mb": {
+        "default_value": 0,
+        "values": []
+      },
+      "time_s": {
+        "default_value": 0,
+        "values": []
+      },
+      "threads": {
+        "default_value": 1,
+        "values": []
+      }
     }
   },
   "edges": [
     {
       "parent": "prepare_data",
-      "child": "analyze"
+      "child": "analyze_data"
     },
     {
-      "parent": "analyze",
+      "parent": "analyze_data",
       "child": "generate_report"
     }
   ],
@@ -167,14 +182,17 @@
       "label": "Final analysis report"
     }
   ],
-  "requirements": [],
-  "hints": [],
+  "requirements": {
+    "default_value": [],
+    "values": []
+  },
+  "hints": {
+    "default_value": [],
+    "values": []
+  },
   "provenance": null,
   "documentation": null,
   "intent": [],
   "cwl_version": null,
-  "bco_spec": null,
-  "config": {},
-  "meta": {},
-  "loss_map": []
+  "bco_spec": null
 }

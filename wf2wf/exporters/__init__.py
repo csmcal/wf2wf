@@ -14,16 +14,20 @@ from wf2wf.exporters.base import BaseExporter
 from wf2wf.exporters.cwl import CWLExporter
 from wf2wf.exporters.dagman import DAGManExporter
 from wf2wf.exporters.nextflow import NextflowExporter
+from wf2wf.exporters.snakemake import SnakemakeExporter
 from wf2wf.exporters.wdl import WDLExporter
 from wf2wf.exporters.galaxy import GalaxyExporter
+from wf2wf.exporters.bco import BCOExporter
 
 # Registry of available exporters
 _EXPORTERS: Dict[str, Type[BaseExporter]] = {
     "cwl": CWLExporter,
     "dagman": DAGManExporter,
     "nextflow": NextflowExporter,
+    "snakemake": SnakemakeExporter,
     "wdl": WDLExporter,
     "galaxy": GalaxyExporter,
+    "bco": BCOExporter,
 }
 
 # Format aliases
@@ -129,6 +133,11 @@ def export_nextflow(workflow: Workflow, output_path: Path, **opts: Any) -> None:
     export_workflow(workflow, output_path, "nextflow", **opts)
 
 
+def export_snakemake(workflow: Workflow, output_path: Path, **opts: Any) -> None:
+    """Export workflow to Snakemake format."""
+    export_workflow(workflow, output_path, "snakemake", **opts)
+
+
 def export_wdl(workflow: Workflow, output_path: Path, **opts: Any) -> None:
     """Export workflow to WDL format."""
     export_workflow(workflow, output_path, "wdl", **opts)
@@ -139,13 +148,20 @@ def export_galaxy(workflow: Workflow, output_path: Path, **opts: Any) -> None:
     export_workflow(workflow, output_path, "galaxy", **opts)
 
 
+def export_bco(workflow: Workflow, output_path: Path, **opts: Any) -> None:
+    """Export workflow to BCO format."""
+    export_workflow(workflow, output_path, "bco", **opts)
+
+
 __all__ = [
     "BaseExporter",
     "CWLExporter",
     "DAGManExporter", 
     "NextflowExporter",
+    "SnakemakeExporter",
     "WDLExporter",
     "GalaxyExporter",
+    "BCOExporter",
     "get_exporter",
     "list_formats",
     "export_workflow",
@@ -154,6 +170,8 @@ __all__ = [
     "export_cwl",     # Legacy
     "export_dagman",  # Legacy
     "export_nextflow", # Legacy
+    "export_snakemake", # Legacy
     "export_wdl",     # Legacy
     "export_galaxy",  # Legacy
+    "export_bco",     # Legacy
 ]

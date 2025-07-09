@@ -8,12 +8,16 @@ Public API:
 
 from __future__ import annotations
 
+import logging
 import yaml
 from pathlib import Path
 from typing import Any, List, Optional, Union, Dict
 
 from wf2wf.core import Workflow, Task, ParameterSpec
 from wf2wf.exporters.base import BaseExporter
+from wf2wf.exporters.inference import _has_env_value
+
+logger = logging.getLogger(__name__)
 
 
 class SnakemakeExporter(BaseExporter):
@@ -24,7 +28,10 @@ class SnakemakeExporter(BaseExporter):
         return "snakemake"
     
     def _generate_output(self, workflow: Workflow, output_path: Path, **opts: Any) -> None:
-        """Generate Snakemake output."""
+        """Generate Snakemake output using shared infrastructure."""
+        if self.verbose:
+            logger.info(f"Generating Snakemake workflow: {output_path}")
+        
         config_file = opts.get("config_file")
         create_all_rule = opts.get("create_all_rule", True)
         include_resources = opts.get("include_resources", True)
@@ -32,15 +39,20 @@ class SnakemakeExporter(BaseExporter):
         include_containers = opts.get("include_containers", True)
         script_dir = opts.get("script_dir", "scripts")
         debug = opts.get("debug", False)
-        target_env = self.target_environment
+        
+        if self.verbose:
+            logger.info(f"Target environment: {self.target_environment}")
+            logger.info(f"Options: config_file={config_file}, create_all_rule={create_all_rule}, "
+                       f"include_resources={include_resources}, include_conda={include_conda}, "
+                       f"include_containers={include_containers}, script_dir={script_dir}")
         
         # Analyze workflow structure
-        final_outputs = _find_final_outputs(workflow)
-        input_files = _find_input_files(workflow)
+        final_outputs = self._find_final_outputs(workflow)
+        input_files = self._find_input_files(workflow)
         
         if debug:
-            print(f"DEBUG: Final outputs: {final_outputs}")
-            print(f"DEBUG: Input files: {input_files}")
+            logger.debug(f"Final outputs: {final_outputs}")
+            logger.debug(f"Input files: {input_files}")
         
         # Generate Snakefile content
         snakefile_lines = []
@@ -54,7 +66,7 @@ class SnakemakeExporter(BaseExporter):
         ])
         
         # Config handling
-        config_lines = _generate_config_section(workflow, config_file, output_path)
+        config_lines = self._generate_config_section(workflow, config_file, output_path)
         snakefile_lines.extend(config_lines)
         
         # All rule (if requested and we have final outputs)
@@ -70,23 +82,28 @@ class SnakemakeExporter(BaseExporter):
         # Generate rules for each task
         script_dir_path = output_path.parent / script_dir if script_dir else None
         
-        for task_id in _topological_sort(workflow):
+        for task_id in self._topological_sort(workflow):
             task = workflow.tasks[task_id]
-            rule_lines = _generate_rule(
+            if self.verbose:
+                logger.info(f"Generating rule for task: {task_id}")
+            
+            rule_lines = self._generate_rule(
                 task,
                 include_resources=include_resources,
                 include_conda=include_conda,
                 include_containers=include_containers,
                 script_dir=script_dir_path,
                 debug=debug,
-                target_environment=target_env,
             )
             snakefile_lines.extend(rule_lines)
             snakefile_lines.append("")
         
-        # Write Snakefile
+        # Write Snakefile using shared infrastructure
         snakefile_content = "\n".join(snakefile_lines)
         self._write_file(snakefile_content, output_path)
+        
+        if self.verbose:
+            logger.info(f"✓ Snakemake workflow exported to {output_path}")
         
         # Report hooks
         try:
@@ -95,6 +112,235 @@ class SnakemakeExporter(BaseExporter):
             _rpt.add_action("Exported Snakemake workflow")
         except ImportError:
             pass
+
+    def _find_final_outputs(self, wf: Workflow) -> List[str]:
+        """Find final outputs that have no dependents."""
+        all_outputs = set()
+        for task in wf.tasks.values():
+            for output in task.outputs:
+                if isinstance(output, ParameterSpec):
+                    all_outputs.add(output.id)
+                else:
+                    all_outputs.add(str(output))
+        
+        # Find outputs that are not inputs to other tasks
+        final_outputs = []
+        for output in all_outputs:
+            is_final = True
+            for task in wf.tasks.values():
+                for input_param in task.inputs:
+                    if isinstance(input_param, ParameterSpec) and input_param.id == output:
+                        is_final = False
+                        break
+                if not is_final:
+                    break
+            if is_final:
+                final_outputs.append(output)
+        
+        return final_outputs
+
+    def _find_input_files(self, wf: Workflow) -> List[str]:
+        """Find input files that are not outputs of other tasks."""
+        all_inputs = set()
+        for task in wf.tasks.values():
+            for input_param in task.inputs:
+                if isinstance(input_param, ParameterSpec):
+                    all_inputs.add(input_param.id)
+                else:
+                    all_inputs.add(str(input_param))
+        
+        # Find inputs that are not outputs of other tasks
+        input_files = []
+        for input_param in all_inputs:
+            is_input = True
+            for task in wf.tasks.values():
+                for output in task.outputs:
+                    if isinstance(output, ParameterSpec) and output.id == input_param:
+                        is_input = False
+                        break
+                if not is_input:
+                    break
+            if is_input:
+                input_files.append(input_param)
+        
+        return input_files
+
+    def _generate_config_section(
+        self, wf: Workflow, config_file: Optional[Path], out_path: Path
+    ) -> List[str]:
+        """Generate config section for Snakefile using shared infrastructure."""
+        config_lines = []
+        
+        # Extract config from workflow metadata using shared infrastructure
+        metadata = self._get_workflow_metadata(wf)
+        config_data = metadata.get("config", {}) if metadata else {}
+        
+        if config_data:
+            if config_file:
+                # Write to separate config file using shared infrastructure
+                config_path = out_path.parent / config_file
+                self._write_yaml(config_data, config_path)
+                # Only write the filename or relative path in the Snakefile
+                configfile_str = config_file.name if hasattr(config_file, 'name') else str(config_file)
+                config_lines.extend([
+                    "# Configuration",
+                    f"configfile: '{configfile_str}'",
+                    "",
+                ])
+            else:
+                # Embed in Snakefile
+                config_lines.extend([
+                    "# Configuration",
+                    "config:",
+                ])
+                
+                def format_config_value(value, indent=1):
+                    if isinstance(value, dict):
+                        for k, v in value.items():
+                            config_lines.append(" " * (indent * 4) + f"{k}: {v}")
+                    elif isinstance(value, list):
+                        for item in value:
+                            config_lines.append(" " * (indent * 4) + f"- {item}")
+                    else:
+                        config_lines.append(" " * (indent * 4) + f"{value}")
+                
+                for key, value in config_data.items():
+                    config_lines.append(" " * 4 + f"{key}:")
+                    format_config_value(value, 2)
+                config_lines.append("")
+        
+        return config_lines
+
+    def _generate_rule(
+        self,
+        task: Task,
+        include_resources: bool = True,
+        include_conda: bool = True,
+        include_containers: bool = True,
+        script_dir: Optional[Path] = None,
+        debug: bool = False,
+    ) -> List[str]:
+        """Generate a Snakemake rule for a task using shared infrastructure."""
+        lines = []
+        rule_name = self._sanitize_name(task.id)
+        lines.append(f"rule {rule_name}:")
+        
+        # Inputs
+        if task.inputs:
+            lines.append("    input:")
+            for param in task.inputs:
+                if hasattr(param, 'id'):
+                    lines.append(f'        "{param.id}",')
+                else:
+                    lines.append(f'        "{param}",')
+        
+        # Outputs
+        if task.outputs:
+            lines.append("    output:")
+            for param in task.outputs:
+                if hasattr(param, 'id'):
+                    lines.append(f'        "{param.id}",')
+                else:
+                    lines.append(f'        "{param}",')
+        
+        # Resources using shared infrastructure
+        if include_resources:
+            resources = self._get_task_resources_snakemake(task)
+            if resources:
+                lines.append("    resources:")
+                for k, v in resources.items():
+                    lines.append(f"        {k}={v}")
+        
+        # Conda environment using shared infrastructure
+        # Note: Could use _has_env_value(task.conda, self.target_environment) to check existence
+        if include_conda:
+            conda_env = task.conda.get_value_with_default(self.target_environment)
+            if conda_env:
+                lines.append(f"    conda: '{conda_env}'")
+        
+        # Container using shared infrastructure
+        # Note: Could use _has_env_value(task.container, self.target_environment) to check existence
+        if include_containers:
+            container = task.container.get_value_with_default(self.target_environment)
+            if container:
+                lines.append(f"    container: '{container}'")
+        
+        # Script or shell command using shared infrastructure
+        # Note: Could use _has_env_value(task.script, self.target_environment) to check existence
+        script = task.script.get_value_with_default(self.target_environment)
+        command = task.command.get_value_with_default(self.target_environment)
+        if script:
+            lines.append(f"    script: '{script}'")
+        elif command:
+            lines.append(f"    shell: '{command}'")
+        else:
+            lines.append("    shell: 'echo No command defined'")
+        
+        # Record losses for unsupported features
+        self._record_loss_if_present_for_target(task, "gpu", "GPU resources not supported in Snakemake")
+        self._record_loss_if_present_for_target(task, "gpu_mem_mb", "GPU memory not supported in Snakemake")
+        self._record_loss_if_present_for_target(task, "time_s", "Time limits not supported in Snakemake")
+        self._record_loss_if_present_for_target(task, "retry_count", "Retry policies not supported in Snakemake")
+        self._record_loss_if_present_for_target(task, "retry_delay", "Retry delays not supported in Snakemake")
+        self._record_loss_if_present_for_target(task, "retry_backoff", "Retry backoff not supported in Snakemake")
+        self._record_loss_if_present_for_target(task, "max_runtime", "Max runtime not supported in Snakemake")
+        self._record_loss_if_present_for_target(task, "checkpoint_interval", "Checkpoint intervals not supported in Snakemake")
+        self._record_loss_if_present_for_target(task, "file_transfer_mode", "File transfer modes not supported in Snakemake")
+        self._record_loss_if_present_for_target(task, "staging_required", "Staging requirements not supported in Snakemake")
+        self._record_loss_if_present_for_target(task, "cleanup_after", "Cleanup policies not supported in Snakemake")
+        
+        return lines
+
+    def _get_task_resources_snakemake(self, task: Task) -> Dict[str, Any]:
+        """Get task resources for Snakemake using shared infrastructure."""
+        # Use shared infrastructure to get resources for target environment
+        resources = self._get_task_resources_for_target(task)
+        
+        if self.verbose:
+            logger.debug(f"Task {task.id} resources for {self.target_environment}: {resources}")
+        
+        # Map to Snakemake resource names
+        snakemake_resources = {}
+        if 'cpu' in resources:
+            snakemake_resources["cpu"] = resources['cpu']
+        if 'mem_mb' in resources:
+            snakemake_resources["mem_mb"] = resources['mem_mb']
+        if 'disk_mb' in resources:
+            snakemake_resources["disk_mb"] = resources['disk_mb']
+        if 'threads' in resources:
+            snakemake_resources["threads"] = resources['threads']
+        
+        if self.verbose and snakemake_resources:
+            logger.debug(f"Task {task.id} final Snakemake resources: {snakemake_resources}")
+        
+        return snakemake_resources
+
+    def _topological_sort(self, wf: Workflow) -> List[str]:
+        """Topological sort of tasks based on dependencies."""
+        # Build dependency graph
+        graph = {task_id: set() for task_id in wf.tasks}
+        for edge in wf.edges:
+            graph[edge.parent].add(edge.child)
+        
+        # Kahn's algorithm
+        in_degree = {task_id: 0 for task_id in wf.tasks}
+        for task_id, dependents in graph.items():
+            for dependent in dependents:
+                in_degree[dependent] += 1
+        
+        queue = [task_id for task_id, degree in in_degree.items() if degree == 0]
+        result = []
+        
+        while queue:
+            task_id = queue.pop(0)
+            result.append(task_id)
+            
+            for dependent in graph[task_id]:
+                in_degree[dependent] -= 1
+                if in_degree[dependent] == 0:
+                    queue.append(dependent)
+        
+        return result
 
 
 # Legacy function for backward compatibility
@@ -107,224 +353,31 @@ def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any):
     exporter.export_workflow(wf, out_file, **opts)
 
 
-# Helper functions (unchanged from original implementation)
-def _find_final_outputs(wf: Workflow) -> List[str]:
-    """Find final outputs that have no dependents."""
-    all_outputs = set()
-    for task in wf.tasks.values():
-        for output in task.outputs:
-            if isinstance(output, ParameterSpec):
-                all_outputs.add(output.id)
-            else:
-                all_outputs.add(str(output))
-    
-    # Find outputs that are not inputs to other tasks
-    final_outputs = []
-    for output in all_outputs:
-        is_final = True
-        for task in wf.tasks.values():
-            for input_param in task.inputs:
-                if isinstance(input_param, ParameterSpec) and input_param.id == output:
-                    is_final = False
-                    break
-            if not is_final:
-                break
-        if is_final:
-            final_outputs.append(output)
-    
-    return final_outputs
+# Legacy helper functions for backward compatibility (deprecated)
+def _find_final_outputs(*args, **kwargs):
+    """Legacy function - use SnakemakeExporter._find_final_outputs instead."""
+    raise DeprecationWarning("Use SnakemakeExporter._find_final_outputs instead")
 
+def _find_input_files(*args, **kwargs):
+    """Legacy function - use SnakemakeExporter._find_input_files instead."""
+    raise DeprecationWarning("Use SnakemakeExporter._find_input_files instead")
 
-def _find_input_files(wf: Workflow) -> List[str]:
-    """Find input files that are not outputs of other tasks."""
-    all_inputs = set()
-    for task in wf.tasks.values():
-        for input_param in task.inputs:
-            if isinstance(input_param, ParameterSpec):
-                all_inputs.add(input_param.id)
-            else:
-                all_inputs.add(str(input_param))
-    
-    # Find inputs that are not outputs of other tasks
-    input_files = []
-    for input_param in all_inputs:
-        is_input = True
-        for task in wf.tasks.values():
-            for output in task.outputs:
-                if isinstance(output, ParameterSpec) and output.id == input_param:
-                    is_input = False
-                    break
-            if not is_input:
-                break
-        if is_input:
-            input_files.append(input_param)
-    
-    return input_files
+def _generate_config_section(*args, **kwargs):
+    """Legacy function - use SnakemakeExporter._generate_config_section instead."""
+    raise DeprecationWarning("Use SnakemakeExporter._generate_config_section instead")
 
+def _generate_rule(*args, **kwargs):
+    """Legacy function - use SnakemakeExporter._generate_rule instead."""
+    raise DeprecationWarning("Use SnakemakeExporter._generate_rule instead")
 
-def _generate_config_section(
-    wf: Workflow, config_file: Optional[Path], out_path: Path
-) -> List[str]:
-    """Generate config section for Snakefile."""
-    config_lines = []
-    
-    # Extract config from workflow metadata
-    config_data = {}
-    if wf.metadata and "config" in wf.metadata.format_specific:
-        config_data = wf.metadata.format_specific["config"]
-    
-    if config_data:
-        if config_file:
-            # Write to separate config file
-            config_path = out_path.parent / config_file
-            with config_path.open('w') as f:
-                yaml.dump(config_data, f, default_flow_style=False)
-            config_lines.extend([
-                "# Configuration",
-                f"configfile: '{config_file}'",
-                "",
-            ])
-        else:
-            # Embed in Snakefile
-            config_lines.extend([
-                "# Configuration",
-                "config:",
-            ])
-            
-            def format_config_value(value, indent=1):
-                if isinstance(value, dict):
-                    for k, v in value.items():
-                        config_lines.append(" " * (indent * 4) + f"{k}: {v}")
-                elif isinstance(value, list):
-                    for item in value:
-                        config_lines.append(" " * (indent * 4) + f"- {item}")
-                else:
-                    config_lines.append(" " * (indent * 4) + f"{value}")
-            
-            for key, value in config_data.items():
-                config_lines.append(" " * 4 + f"{key}:")
-                format_config_value(value, 2)
-            config_lines.append("")
-    
-    return config_lines
+def _get_task_resources_snakemake(*args, **kwargs):
+    """Legacy function - use SnakemakeExporter._get_task_resources_snakemake instead."""
+    raise DeprecationWarning("Use SnakemakeExporter._get_task_resources_snakemake instead")
 
+def _sanitize_rule_name(*args, **kwargs):
+    """Legacy function - use SnakemakeExporter._sanitize_name instead."""
+    raise DeprecationWarning("Use SnakemakeExporter._sanitize_name instead")
 
-def _generate_rule(
-    task: Task,
-    include_resources: bool = True,
-    include_conda: bool = True,
-    include_containers: bool = True,
-    script_dir: Optional[Path] = None,
-    debug: bool = False,
-    target_environment: str = "shared_filesystem",
-) -> List[str]:
-    """Generate a Snakemake rule for a task, using the target environment."""
-    lines = []
-    rule_name = _sanitize_rule_name(task.id)
-    lines.append(f"rule {rule_name}:")
-    
-    # Inputs
-    if task.inputs:
-        lines.append("    input:")
-        for param in task.inputs:
-            if hasattr(param, 'id'):
-                lines.append(f'        "{param.id}",')
-            else:
-                lines.append(f'        "{param}",')
-    
-    # Outputs
-    if task.outputs:
-        lines.append("    output:")
-        for param in task.outputs:
-            if hasattr(param, 'id'):
-                lines.append(f'        "{param.id}",')
-            else:
-                lines.append(f'        "{param}",')
-    
-    # Resources
-    if include_resources:
-        resources = _get_task_resources_snakemake(task, target_environment)
-        if resources:
-            lines.append("    resources:")
-            for k, v in resources.items():
-                lines.append(f"        {k}={v}")
-    
-    # Conda environment
-    if include_conda:
-        conda_env = task.conda.get_value_for(target_environment)
-        if conda_env:
-            lines.append(f"    conda: '{conda_env}'")
-    
-    # Container
-    if include_containers:
-        container = task.container.get_value_for(target_environment)
-        if container:
-            lines.append(f"    container: '{container}'")
-    
-    # Script or shell command
-    script = task.script.get_value_for(target_environment)
-    command = task.command.get_value_for(target_environment)
-    if script:
-        lines.append(f"    script: '{script}'")
-    elif command:
-        lines.append(f"    shell: '{command}'")
-    else:
-        lines.append("    shell: 'echo No command defined'")
-    
-    return lines
-
-def _get_task_resources_snakemake(task: Task, target_environment: str = "shared_filesystem") -> Dict[str, Any]:
-    """Get task resources for Snakemake for the target environment."""
-    resources = {}
-    cpu = task.cpu.get_value_for(target_environment)
-    mem_mb = task.mem_mb.get_value_for(target_environment)
-    disk_mb = task.disk_mb.get_value_for(target_environment)
-    threads = task.threads.get_value_for(target_environment)
-    if cpu:
-        resources["cpu"] = cpu
-    if mem_mb:
-        resources["mem_mb"] = mem_mb
-    if disk_mb:
-        resources["disk_mb"] = disk_mb
-    if threads:
-        resources["threads"] = threads
-    return resources
-
-
-def _sanitize_rule_name(name: str) -> str:
-    """Sanitize name for Snakemake rule."""
-    import re
-    # Replace spaces and special characters with underscores
-    sanitized = re.sub(r'[^\w\-]', '_', name)
-    # Ensure it doesn't start with a number
-    if sanitized and sanitized[0].isdigit():
-        sanitized = f"task_{sanitized}"
-    return sanitized
-
-
-def _topological_sort(wf: Workflow) -> List[str]:
-    """Topological sort of tasks based on dependencies."""
-    # Build dependency graph
-    graph = {task_id: set() for task_id in wf.tasks}
-    for edge in wf.edges:
-        graph[edge.parent].add(edge.child)
-    
-    # Kahn's algorithm
-    in_degree = {task_id: 0 for task_id in wf.tasks}
-    for task_id, dependents in graph.items():
-        for dependent in dependents:
-            in_degree[dependent] += 1
-    
-    queue = [task_id for task_id, degree in in_degree.items() if degree == 0]
-    result = []
-    
-    while queue:
-        task_id = queue.pop(0)
-        result.append(task_id)
-        
-        for dependent in graph[task_id]:
-            in_degree[dependent] -= 1
-            if in_degree[dependent] == 0:
-                queue.append(dependent)
-    
-    return result
+def _topological_sort(*args, **kwargs):
+    """Legacy function - use SnakemakeExporter._topological_sort instead."""
+    raise DeprecationWarning("Use SnakemakeExporter._topological_sort instead")

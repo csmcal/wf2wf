@@ -11,3 +11,8 @@ The public API surface is small; most users interact via the CLI.  Importers/exp
 :members:
 :undoc-members:
 ```
+
+```{automodule} wf2wf.validate
+:members:
+:undoc-members:
+```

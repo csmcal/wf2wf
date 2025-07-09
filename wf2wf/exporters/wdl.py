@@ -6,6 +6,7 @@ Workflow Description Language (WDL) format with enhanced features.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -17,6 +18,8 @@ from wf2wf.core import (
     EnvironmentSpecificValue,
 )
 from wf2wf.exporters.base import BaseExporter
+
+logger = logging.getLogger(__name__)
 
 
 class WDLExporter(BaseExporter):
@@ -36,12 +39,13 @@ class WDLExporter(BaseExporter):
         target_env = self.target_environment
 
         if self.verbose:
-            print(f"Exporting workflow '{workflow.name}' to WDL {wdl_version}")
+            logger.info(f"Generating WDL workflow: {output_path}")
+            logger.info(f"  Target environment: {target_env}")
+            logger.info(f"  WDL version: {wdl_version}")
+            logger.info(f"  Tasks: {len(workflow.tasks)}")
+            logger.info(f"  Dependencies: {len(workflow.edges)}")
 
         try:
-            # Create output directory
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-
             # Generate main workflow file
             main_wdl_content = _generate_main_wdl_enhanced(
                 workflow,
@@ -53,8 +57,8 @@ class WDLExporter(BaseExporter):
                 target_environment=target_env,
             )
 
-            with output_path.open('w') as f:
-                f.write(main_wdl_content)
+            # Write main workflow file using shared infrastructure
+            self._write_file(main_wdl_content, output_path)
 
             # Generate task files if requested
             if tasks_dir and workflow.tasks:
@@ -71,15 +75,14 @@ class WDLExporter(BaseExporter):
                         target_environment=target_env,
                     )
                     
-                    task_file = tasks_path / f"{task.id}.wdl"
-                    with task_file.open('w') as f:
-                        f.write(task_content)
+                    task_file = tasks_path / f"{self._sanitize_name(task.id)}.wdl"
+                    self._write_file(task_content, task_file)
                     
                     if self.verbose:
-                        print(f"  wrote task {task.id} → {task_file}")
+                        logger.info(f"  wrote task {task.id} → {task_file}")
 
             if self.verbose:
-                print(f"✓ WDL workflow exported to {output_path}")
+                logger.info(f"✓ WDL workflow exported to {output_path}")
 
         except Exception as e:
             raise RuntimeError(f"Failed to export WDL workflow: {e}")
@@ -129,6 +132,16 @@ def _generate_main_wdl_enhanced(
     # Add workflow definition
     lines.append("workflow " + (workflow.name or "main") + " {")
     
+    # Add workflow-level metadata if requested
+    if add_meta and preserve_metadata:
+        workflow_meta_lines = _generate_workflow_meta_section(workflow)
+        if workflow_meta_lines:
+            lines.append("    meta {")
+            for line in workflow_meta_lines:
+                lines.append(f"        {line}")
+            lines.append("    }")
+            lines.append("")
+    
     # Add workflow inputs
     if workflow.inputs:
         lines.append("    input {")
@@ -148,7 +161,20 @@ def _generate_main_wdl_enhanced(
     # Add task calls
     lines.append("    # Task calls")
     for task in workflow.tasks.values():
-        task_call = _generate_task_call_enhanced(task, workflow)
+        # Check if task has conditional execution
+        when_expr = task.when.get_value_for(target_environment)
+        
+        # Check if task has scatter operations
+        scatter_spec = task.scatter.get_value_for(target_environment)
+        if scatter_spec and scatter_spec.scatter:
+            task_call = _generate_scatter_task_call(task, workflow, scatter_spec)
+        else:
+            task_call = _generate_task_call_enhanced(task, workflow)
+        
+        # Wrap in conditional if needed
+        if when_expr:
+            task_call = f"if ({when_expr}) {{\n        {task_call}\n    }}"
+        
         lines.append(f"    {task_call}")
     
     # Add workflow outputs
@@ -158,9 +184,19 @@ def _generate_main_wdl_enhanced(
         for param in workflow.outputs:
             if isinstance(param, ParameterSpec):
                 wdl_type = _convert_type_to_wdl(param.type)
-                lines.append(f"        {wdl_type} {param.id} = {task.id}.{param.id}")
+                # Find the task that produces this output
+                output_task = _find_output_task(workflow, param.id)
+                if output_task:
+                    lines.append(f"        {wdl_type} {param.id} = {output_task}.{param.id}")
+                else:
+                    # Fallback to first task if no specific task found
+                    first_task = next(iter(workflow.tasks.values()), None)
+                    if first_task:
+                        lines.append(f"        {wdl_type} {param.id} = {first_task.id}.{param.id}")
+                    else:
+                        lines.append(f"        {wdl_type} {param.id}")
             else:
-                lines.append(f"        String {param} = {task.id}.{param}")
+                lines.append(f"        String {param}")
         lines.append("    }")
     
     lines.append("}")
@@ -176,16 +212,27 @@ def _generate_task_call_enhanced(task: Task, workflow: Workflow) -> str:
     # Build input arguments
     inputs = []
     
-    # Add dependencies
+    # Add dependencies from parent tasks
     for parent in parent_tasks:
-        inputs.append(f"{parent}.output")
+        # Find the first output from the parent task
+        parent_task = workflow.tasks.get(parent)
+        if parent_task and parent_task.outputs:
+            first_output = parent_task.outputs[0]
+            if isinstance(first_output, ParameterSpec):
+                inputs.append(f"{parent}.{first_output.id}")
+            else:
+                inputs.append(f"{parent}.{str(first_output)}")
+        else:
+            inputs.append(f"{parent}.output")
     
-    # Add workflow-level inputs
+    # Add workflow-level inputs that match task inputs
     for param in task.inputs:
         if isinstance(param, ParameterSpec):
-            inputs.append(f"{param.id} = {param.id}")
-        else:
-            inputs.append(f"{param} = {param}")
+            # Check if this input is available at workflow level
+            workflow_input = next((winput for winput in workflow.inputs 
+                                 if isinstance(winput, ParameterSpec) and winput.id == param.id), None)
+            if workflow_input:
+                inputs.append(f"{param.id} = {param.id}")
     
     if inputs:
         return f"call {task.id} {{ input: {', '.join(inputs)} }}"
@@ -231,8 +278,10 @@ def _generate_task_wdl_enhanced(
         lines.append("    }")
         lines.append("")
     
-    # Add command
+    # Add command or script
     command = task.command.get_value_for(target_environment)
+    script = task.script.get_value_for(target_environment)
+    
     if command:
         lines.append("    command {")
         if isinstance(command, str):
@@ -244,13 +293,42 @@ def _generate_task_wdl_enhanced(
             lines.append(f"        {command}")
         lines.append("    }")
         lines.append("")
+    elif script:
+        lines.append("    command {")
+        script_lines = _parse_command_for_wdl(script)
+        for line in script_lines:
+            lines.append(f"        {line}")
+        lines.append("    }")
+        lines.append("")
     
     # Add runtime
     if add_runtime:
-        runtime_lines = _generate_runtime_section(task)
+        runtime_lines = _generate_runtime_section(task, target_environment)
         if runtime_lines:
             lines.append("    runtime {")
             for line in runtime_lines:
+                lines.append(f"        {line}")
+            lines.append("    }")
+            lines.append("")
+    
+    # Add environment variables if present
+    env_vars = task.env_vars.get_value_for(target_environment)
+    if env_vars and isinstance(env_vars, dict):
+        lines.append("    environment {")
+        for key, value in env_vars.items():
+            if isinstance(value, str):
+                lines.append(f"        {key}: \"{value}\"")
+            else:
+                lines.append(f"        {key}: {value}")
+        lines.append("    }")
+        lines.append("")
+    
+    # Add metadata if requested
+    if add_meta and preserve_metadata:
+        meta_lines = _generate_meta_section(task)
+        if meta_lines:
+            lines.append("    meta {")
+            for line in meta_lines:
                 lines.append(f"        {line}")
             lines.append("    }")
             lines.append("")
@@ -262,9 +340,17 @@ def _generate_task_wdl_enhanced(
             if isinstance(param, ParameterSpec):
                 wdl_type = _convert_type_to_wdl(param.type)
                 if param.type.type == "File":
+                    # For file outputs, use the parameter name as the filename pattern
                     lines.append(f"        {wdl_type} {param.id} = \"{param.id}.*\"")
-                else:
+                elif param.type.type == "Directory":
+                    # For directory outputs
+                    lines.append(f"        {wdl_type} {param.id} = \"{param.id}/\"")
+                elif param.type.type in ["string", "int", "float", "boolean"]:
+                    # For primitive types, read from stdout
                     lines.append(f"        {wdl_type} {param.id} = read_string(stdout())")
+                else:
+                    # Default to string output
+                    lines.append(f"        String {param.id} = read_string(stdout())")
             else:
                 lines.append(f"        String {param} = \"{param}.*\"")
         lines.append("    }")
@@ -274,40 +360,123 @@ def _generate_task_wdl_enhanced(
     return "\n".join(lines)
 
 
-def _generate_runtime_section(task: Task) -> List[str]:
-    """Generate WDL runtime section."""
+def _find_output_task(workflow: Workflow, output_id: str) -> Optional[str]:
+    """Find the task that produces a specific output."""
+    for task in workflow.tasks.values():
+        for output in task.outputs:
+            if isinstance(output, ParameterSpec) and output.id == output_id:
+                return task.id
+            elif str(output) == output_id:
+                return task.id
+    return None
+
+
+def _generate_scatter_task_call(task: Task, workflow: Workflow, scatter_spec) -> str:
+    """Generate WDL scatter task call."""
+    # Get the base task call
+    base_call = _generate_task_call_enhanced(task, workflow)
+    
+    # Extract scatter parameters
+    scatter_params = scatter_spec.scatter
+    if len(scatter_params) == 1:
+        scatter_expr = scatter_params[0]
+    else:
+        # Multiple scatter parameters - use cross product
+        scatter_expr = f"cross({', '.join(scatter_params)})"
+    
+    # Wrap the call in scatter
+    return f"scatter ({scatter_expr}) {{\n        {base_call}\n    }}"
+
+
+def _generate_meta_section(task: Task) -> List[str]:
+    """Generate WDL meta section with task metadata."""
     lines = []
-    environment = "shared_filesystem"
+    
+    if task.label:
+        lines.append(f"description: \"{task.label}\"")
+    
+    if task.doc:
+        lines.append(f"help: \"{task.doc}\"")
+    
+    # Add author information if available
+    if task.provenance and task.provenance.authors:
+        authors = [author.get("name", "Unknown") for author in task.provenance.authors]
+        lines.append(f"author: \"{', '.join(authors)}\"")
+    
+    # Add version information
+    if task.provenance and task.provenance.version:
+        lines.append(f"version: \"{task.provenance.version}\"")
+    
+    return lines
+
+
+def _generate_workflow_meta_section(workflow: Workflow) -> List[str]:
+    """Generate WDL workflow meta section."""
+    lines = []
+    
+    if workflow.label:
+        lines.append(f"description: \"{workflow.label}\"")
+    
+    if workflow.doc:
+        lines.append(f"help: \"{workflow.doc}\"")
+    
+    # Add author information if available
+    if workflow.provenance and workflow.provenance.authors:
+        authors = [author.get("name", "Unknown") for author in workflow.provenance.authors]
+        lines.append(f"author: \"{', '.join(authors)}\"")
+    
+    # Add version information
+    if workflow.version:
+        lines.append(f"version: \"{workflow.version}\"")
+    
+    # Add license if available
+    if workflow.provenance and workflow.provenance.license:
+        lines.append(f"license: \"{workflow.provenance.license}\"")
+    
+    return lines
+
+
+def _generate_runtime_section(task: Task, target_environment: str = "shared_filesystem") -> List[str]:
+    """Generate WDL runtime section using environment-specific values."""
+    lines = []
+    
+    # Get environment-specific values
+    cpu = task.cpu.get_value_for(target_environment)
+    mem_mb = task.mem_mb.get_value_for(target_environment)
+    disk_mb = task.disk_mb.get_value_for(target_environment)
+    gpu = task.gpu.get_value_for(target_environment)
+    container = task.container.get_value_for(target_environment)
+    time_s = task.time_s.get_value_for(target_environment)
+    threads = task.threads.get_value_for(target_environment)
     
     # CPU
-    cpu = task.cpu.get_value_for(environment)
     if cpu:
         lines.append(f"cpu: {cpu}")
     
     # Memory
-    mem_mb = task.mem_mb.get_value_for(environment)
     if mem_mb:
         lines.append(f"memory: \"{mem_mb} MB\"")
     
     # Disk
-    disk_mb = task.disk_mb.get_value_for(environment)
     if disk_mb:
         lines.append(f"disks: \"local-disk {disk_mb} LOCAL\"")
     
     # GPU
-    gpu = task.gpu.get_value_for(environment)
     if gpu:
         lines.append(f"gpu: {gpu}")
     
     # Docker container
-    container = task.container.get_value_for(environment)
     if container:
         lines.append(f"docker: \"{container}\"")
     
-    # Time limit
-    time_s = task.time_s.get_value_for(environment)
+    # Time limit (convert to hours for WDL)
     if time_s:
-        lines.append(f"maxRetries: {time_s // 3600}")  # Convert to hours
+        hours = max(1, time_s // 3600)  # Minimum 1 hour
+        lines.append(f"maxRetries: {hours}")
+    
+    # Threads (if different from CPU)
+    if threads and threads != cpu:
+        lines.append(f"threads: {threads}")
     
     return lines
 
@@ -375,6 +544,16 @@ def _parse_command_for_wdl(command: str) -> List[str]:
     
     if not command or command.startswith("#"):
         return ["echo 'No command specified'"]
+    
+    # Handle multi-line commands
+    if "\n" in command:
+        lines = command.strip().split("\n")
+        command_lines = []
+        for line in lines:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                command_lines.append(line)
+        return command_lines if command_lines else ["echo 'No valid command found'"]
     
     # Simple command parsing
     parts = shlex.split(command)

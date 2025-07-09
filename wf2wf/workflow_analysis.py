@@ -454,8 +454,7 @@ def create_execution_model_spec(
     spec = ExecutionModelSpec(
         model=model,
         source_format=format_name,
-        detection_method=detection_method,
-        detection_confidence=detection_confidence
+        detection_method=detection_method
     )
     
     # Set execution environment characteristics based on model

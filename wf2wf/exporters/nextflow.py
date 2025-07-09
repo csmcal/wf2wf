@@ -6,6 +6,7 @@ Nextflow DSL2 format with enhanced features and channel management.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -17,6 +18,8 @@ from wf2wf.core import (
     EnvironmentSpecificValue,
 )
 from wf2wf.exporters.base import BaseExporter
+
+logger = logging.getLogger(__name__)
 
 
 class NextflowExporter(BaseExporter):
@@ -37,12 +40,14 @@ class NextflowExporter(BaseExporter):
         target_env = self.target_environment
 
         if self.verbose:
-            print(f"Exporting workflow '{workflow.name}' to Nextflow DSL2")
+            logger.info(f"Generating Nextflow workflow: {output_path}")
+            logger.info(f"  Target environment: {target_env}")
+            logger.info(f"  DSL2: {use_dsl2}")
+            logger.info(f"  Container mode: {container_mode}")
+            logger.info(f"  Tasks: {len(workflow.tasks)}")
+            logger.info(f"  Dependencies: {len(workflow.edges)}")
 
         try:
-            # Create output directory
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-
             # Generate main.nf file
             main_nf_content = _generate_main_nf_enhanced(
                 workflow,
@@ -54,8 +59,8 @@ class NextflowExporter(BaseExporter):
                 target_environment=target_env,
             )
 
-            with output_path.open('w') as f:
-                f.write(main_nf_content)
+            # Write main.nf file using shared infrastructure
+            self._write_file(main_nf_content, output_path)
 
             # Generate modules if requested
             if modules_dir and workflow.tasks:
@@ -71,12 +76,11 @@ class NextflowExporter(BaseExporter):
                         target_environment=target_env,
                     )
                     
-                    module_file = modules_path / f"{task.id}.nf"
-                    with module_file.open('w') as f:
-                        f.write(module_content)
+                    module_file = modules_path / f"{self._sanitize_name(task.id)}.nf"
+                    self._write_file(module_content, module_file)
                     
                     if self.verbose:
-                        print(f"  wrote module {task.id} → {module_file}")
+                        logger.info(f"  wrote module {task.id} → {module_file}")
 
             # Generate nextflow.config if requested
             if config_file:
@@ -88,14 +92,13 @@ class NextflowExporter(BaseExporter):
                 )
                 
                 config_path = output_path.parent / config_file
-                with config_path.open('w') as f:
-                    f.write(config_content)
+                self._write_file(config_content, config_path)
                 
                 if self.verbose:
-                    print(f"  wrote config → {config_path}")
+                    logger.info(f"  wrote config → {config_path}")
 
             if self.verbose:
-                print(f"✓ Nextflow workflow exported to {output_path}")
+                logger.info(f"✓ Nextflow workflow exported to {output_path}")
 
         except Exception as e:
             raise RuntimeError(f"Failed to export Nextflow workflow: {e}")

@@ -37,11 +37,11 @@ class GalaxyExporter(BaseExporter):
 
         if self.verbose:
             print(f"Exporting workflow '{workflow.name}' to Galaxy format")
+            print(f"  Target environment: {target_env}")
+            print(f"  Tasks: {len(workflow.tasks)}")
+            print(f"  Dependencies: {len(workflow.edges)}")
 
         try:
-            # Create output directory
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-
             # Generate Galaxy workflow
             galaxy_workflow = _generate_galaxy_workflow_enhanced(
                 workflow,
@@ -51,14 +51,13 @@ class GalaxyExporter(BaseExporter):
                 target_environment=target_env,
             )
 
-            # Write workflow file
+            # Write workflow file using shared infrastructure
             if workflow_format.lower() == "yaml":
                 import yaml
-                with output_path.open('w') as f:
-                    yaml.dump(galaxy_workflow, f, default_flow_style=False, indent=2)
+                workflow_content = yaml.dump(galaxy_workflow, default_flow_style=False, indent=2)
+                self._write_file(workflow_content, output_path)
             else:
-                with output_path.open('w') as f:
-                    json.dump(galaxy_workflow, f, indent=2, sort_keys=True)
+                self._write_json(galaxy_workflow, output_path)
 
             # Generate tool configurations if requested
             if add_tool_configs and workflow.tasks:
@@ -73,9 +72,8 @@ class GalaxyExporter(BaseExporter):
                         target_environment=target_env,
                     )
                     
-                    tool_file = tool_config_path / f"{task.id}.xml"
-                    with tool_file.open('w') as f:
-                        f.write(tool_config)
+                    tool_file = tool_config_path / f"{self._sanitize_name(task.id)}.xml"
+                    self._write_file(tool_config, tool_file)
                     
                     if self.verbose:
                         print(f"  wrote tool config {task.id} → {tool_file}")
@@ -127,6 +125,7 @@ def _generate_galaxy_workflow_enhanced(
     # Generate steps
     step_id = 0
     input_steps = {}
+    task_steps = {}  # Track task step IDs
     
     # Add input steps
     for param in workflow.inputs:
@@ -140,8 +139,9 @@ def _generate_galaxy_workflow_enhanced(
     # Add tool steps
     for task in workflow.tasks.values():
         step_id += 1
+        task_steps[task.id] = step_id
         galaxy_workflow["steps"][str(step_id)] = _generate_tool_step_enhanced(
-            step_id, task, workflow, input_steps, verbose, target_environment
+            step_id, task, workflow, input_steps, task_steps, verbose, target_environment
         )
     
     return galaxy_workflow
@@ -177,6 +177,7 @@ def _generate_tool_step_enhanced(
     task: Task,
     workflow: Workflow,
     input_steps: Dict[str, int],
+    task_steps: Dict[str, int],
     verbose: bool = False,
     target_environment: str = "shared_filesystem",
 ) -> Dict[str, Any]:
@@ -187,15 +188,9 @@ def _generate_tool_step_enhanced(
     
     # Add parent task connections
     for parent in parent_tasks:
-        parent_step_id = None
-        for step_num, step_data in workflow.steps.items():
-            if step_data.get("name") == parent:
-                parent_step_id = step_num
-                break
-        
-        if parent_step_id:
+        if parent in task_steps:
             input_connections["input1"] = {
-                "id": parent_step_id,
+                "id": task_steps[parent],
                 "output_name": "output1",
             }
     
@@ -233,19 +228,28 @@ def _generate_tool_state_enhanced(task: Task, target_environment: str) -> Dict[s
     """Generate enhanced Galaxy tool state."""
     tool_state = {}
     
-    # Add command
+    # Add command using environment-specific value handling
     command = task.command.get_value_for(target_environment)
     if command:
         tool_state["command"] = command
     
-    # Add resource requirements
+    # Add script if no command
+    if not command:
+        script = task.script.get_value_for(target_environment)
+        if script:
+            tool_state["script"] = script
+    
+    # Add resource requirements using environment-specific value handling
     cpu = task.cpu.get_value_for(target_environment)
     mem_mb = task.mem_mb.get_value_for(target_environment)
+    threads = task.threads.get_value_for(target_environment)
     
     if cpu:
         tool_state["cpu"] = cpu
     if mem_mb:
         tool_state["memory"] = f"{mem_mb}MB"
+    if threads:
+        tool_state["threads"] = threads
     
     # Add container specification
     container = task.container.get_value_for(target_environment)
@@ -256,6 +260,11 @@ def _generate_tool_state_enhanced(task: Task, target_environment: str) -> Dict[s
     conda = task.conda.get_value_for(target_environment)
     if conda:
         tool_state["conda_env"] = conda
+    
+    # Add environment variables
+    env_vars = task.env_vars.get_value_for(target_environment)
+    if env_vars:
+        tool_state["environment_variables"] = env_vars
     
     return tool_state
 
@@ -298,12 +307,33 @@ def _generate_tool_config_enhanced(
     if preserve_metadata and task.doc:
         lines.append('    <description>' + task.doc + '</description>')
     
-    # Add command
+    # Add command or script
     command = task.command.get_value_for(target_environment)
+    script = task.script.get_value_for(target_environment)
+    
     if command:
         lines.append('    <command><![CDATA[')
         lines.append('        ' + command)
         lines.append('    ]]></command>')
+    elif script:
+        lines.append('    <command><![CDATA[')
+        lines.append('        ' + script)
+        lines.append('    ]]></command>')
+    
+    # Add requirements
+    requirements = []
+    container = task.container.get_value_for(target_environment)
+    conda = task.conda.get_value_for(target_environment)
+    
+    if container:
+        requirements.append(f'        <container type="docker">{container}</container>')
+    if conda:
+        requirements.append(f'        <requirement type="package" version="1.0">{conda}</requirement>')
+    
+    if requirements:
+        lines.append('    <requirements>')
+        lines.extend(requirements)
+        lines.append('    </requirements>')
     
     # Add inputs
     if task.inputs:

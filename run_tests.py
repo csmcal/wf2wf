@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-Test runner for the snake2dagman package.
+Test runner for the wf2wf package.
 
-This script checks for dependencies (pytest, snakemake) and then
+This script checks for dependencies (pytest, etc) and then
 executes the test suite using pytest.
 """
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Union
 from pathlib import Path
 
-from wf2wf.core import Workflow, Task, ResourceSpec
+from wf2wf.core import Workflow, Task
 from wf2wf import prompt
 
 

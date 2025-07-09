@@ -50,7 +50,7 @@ class TestCWLImporter:
         assert edge_pairs == expected_edges
 
         # Check metadata
-        assert workflow.metadata.format_specific["source_format"] == "cwl"
+        assert workflow.metadata.source_format == "cwl"
         assert workflow.metadata.format_specific["cwl_version"] == "v1.2"
         assert workflow.metadata.format_specific["cwl_class"] == "Workflow"
 
@@ -232,7 +232,9 @@ class TestCWLImporter:
         task = list(workflow.tasks.values())[0]
         conda_env = task.conda.get_value_for("shared_filesystem")
         assert conda_env is not None
-        deps = conda_env["dependencies"]
+        # Parse the YAML string to get the dict
+        conda_dict = yaml.safe_load(conda_env)
+        deps = conda_dict["dependencies"]
         assert "numpy=1.21.0" in deps
         assert "pandas" in deps
 
@@ -335,12 +337,12 @@ class TestCWLImporter:
 
         assert len(workflow.tasks) == 1
         task = list(workflow.tasks.values())[0]
-        assert "external_tool" in task.command
+        assert "external_tool" in task.command.get_value_for("shared_filesystem")
 
     def test_error_handling(self, persistent_test_output):
         """Test error handling for invalid CWL files."""
         # Test missing file
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(ImportError):
             to_workflow("nonexistent.cwl")
 
         # Test invalid CWL class
@@ -350,7 +352,7 @@ class TestCWLImporter:
         with open(invalid_file, "w") as f:
             yaml.dump(invalid_content, f)
 
-        with pytest.raises(RuntimeError, match="Unsupported CWL class"):
+        with pytest.raises(ImportError, match="Unsupported CWL class"):
             to_workflow(invalid_file)
 
         # Test workflow with no steps (should now be handled gracefully)
@@ -410,4 +412,62 @@ class TestCWLImporter:
         # Import and test
         workflow = to_workflow(json_file)
         assert len(workflow.tasks) == 1
-        assert "test" in list(workflow.tasks.values())[0].command
+        assert "test" in list(workflow.tasks.values())[0].command.get_value_for("shared_filesystem")
+
+    def test_submit_file_parsing(self, persistent_test_output):
+        """Test parsing a CommandLineTool with submit_file."""
+        tool_content = {
+            "cwlVersion": "v1.2",
+            "class": "CommandLineTool",
+            "label": "Test Tool",
+            "doc": "A test command line tool",
+            "baseCommand": ["echo"],
+            "arguments": ["Hello, World!"],
+            "requirements": [
+                {
+                    "class": "ResourceRequirement",
+                    "coresMin": 2,
+                    "ramMin": 4096,
+                    "tmpdirMin": 1024,
+                },
+                {"class": "DockerRequirement", "dockerPull": "ubuntu:20.04"},
+            ],
+            "inputs": {"message": {"type": "string", "default": "test"}},
+            "outputs": {
+                "output": {"type": "File", "outputBinding": {"glob": "output.txt"}}
+            },
+            "submit_file": "submit_file.txt",
+        }
+
+        # Write to file
+        tool_file = persistent_test_output / "test_tool.cwl"
+        with open(tool_file, "w") as f:
+            yaml.dump(tool_content, f)
+
+        # Import and test
+        workflow = to_workflow(tool_file)
+
+        assert workflow.name == "Test Tool"
+        assert len(workflow.tasks) == 1
+
+        task = list(workflow.tasks.values())[0]
+        assert task.command.get_value_for("shared_filesystem") == "echo Hello, World!"
+
+        # Check resources
+        assert task.cpu.get_value_for("shared_filesystem") == 2
+        assert task.mem_mb.get_value_for("shared_filesystem") == 4096
+        assert task.disk_mb.get_value_for("shared_filesystem") == 1024
+
+        # Check environment
+        assert task.container.get_value_for("shared_filesystem") == "docker://ubuntu:20.04"
+
+        # Check metadata
+        assert workflow.metadata.format_specific["single_tool_conversion"]
+
+        # Check submit_file
+        assert task.submit_file.get_value_for("shared_filesystem") == "submit_file.txt"
+
+        # Check transfer_mode for inputs
+        for inp in task.inputs:
+            if hasattr(inp, 'transfer_mode'):
+                assert inp.transfer_mode.get_value_with_default("distributed_computing") == "always"

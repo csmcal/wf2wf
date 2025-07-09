@@ -49,60 +49,44 @@ class DAGManImporter(BaseImporter):
         """Create basic workflow from parsed DAGMan data."""
         metadata = parsed_data["metadata"]
         dag_path = parsed_data["dag_path"]
-        
-        # Use metadata workflow name if available, otherwise use filename
         workflow_name = metadata.get("original_workflow_name", dag_path.stem)
-        
-        # Create workflow with metadata
         wf = Workflow(
             name=workflow_name, 
-            version=metadata.get("original_workflow_version", "1.0"),
-            execution_model=EnvironmentSpecificValue("distributed_computing", ["shared_filesystem"])
+            version=metadata.get("original_workflow_version", "1.0")
         )
-        
-        # Restore workflow metadata if available
+        # Always create metadata
+        if wf.metadata is None:
+            wf.metadata = MetadataSpec()
         if metadata.get("workflow_metadata"):
-            if wf.metadata is None:
-                wf.metadata = MetadataSpec()
             wf.metadata.add_format_specific("workflow_metadata", metadata["workflow_metadata"])
-        
-        return wf
-
-    def import_workflow(self, path: Path, **opts) -> Workflow:
-        """Main import method with shared workflow."""
-        parsed_data = self._parse_source(path, **opts)
-        workflow = self._create_basic_workflow(parsed_data)
+        # Add dag_variables if present
+        dag_variables = parsed_data.get("variables")
+        if dag_variables:
+            wf.metadata.add_format_specific("dag_variables", dag_variables)
+        # Extract and add tasks
         tasks = self._extract_tasks(parsed_data)
         for task in tasks:
-            workflow.add_task(task)
+            wf.add_task(task)
+        # Extract and add edges
         edges = self._extract_edges(parsed_data)
         for parent, child in edges:
-            workflow.add_edge(parent, child)
-        self._extract_environment_specific_values(parsed_data, workflow)
-        return workflow
-    
+            wf.add_edge(parent, child)
+        return wf
+
     def _extract_tasks(self, parsed_data: Dict[str, Any]) -> List[Task]:
-        """Extract tasks from parsed DAGMan data."""
         jobs = parsed_data["jobs"]
         dag_dir = parsed_data["dag_dir"]
         verbose = self.verbose
-        
         tasks = []
-        submit_files = {}  # Cache parsed submit files
-        
+        submit_files = {}
         for job_name, job_info in jobs.items():
             submit_info = {}
-            
             if job_info.get("inline_submit"):
-                # Parse inline submit description
                 submit_info = _parse_submit_content(job_info["inline_submit"], debug=False)
                 if verbose:
                     self.logger.info(f"Parsed inline submit for {job_name}")
             elif job_info.get("submit_file"):
-                # Parse external submit file
                 submit_file = Path(dag_dir / job_info["submit_file"])
-                
-                # Parse submit file if not already cached
                 if str(submit_file) not in submit_files:
                     if submit_file.exists():
                         submit_files[str(submit_file)] = _parse_submit_file(submit_file, debug=False)
@@ -110,46 +94,25 @@ class DAGManImporter(BaseImporter):
                         if verbose:
                             self.logger.warning(f"Submit file not found: {submit_file}")
                         submit_files[str(submit_file)] = {}
-                
                 submit_info = submit_files[str(submit_file)]
             else:
                 if verbose:
                     self.logger.warning(f"No submit information found for job {job_name}")
-            
-            # Create task from job info
             task = _create_task_from_job(job_name, job_info, submit_info, dag_dir)
             tasks.append(task)
-            
             if verbose:
                 self.logger.info(f"Added task: {task.id}")
-                
         return tasks
-    
+
     def _extract_edges(self, parsed_data: Dict[str, Any]) -> List[Tuple[str, str]]:
-        """Extract edges from parsed DAGMan data."""
         edges = parsed_data["dependencies"]
         if self.verbose:
             self.logger.info(f"Extracted {len(edges)} edges from DAGMan file")
             for parent, child in edges:
                 self.logger.debug(f"Edge: {parent} -> {child}")
         return edges
-    
-    def _extract_environment_specific_values(self, parsed_data: Dict[str, Any], workflow: Workflow) -> None:
-        """Extract environment-specific values from parsed data."""
-        # DAGMan is inherently for distributed computing, so set execution model
-        workflow.execution_model.set_for_environment("distributed_computing", "distributed_computing")
-        
-        # Store DAG variables in workflow metadata
-        variables = parsed_data.get("variables", {})
-        if variables:
-            if workflow.metadata is None:
-                workflow.metadata = MetadataSpec()
-            workflow.metadata.add_format_specific("dag_variables", variables)
-            if self.verbose:
-                self.logger.info(f"Extracted DAG variables: {variables}")
-    
+
     def _get_source_format(self) -> str:
-        """Get the source format name."""
         return "dagman"
 
 
@@ -406,7 +369,11 @@ def _parse_submit_content(content: str, debug: bool = False) -> Dict[str, Any]:
         elif key == "universe":
             submit_info["universe"] = value
         elif key == "output":
-            submit_info["output"].append(value)
+            # Always append as ParameterSpec, not string
+            from wf2wf.core import ParameterSpec, EnvironmentSpecificValue
+            submit_info["output"].append(
+                ParameterSpec(id=value, type="File", transfer_mode=EnvironmentSpecificValue("always"))
+            )
         elif key == "error":
             submit_info["error"] = value
         elif key == "log":
@@ -530,16 +497,16 @@ def _parse_submit_file(submit_path: Path, debug: bool = False) -> Dict[str, Any]
         # Transfer files (approximate input/output detection)
         elif key == "transfer_input_files":
             # Create ParameterSpec objects with explicit transfer mode
-            from wf2wf.core import ParameterSpec
+            from wf2wf.core import ParameterSpec, EnvironmentSpecificValue
             submit_info["input"] = [
-                ParameterSpec(id=f.strip(), type="File", transfer_mode="always")
+                ParameterSpec(id=f.strip(), type="File", transfer_mode=EnvironmentSpecificValue("always"))
                 for f in value.split(",") if f.strip()
             ]
         elif key == "transfer_output_files":
             # Create ParameterSpec objects with explicit transfer mode
-            from wf2wf.core import ParameterSpec
+            from wf2wf.core import ParameterSpec, EnvironmentSpecificValue
             submit_info["output"] = [
-                ParameterSpec(id=f.strip(), type="File", transfer_mode="always")
+                ParameterSpec(id=f.strip(), type="File", transfer_mode=EnvironmentSpecificValue("always"))
                 for f in value.split(",") if f.strip()
             ]
 

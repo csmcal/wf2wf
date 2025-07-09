@@ -181,10 +181,10 @@ JOB gpu_job gpu_job.sub
         # Check that transfer_mode is set to "always" for transferred files
         for inp in task.inputs:
             if hasattr(inp, 'transfer_mode'):
-                assert inp.transfer_mode == "always"
+                assert inp.transfer_mode.get_value_with_default("distributed_computing") == "always"
         for out in task.outputs:
             if hasattr(out, 'transfer_mode'):
-                assert out.transfer_mode == "always"
+                assert out.transfer_mode.get_value_with_default("distributed_computing") == "always"
 
         # Check metadata
         assert task.metadata.format_specific["requirements"] == "(Target.HasGPU == True)"
@@ -208,14 +208,14 @@ JOB gpu_job gpu_job.sub
     def test_error_handling(self, persistent_test_output):
         """Test error handling for invalid files."""
         # Test non-existent file
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(ImportError):
             dag_importer.to_workflow(Path("nonexistent.dag"))
 
         # Test empty DAG file
         empty_dag = persistent_test_output / "empty.dag"
         empty_dag.write_text("")
 
-        with pytest.raises(ValueError, match="No jobs found"):
+        with pytest.raises(ImportError, match="No jobs found"):
             dag_importer.to_workflow(empty_dag)
 
         # Test DAG with missing submit file

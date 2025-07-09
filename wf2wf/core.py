@@ -257,6 +257,112 @@ EXECUTION_ENVIRONMENTS = {
 }
 
 # -----------------------------------------------------------------------------
+# Execution Model Specification
+# -----------------------------------------------------------------------------
+
+@dataclass
+class ExecutionModelSpec:
+    """Detailed specification of an execution model with transition analysis capabilities."""
+    
+    # Core model information
+    model: str  # e.g., "shared_filesystem", "distributed_computing", "cloud_native"
+    source_format: str  # Original workflow format
+    detection_method: str  # "extension", "content", "user_specified"
+    # detection_confidence: float  # 0.0 to 1.0 (REMOVED)
+    
+    # Execution environment characteristics
+    filesystem_type: str = "unknown"  # shared, distributed, hybrid, cloud_storage, local
+    resource_management: str = "unknown"  # implicit, explicit, dynamic, cloud_managed, constrained
+    environment_isolation: str = "unknown"  # none, conda, container, cloud_runtime
+    file_transfer_mode: str = "unknown"  # none, manual, automatic, cloud_storage, minimal
+    
+    # Requirements flags
+    requires_file_transfer: bool = False
+    requires_resource_specification: bool = False
+    requires_environment_isolation: bool = False
+    requires_error_handling: bool = False
+    
+    # Detection evidence
+    detection_indicators: List[str] = field(default_factory=list)  # Evidence for the classification
+    
+    # Transition analysis
+    transition_notes: List[str] = field(default_factory=list)  # Notes about transitions to other models
+    
+    # Metadata
+    created_at: Optional[str] = None  # ISO 8601 timestamp
+    modified_at: Optional[str] = None  # ISO 8601 timestamp
+    
+    def __post_init__(self):
+        """Set creation timestamp if not provided."""
+        if self.created_at is None:
+            from datetime import datetime
+            self.created_at = datetime.utcnow().isoformat() + "Z"
+    
+    def update_modified(self):
+        """Update the modified timestamp."""
+        from datetime import datetime
+        self.modified_at = datetime.utcnow().isoformat() + "Z"
+    
+    def get_environment_characteristics(self) -> Dict[str, Any]:
+        """Get environment characteristics as a dictionary."""
+        return {
+            "filesystem_type": self.filesystem_type,
+            "resource_management": self.resource_management,
+            "environment_isolation": self.environment_isolation,
+            "file_transfer_mode": self.file_transfer_mode,
+            "requires_file_transfer": self.requires_file_transfer,
+            "requires_resource_specification": self.requires_resource_specification,
+            "requires_environment_isolation": self.requires_environment_isolation,
+            "requires_error_handling": self.requires_error_handling
+        }
+    
+    def is_compatible_with(self, target_model: str) -> bool:
+        """Check if this model is compatible with a target model."""
+        # Same model is always compatible
+        if self.model == target_model:
+            return True
+        
+        # Shared filesystem is compatible with most models
+        if self.model == "shared_filesystem":
+            return True
+        
+        # Distributed computing is compatible with cloud and hybrid
+        if self.model == "distributed_computing" and target_model in ["cloud_native", "hybrid"]:
+            return True
+        
+        # Cloud native is compatible with hybrid
+        if self.model == "cloud_native" and target_model == "hybrid":
+            return True
+        
+        return False
+    
+    def get_transition_requirements(self, target_model: str) -> List[str]:
+        """Get list of requirements for transitioning to target model."""
+        requirements = []
+        
+        if target_model == "distributed_computing":
+            if not self.requires_file_transfer:
+                requirements.append("file_transfer_specification")
+            if not self.requires_resource_specification:
+                requirements.append("resource_specification")
+            if not self.requires_environment_isolation:
+                requirements.append("environment_isolation")
+            if not self.requires_error_handling:
+                requirements.append("error_handling_specification")
+        
+        elif target_model == "cloud_native":
+            if not self.requires_file_transfer:
+                requirements.append("cloud_storage_specification")
+            if not self.requires_resource_specification:
+                requirements.append("cloud_resource_specification")
+            if not self.requires_environment_isolation:
+                requirements.append("cloud_runtime_specification")
+            if not self.requires_error_handling:
+                requirements.append("cloud_error_handling")
+        
+        return requirements
+
+# -----------------------------------------------------------------------------
 # Enhanced Metadata Classes (Environment-Agnostic)
 # -----------------------------------------------------------------------------
 

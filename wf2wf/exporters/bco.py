@@ -12,13 +12,17 @@ Usage:
     load('bco').from_workflow(wf, 'pipeline.bco.json')
 """
 
+import json
+import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
-import json
-from datetime import datetime, timezone
 import tarfile
 
-from wf2wf.core import Workflow, ParameterSpec, EnvironmentSpec, ResourceSpec
+from wf2wf.core import Workflow, ParameterSpec
+from wf2wf.exporters.base import BaseExporter
+
+logger = logging.getLogger(__name__)
 
 BCO_SCHEMA_URL = "https://w3id.org/ieee/ieee-2791-schema/2791object.json"
 
@@ -97,9 +101,15 @@ def _make_parametric_domain(wf: Workflow) -> List[Dict[str, Any]]:
 
 def _make_extension_domain(wf: Workflow) -> List[Dict[str, Any]]:
     """Expose WF meta dictionary as free-form extension records."""
-    if not wf.meta:
-        return []
-    return [{"namespace": "wf2wf:meta", "data": wf.meta}]
+    # Check if workflow has meta attribute (legacy support)
+    if hasattr(wf, 'meta') and wf.meta:
+        return [{"namespace": "wf2wf:meta", "data": wf.meta}]
+    
+    # Check if workflow has metadata with format_specific data
+    if hasattr(wf, 'metadata') and wf.metadata and wf.metadata.format_specific:
+        return [{"namespace": "wf2wf:metadata", "data": wf.metadata.format_specific}]
+    
+    return []
 
 
 def _param_to_io(item: ParameterSpec, io_type: str) -> Dict[str, Any]:
@@ -123,22 +133,33 @@ def _make_io_domain(wf: Workflow) -> Dict[str, Any]:
 def _make_execution_domain(wf: Workflow) -> Dict[str, Any]:
     steps = []
     for num, task in enumerate(wf.tasks.values(), start=1):
-        env: EnvironmentSpec = task.environment
-        res: ResourceSpec = task.resources
+        # Get environment-specific values for shared_filesystem environment
+        container = task.container.get_value_for("shared_filesystem") if hasattr(task, 'container') else None
+        conda = task.conda.get_value_for("shared_filesystem") if hasattr(task, 'conda') else None
+        cpu = task.cpu.get_value_for("shared_filesystem") if hasattr(task, 'cpu') else 1
+        mem_mb = task.mem_mb.get_value_for("shared_filesystem") if hasattr(task, 'mem_mb') else 4096
+        gpu = task.gpu.get_value_for("shared_filesystem") if hasattr(task, 'gpu') else 0
+        env_vars = task.env_vars.get_value_for("shared_filesystem") if hasattr(task, 'env_vars') else {}
+        
+        # Get command or script
+        command = task.command.get_value_for("shared_filesystem") if hasattr(task, 'command') else None
+        script = task.script.get_value_for("shared_filesystem") if hasattr(task, 'script') else None
+        software = command or script
+        
         steps.append(
             {
                 "step_number": num,
                 "name": task.id,
-                "software": task.command or task.script,
+                "software": software,
                 "environment": {
-                    "container": env.container,
-                    "conda_env": env.conda,
-                    "cpu": res.cpu,
-                    "memory_mb": res.mem_mb,
-                    "gpu": res.gpu,
+                    "container": container,
+                    "conda_env": conda,
+                    "cpu": cpu,
+                    "memory_mb": mem_mb,
+                    "gpu": gpu,
                     **(
-                        {"sbom_digest": env.env_vars.get("WF2WF_SBOM_DIGEST")}
-                        if env.env_vars.get("WF2WF_SBOM_DIGEST")
+                        {"sbom_digest": env_vars.get("WF2WF_SBOM_DIGEST")}
+                        if env_vars and env_vars.get("WF2WF_SBOM_DIGEST")
                         else {}
                     ),
                 },
@@ -161,16 +182,31 @@ def _make_error_domain() -> Dict[str, Any]:
 # -----------------------------------------------------------------------------
 
 
-def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any):  # noqa: N802 – public API name
-    """Export *wf* to a BioCompute Object JSON document.
+class BCOExporter(BaseExporter):
+    """BCO exporter using shared infrastructure."""
+    
+    def _get_target_format(self) -> str:
+        """Get the target format name."""
+        return "bco"
+    
+    def _generate_output(self, workflow: Workflow, output_path: Path, **opts: Any) -> None:
+        """Generate BCO output."""
+        if self.verbose:
+            logger.info(f"Generating BCO workflow: {output_path}")
+            logger.info(f"  Workflow: {workflow.name}")
+            logger.info(f"  Tasks: {len(workflow.tasks)}")
+            logger.info(f"  Inputs: {len(workflow.inputs)}")
+            logger.info(f"  Outputs: {len(workflow.outputs)}")
+        
+        # Use the existing from_workflow logic
+        _export_bco_workflow(workflow, output_path, **opts)
+        
+        if self.verbose:
+            logger.info(f"✓ BCO workflow exported to {output_path}")
 
-    Args:
-        wf:   Workflow IR instance.
-        out_file: Target file path (*.json).
-        **opts: Currently unused; reserved for future options such as
-                 compliance level, SPDX attachment, etc.
-    """
 
+def _export_bco_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any):
+    """Internal BCO export function."""
     out_path = Path(out_file)
     if out_path.suffix.lower() not in {".json", ".bco"}:
         out_path = out_path.with_suffix(out_path.suffix + ".json")
@@ -314,10 +350,26 @@ def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any):  # noq
             tar.add(out_path, arcname=out_path.name)
             tar.add(cwl_path, arcname=cwl_path.name)
         if opts.get("verbose"):
-            print(f"BCO+CWL package written to {package_path}")
+            logger.info(f"BCO+CWL package written to {package_path}")
 
     if opts.get("verbose"):
-        print(f"BCO document written to {out_path}")
+        logger.info(f"BCO document written to {out_path}")
+
+
+def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any):  # noqa: N802 – public API name
+    """Export *wf* to a BioCompute Object JSON document (legacy function).
+
+    Args:
+        wf:   Workflow IR instance.
+        out_file: Target file path (*.json).
+        **opts: Currently unused; reserved for future options such as
+                 compliance level, SPDX attachment, etc.
+    """
+    exporter = BCOExporter(
+        interactive=opts.get("interactive", False),
+        verbose=opts.get("verbose", False)
+    )
+    exporter.export_workflow(wf, out_file, **opts)
 
 
 # ---------------------------------------------------------------------------
@@ -395,7 +447,7 @@ def generate_fda_submission_package(
             tar.add(readme_path, arcname=readme_path.name)
 
         if verbose:
-            print(f"FDA submission package written to {pkg_path}")
+            logger.info(f"FDA submission package written to {pkg_path}")
 
     return pkg_path
 

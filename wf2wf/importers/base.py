@@ -18,6 +18,8 @@ from wf2wf.importers.loss_integration import detect_and_apply_loss_sidecar, crea
 from wf2wf.importers.inference import infer_environment_specific_values, infer_execution_model
 from wf2wf.importers.interactive import prompt_for_missing_information
 from wf2wf.environ import EnvironmentManager
+from wf2wf.workflow_analysis import detect_execution_model_from_content, create_execution_model_spec
+from wf2wf.importers.inference import infer_condor_attributes
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +98,31 @@ class BaseImporter(ABC):
             
             # Step 6: Interactive prompting if enabled
             if self.interactive:
+                # Enhanced interactive prompting with execution model confirmation
+                from wf2wf.importers.interactive import (
+                    prompt_for_missing_information, 
+                    prompt_for_execution_model_confirmation,
+                    prompt_for_workflow_optimization
+                )
+                
+                # Get content analysis for execution model confirmation
+                from wf2wf.workflow_analysis import detect_execution_model_from_content
+                content_analysis = detect_execution_model_from_content(path, self._get_source_format())
+                
+                # Prompt for execution model confirmation
+                prompt_for_execution_model_confirmation(
+                    workflow, 
+                    self._get_source_format(),
+                    content_analysis
+                )
+                
+                # Standard missing information prompting
                 prompt_for_missing_information(workflow, self._get_source_format())
+                
+                # Check for target format optimization if specified
+                target_format = opts.get('target_format')
+                if target_format:
+                    prompt_for_workflow_optimization(workflow, target_format)
             
             # Step 7: Validate and return
             workflow.validate()
@@ -109,6 +135,192 @@ class BaseImporter(ABC):
         except Exception as e:
             logger.error(f"Failed to import workflow from {path}: {e}")
             raise ImportError(f"Failed to import workflow from {path}: {e}") from e
+
+    def analyze_target_adaptation(self, workflow: Workflow, target_format: str) -> Dict[str, Any]:
+        """
+        Analyze what adaptations are needed for the target format.
+        
+        This method provides comprehensive analysis of what changes are needed
+        when converting to a specific target format, including execution model
+        transitions and format-specific requirements.
+        
+        Args:
+            workflow: Workflow to analyze
+            target_format: Target format name
+            
+        Returns:
+            Dictionary containing adaptation analysis
+        """
+        analysis = {
+            'target_format': target_format,
+            'source_format': self._get_source_format(),
+            'execution_model_transition': None,
+            'required_adaptations': [],
+            'optional_optimizations': [],
+            'potential_issues': [],
+            'recommendations': []
+        }
+        
+        # Analyze execution model transition
+        analysis['execution_model_transition'] = self._analyze_execution_model_transition(workflow, target_format)
+        
+        # Add format-specific analysis
+        format_analysis = self._analyze_format_specific_requirements(workflow, target_format)
+        analysis['required_adaptations'].extend(format_analysis.get('required', []))
+        analysis['optional_optimizations'].extend(format_analysis.get('optional', []))
+        analysis['potential_issues'].extend(format_analysis.get('issues', []))
+        analysis['recommendations'].extend(format_analysis.get('recommendations', []))
+        
+        # Add resource analysis
+        resource_analysis = self._analyze_resource_requirements(workflow, target_format)
+        analysis['required_adaptations'].extend(resource_analysis.get('required', []))
+        analysis['potential_issues'].extend(resource_analysis.get('issues', []))
+        
+        # Add environment analysis
+        env_analysis = self._analyze_environment_requirements(workflow, target_format)
+        analysis['required_adaptations'].extend(env_analysis.get('required', []))
+        analysis['potential_issues'].extend(env_analysis.get('issues', []))
+        
+        return analysis
+
+    def _analyze_format_specific_requirements(self, workflow: Workflow, target_format: str) -> Dict[str, List[str]]:
+        """
+        Analyze format-specific requirements for the target format.
+        
+        Args:
+            workflow: Workflow to analyze
+            target_format: Target format name
+            
+        Returns:
+            Dictionary containing format-specific analysis
+        """
+        analysis = {
+            'required': [],
+            'optional': [],
+            'issues': [],
+            'recommendations': []
+        }
+        
+        if target_format == 'dagman':
+            # DAGMan-specific requirements
+            for task in workflow.tasks.values():
+                if not task.command.get_value_for('shared_filesystem'):
+                    analysis['required'].append(f"Task '{task.id}' needs executable specification")
+                
+                if not task.extra.get('requirements') and task.gpu.get_value_for('shared_filesystem'):
+                    analysis['optional'].append(f"Task '{task.id}' could benefit from GPU requirements")
+                
+                if not task.retry_count.get_value_for('shared_filesystem'):
+                    analysis['recommendations'].append(f"Task '{task.id}' should have retry specification")
+        
+        elif target_format == 'nextflow':
+            # Nextflow-specific requirements
+            for task in workflow.tasks.values():
+                if not task.inputs:
+                    analysis['required'].append(f"Task '{task.id}' needs input specifications")
+                
+                if not task.outputs:
+                    analysis['required'].append(f"Task '{task.id}' needs output specifications")
+                
+                if not task.extra.get('publish_dir') and task.outputs:
+                    analysis['optional'].append(f"Task '{task.id}' could use publishDir for outputs")
+        
+        elif target_format == 'cwl':
+            # CWL-specific requirements
+            for task in workflow.tasks.values():
+                if not task.inputs:
+                    analysis['required'].append(f"Task '{task.id}' needs input parameter specifications")
+                
+                if not task.outputs:
+                    analysis['required'].append(f"Task '{task.id}' needs output parameter specifications")
+                
+                if task.command.get_value_for('shared_filesystem') and not task.script.get_value_for('shared_filesystem'):
+                    analysis['recommendations'].append(f"Task '{task.id}' should use script instead of command for CWL")
+        
+        return analysis
+
+    def _analyze_resource_requirements(self, workflow: Workflow, target_format: str) -> Dict[str, List[str]]:
+        """
+        Analyze resource requirements for the target format.
+        
+        Args:
+            workflow: Workflow to analyze
+            target_format: Target format name
+            
+        Returns:
+            Dictionary containing resource analysis
+        """
+        analysis = {
+            'required': [],
+            'issues': []
+        }
+        
+        # Check for missing resource specifications in distributed formats
+        if target_format in ['dagman', 'nextflow']:
+            for task in workflow.tasks.values():
+                if task.cpu.get_value_for('shared_filesystem') is None:
+                    analysis['required'].append(f"Task '{task.id}' needs CPU specification")
+                
+                if task.mem_mb.get_value_for('shared_filesystem') is None:
+                    analysis['required'].append(f"Task '{task.id}' needs memory specification")
+                
+                if task.disk_mb.get_value_for('shared_filesystem') is None:
+                    analysis['required'].append(f"Task '{task.id}' needs disk specification")
+                
+                # Check for reasonable resource values
+                cpu_value = task.cpu.get_value_for('shared_filesystem')
+                if cpu_value and cpu_value > 32:
+                    analysis['issues'].append(f"Task '{task.id}' has very high CPU requirement ({cpu_value})")
+                
+                mem_value = task.mem_mb.get_value_for('shared_filesystem')
+                if mem_value and mem_value > 65536:  # 64GB
+                    analysis['issues'].append(f"Task '{task.id}' has very high memory requirement ({mem_value}MB)")
+        
+        return analysis
+
+    def _analyze_environment_requirements(self, workflow: Workflow, target_format: str) -> Dict[str, List[str]]:
+        """
+        Analyze environment requirements for the target format.
+        
+        Args:
+            workflow: Workflow to analyze
+            target_format: Target format name
+            
+        Returns:
+            Dictionary containing environment analysis
+        """
+        analysis = {
+            'required': [],
+            'issues': []
+        }
+        
+        # Check for environment isolation in distributed formats
+        if target_format in ['dagman', 'nextflow']:
+            for task in workflow.tasks.values():
+                if (task.container.get_value_for('shared_filesystem') is None and 
+                    task.conda.get_value_for('shared_filesystem') is None):
+                    analysis['required'].append(f"Task '{task.id}' needs container or conda specification")
+        
+        # Check for environment consistency
+        containers = set()
+        conda_envs = set()
+        
+        for task in workflow.tasks.values():
+            container = task.container.get_value_for('shared_filesystem')
+            if container:
+                containers.add(container)
+            
+            conda = task.conda.get_value_for('shared_filesystem')
+            if conda:
+                conda_envs.add(conda)
+        
+        if len(containers) > 5:
+            analysis['issues'].append(f"Workflow uses {len(containers)} different containers - consider consolidation")
+        
+        if len(conda_envs) > 3:
+            analysis['issues'].append(f"Workflow uses {len(conda_envs)} different conda environments - consider consolidation")
+        
+        return analysis
     
     @abstractmethod
     def _parse_source(self, path: Path, **opts) -> Dict[str, Any]:
@@ -471,12 +683,202 @@ class BaseImporter(ABC):
         """
         source_format = self._get_source_format()
         
-        # Infer execution model
-        execution_model = infer_execution_model(workflow, source_format)
+        # Enhanced execution model detection
+        execution_model = self._detect_execution_model(workflow, source_path, source_format)
         workflow.execution_model.set_for_environment(execution_model, 'shared_filesystem')
         
         # Infer environment-specific values
         infer_environment_specific_values(workflow, source_format)
+        
+        # Infer Condor-specific attributes if converting to DAGMan
+        if source_format == 'snakemake':
+            infer_condor_attributes(workflow, 'distributed_computing')
+
+    def _detect_execution_model(self, workflow: Workflow, source_path: Path, source_format: str) -> str:
+        """
+        Detect execution model using multiple methods.
+        
+        This method combines format-based, content-based, and workflow-based
+        analysis to determine the most appropriate execution model.
+        
+        Args:
+            workflow: Workflow object to analyze
+            source_path: Path to the source workflow file
+            source_format: Source format name
+            
+        Returns:
+            Detected execution model
+        """
+        
+        # Method 1: Content-based analysis
+        content_analysis = detect_execution_model_from_content(source_path, source_format)
+        
+        # Method 2: Workflow-based inference
+        workflow_model = infer_execution_model(workflow, source_format)
+        
+        # Method 3: Format-based default
+        format_model = self._get_format_default_execution_model(source_format)
+        
+        if self.verbose:
+            logger.info(f"Execution model detection results:")
+            logger.info(f"  Content-based: {content_analysis.execution_model} (confidence: {content_analysis.confidence:.2f})")
+            logger.info(f"  Workflow-based: {workflow_model}")
+            logger.info(f"  Format-based: {format_model}")
+        
+        # Interactive confirmation if enabled and confidence is low
+        if self.interactive and content_analysis.confidence < 0.6:
+            final_model = self._prompt_for_execution_model(
+                content_analysis, workflow_model, format_model, source_format
+            )
+        else:
+            # Use content-based model if confidence is high, otherwise workflow-based
+            final_model = content_analysis.execution_model if content_analysis.confidence > 0.6 else workflow_model
+        
+        # Create detailed execution model specification
+        execution_spec = create_execution_model_spec(
+            source_format, content_analysis, final_model
+        )
+        
+        # Store the execution model specification in workflow metadata
+        if not hasattr(workflow, 'execution_model_spec'):
+            workflow.execution_model_spec = execution_spec
+        else:
+            workflow.execution_model_spec = execution_spec
+        
+        if self.verbose:
+            logger.info(f"Final execution model: {final_model}")
+            logger.info(f"Model characteristics: {execution_spec}")
+        
+        return final_model
+
+    def _get_format_default_execution_model(self, source_format: str) -> str:
+        """
+        Get the default execution model for a given format.
+        
+        Args:
+            source_format: Source format name
+            
+        Returns:
+            Default execution model for the format
+        """
+        format_models = {
+            'snakemake': 'shared_filesystem',
+            'dagman': 'distributed_computing',
+            'nextflow': 'hybrid',
+            'cwl': 'shared_filesystem',
+            'wdl': 'shared_filesystem',
+            'galaxy': 'shared_filesystem'
+        }
+        return format_models.get(source_format.lower(), 'unknown')
+
+    def _prompt_for_execution_model(
+        self, 
+        content_analysis, 
+        workflow_model: str, 
+        format_model: str, 
+        source_format: str
+    ) -> str:
+        """
+        Interactive prompting for execution model selection.
+        
+        Args:
+            content_analysis: Content analysis results
+            workflow_model: Workflow-based model
+            format_model: Format-based model
+            source_format: Source format name
+            
+        Returns:
+            Selected execution model
+        """
+        from wf2wf import prompt
+        
+        print(f"\nExecution model detection for {source_format} workflow:")
+        print(f"  Content analysis: {content_analysis.execution_model} (confidence: {content_analysis.confidence:.2f})")
+        print(f"  Workflow analysis: {workflow_model}")
+        print(f"  Format default: {format_model}")
+        
+        if content_analysis.indicators:
+            print(f"\nDetection indicators:")
+            for model_type, indicators in content_analysis.indicators.items():
+                if indicators:
+                    print(f"  {model_type}:")
+                    for indicator in indicators[:3]:  # Show first 3 indicators
+                        print(f"    - {indicator}")
+                    if len(indicators) > 3:
+                        print(f"    ... and {len(indicators) - 3} more")
+        
+        if content_analysis.recommendations:
+            print(f"\nRecommendations:")
+            for rec in content_analysis.recommendations:
+                print(f"  - {rec}")
+        
+        # Prompt for model selection
+        models = [content_analysis.execution_model, workflow_model, format_model]
+        unique_models = list(dict.fromkeys(models))  # Remove duplicates while preserving order
+        
+        if len(unique_models) == 1:
+            print(f"\nAll detection methods agree: {unique_models[0]}")
+            return unique_models[0]
+        
+        print(f"\nAvailable execution models:")
+        for i, model in enumerate(unique_models, 1):
+            print(f"  {i}. {model}")
+        
+        while True:
+            try:
+                choice = input(f"\nSelect execution model (1-{len(unique_models)}, or 'auto' for content-based): ").strip()
+                
+                if choice.lower() == 'auto':
+                    return content_analysis.execution_model
+                
+                choice_idx = int(choice) - 1
+                if 0 <= choice_idx < len(unique_models):
+                    return unique_models[choice_idx]
+                else:
+                    print(f"Please enter a number between 1 and {len(unique_models)}")
+            except ValueError:
+                print("Please enter a valid number or 'auto'")
+            except (EOFError, KeyboardInterrupt):
+                print(f"\nUsing content-based model: {content_analysis.execution_model}")
+                return content_analysis.execution_model
+
+    def _analyze_execution_model_transition(self, workflow: Workflow, target_format: str) -> Dict[str, Any]:
+        """
+        Analyze what changes are needed when transitioning between execution models.
+        
+        Args:
+            workflow: Workflow to analyze
+            target_format: Target format name
+            
+        Returns:
+            Analysis of required changes and potential issues
+        """
+        from wf2wf.workflow_analysis import analyze_execution_model_transition
+        
+        if not hasattr(workflow, 'execution_model_spec'):
+            # Create a basic execution model spec if not available
+            source_model = workflow.execution_model.get_value_for('shared_filesystem') or 'unknown'
+            from wf2wf.core import ExecutionModelSpec
+            workflow.execution_model_spec = ExecutionModelSpec(
+                model=source_model,
+                source_format=self._get_source_format(),
+                detection_method="workflow_analysis",
+                detection_confidence=0.5
+            )
+        
+        analysis = analyze_execution_model_transition(workflow.execution_model_spec, target_format)
+        
+        if self.verbose:
+            logger.info(f"Execution model transition analysis:")
+            logger.info(f"  Source: {analysis['source_model']}")
+            logger.info(f"  Target: {analysis['target_model']}")
+            logger.info(f"  Required changes: {analysis['required_changes']}")
+            if analysis['potential_issues']:
+                logger.warning(f"  Potential issues: {analysis['potential_issues']}")
+            if analysis['recommendations']:
+                logger.info(f"  Recommendations: {analysis['recommendations']}")
+        
+        return analysis
     
     def _handle_environment_management(self, workflow: Workflow, source_path: Path, opts: Dict[str, Any]) -> None:
         """
