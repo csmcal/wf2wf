@@ -8,6 +8,7 @@ enabling consistent behavior across different output formats.
 from __future__ import annotations
 
 import json
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -24,7 +25,9 @@ from wf2wf.loss import (
 )
 from wf2wf.exporters.loss_integration import detect_and_record_losses
 from wf2wf.exporters.inference import infer_missing_values
-from wf2wf.exporters.interactive import prompt_for_missing_values
+from wf2wf.interactive import get_prompter
+
+logger = logging.getLogger(__name__)
 
 
 class BaseExporter(ABC):
@@ -35,6 +38,9 @@ class BaseExporter(ABC):
         self.verbose = verbose
         self.target_format = self._get_target_format()
         self.target_environment = target_environment
+        self.prompter = get_prompter()
+        self.prompter.interactive = interactive
+        self.prompter.verbose = verbose
     
     @abstractmethod
     def _get_target_format(self) -> str:
@@ -61,7 +67,7 @@ class BaseExporter(ABC):
         
         # 3. Interactive prompting if enabled
         if self.interactive:
-            prompt_for_missing_values(workflow, self.target_format, target_environment=self.target_environment)
+            self.prompter.prompt_for_missing_values(workflow, "export", self.target_environment)
         
         # 4. Record format-specific losses
         detect_and_record_losses(workflow, self.target_format, target_environment=self.target_environment, verbose=self.verbose)
@@ -85,6 +91,7 @@ class BaseExporter(ABC):
             print(f"✓ {self.target_format.title()} workflow exported to {output_path}")
             print(f"  Target environment: {self.target_environment}")
             print(f"  Loss side-car: {output_path.with_suffix('.loss.json')}")
+            print(f"Successfully exported workflow to {output_path}")
     
     @abstractmethod
     def _generate_output(self, workflow: Workflow, output_path: Path, **opts: Any) -> None:
@@ -96,6 +103,11 @@ class BaseExporter(ABC):
         """Get value for specific environment, with fallback to universal value."""
         if env_value is None:
             return None
+        
+        # Handle ScatterSpec objects - they don't have environment-specific values
+        from wf2wf.core import ScatterSpec
+        if isinstance(env_value, ScatterSpec):
+            return env_value
         
         # Try to get environment-specific value
         value = env_value.get_value_for(environment)
@@ -291,6 +303,13 @@ class BaseExporter(ABC):
         """Get task metadata for preservation in target format."""
         metadata = {}
         
+        # Add direct task fields
+        if task.label:
+            metadata['label'] = task.label
+        if task.doc:
+            metadata['doc'] = task.doc
+        
+        # Add metadata object if present
         if task.metadata:
             metadata.update(task.metadata.format_specific)
             metadata.update(task.metadata.uninterpreted)
@@ -307,9 +326,21 @@ class BaseExporter(ABC):
         """Get workflow metadata for preservation in target format."""
         metadata = {}
         
+        # Add direct workflow fields
+        if workflow.label:
+            metadata['label'] = workflow.label
+        if workflow.doc:
+            metadata['doc'] = workflow.doc
+        
+        # Add metadata object if present
         if workflow.metadata:
-            metadata.update(workflow.metadata.format_specific)
-            metadata.update(workflow.metadata.uninterpreted)
+            if hasattr(workflow.metadata, 'format_specific'):
+                # It's a MetadataSpec object
+                metadata.update(workflow.metadata.format_specific)
+                metadata.update(workflow.metadata.uninterpreted)
+            elif isinstance(workflow.metadata, dict):
+                # It's a dict
+                metadata.update(workflow.metadata)
         
         # Add provenance and documentation if present
         if workflow.provenance:

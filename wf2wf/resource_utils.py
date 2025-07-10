@@ -18,7 +18,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from wf2wf.core import ResourceSpec, ResourceProfile, ResourceField
+from wf2wf.core import Task, EnvironmentSpecificValue
+
+
+@dataclass
+class ResourceProfile:
+    """Resource profile for different compute environments."""
+    name: str
+    description: str
+    environment: str
+    priority: str
+    cpu: int
+    mem_mb: int
+    disk_mb: int
+    gpu: Optional[int] = None
+    gpu_mem_mb: Optional[int] = None
+    time_s: Optional[int] = None
 
 
 # Predefined resource profiles for different environments
@@ -28,79 +43,65 @@ DEFAULT_PROFILES = {
         description="Shared filesystem environment (minimal resources)",
         environment="shared",
         priority="low",
-        resources=ResourceSpec(
-            cpu=ResourceField(value=1, source_method="default"),
-            mem_mb=ResourceField(value=512, source_method="default"),
-            disk_mb=ResourceField(value=1024, source_method="default"),
-        )
+        cpu=1,
+        mem_mb=512,
+        disk_mb=1024,
     ),
     "cluster": ResourceProfile(
         name="cluster",
         description="HTCondor/SGE cluster environment",
         environment="cluster",
         priority="normal",
-        resources=ResourceSpec(
-            cpu=ResourceField(value=1, source_method="default"),
-            mem_mb=ResourceField(value=2048, source_method="default"),  # 2GB
-            disk_mb=ResourceField(value=4096, source_method="default"),  # 4GB
-        )
+        cpu=1,
+        mem_mb=2048,  # 2GB
+        disk_mb=4096,  # 4GB
     ),
     "cloud": ResourceProfile(
         name="cloud",
         description="Cloud computing environment (AWS, GCP, Azure)",
         environment="cloud",
         priority="normal",
-        resources=ResourceSpec(
-            cpu=ResourceField(value=2, source_method="default"),
-            mem_mb=ResourceField(value=4096, source_method="default"),  # 4GB
-            disk_mb=ResourceField(value=8192, source_method="default"),  # 8GB
-        )
+        cpu=2,
+        mem_mb=4096,  # 4GB
+        disk_mb=8192,  # 8GB
     ),
     "hpc": ResourceProfile(
         name="hpc",
         description="High Performance Computing environment",
         environment="hpc",
         priority="normal",
-        resources=ResourceSpec(
-            cpu=ResourceField(value=4, source_method="default"),
-            mem_mb=ResourceField(value=8192, source_method="default"),  # 8GB
-            disk_mb=ResourceField(value=16384, source_method="default"),  # 16GB
-        )
+        cpu=4,
+        mem_mb=8192,  # 8GB
+        disk_mb=16384,  # 16GB
     ),
     "gpu": ResourceProfile(
         name="gpu",
         description="GPU-enabled environment",
         environment="gpu",
         priority="high",
-        resources=ResourceSpec(
-            cpu=ResourceField(value=4, source_method="default"),
-            mem_mb=ResourceField(value=16384, source_method="default"),  # 16GB
-            disk_mb=ResourceField(value=32768, source_method="default"),  # 32GB
-            gpu=ResourceField(value=1, source_method="default"),
-            gpu_mem_mb=ResourceField(value=8192, source_method="default"),  # 8GB
-        )
+        cpu=4,
+        mem_mb=16384,  # 16GB
+        disk_mb=32768,  # 32GB
+        gpu=1,
+        gpu_mem_mb=8192,  # 8GB
     ),
     "memory_intensive": ResourceProfile(
         name="memory_intensive",
         description="Memory-intensive computing environment",
         environment="hpc",
         priority="high",
-        resources=ResourceSpec(
-            cpu=ResourceField(value=8, source_method="default"),
-            mem_mb=ResourceField(value=65536, source_method="default"),  # 64GB
-            disk_mb=ResourceField(value=16384, source_method="default"),  # 16GB
-        )
+        cpu=8,
+        mem_mb=65536,  # 64GB
+        disk_mb=16384,  # 16GB
     ),
     "io_intensive": ResourceProfile(
         name="io_intensive",
         description="I/O-intensive computing environment",
         environment="hpc",
         priority="normal",
-        resources=ResourceSpec(
-            cpu=ResourceField(value=4, source_method="default"),
-            mem_mb=ResourceField(value=8192, source_method="default"),  # 8GB
-            disk_mb=ResourceField(value=131072, source_method="default"),  # 128GB
-        )
+        cpu=4,
+        mem_mb=8192,  # 8GB
+        disk_mb=131072,  # 128GB
     ),
 }
 
@@ -168,220 +169,236 @@ def normalize_time(value: Union[str, int, float]) -> int:
     raise ValueError(f"Unsupported time value type: {type(value)}")
 
 
-def infer_resources_from_command(command: str, script: Optional[str] = None) -> ResourceSpec:
-    """Infer resource requirements from command or script content."""
-    resources = ResourceSpec()
-    # All inferred fields get source_method="inferred"
-    if not command and not script:
-        resources.cpu.value = 1
-        resources.cpu.source_method = "inferred"
-        resources.threads.value = 1
-        resources.threads.source_method = "inferred"
+def infer_resources_from_command(command: Optional[EnvironmentSpecificValue], script: Optional[EnvironmentSpecificValue] = None, environment: str = "shared_filesystem") -> Dict[str, Any]:
+    """Infer resource requirements from command or script content for a specific environment.
+    Args:
+        command: EnvironmentSpecificValue for the command
+        script: EnvironmentSpecificValue for the script (optional)
+        environment: The environment to extract the value for (default: 'shared_filesystem')
+    Returns:
+        Dict of inferred resources
+    """
+    resources = {}
+    
+    command_str = command.get_value_for(environment) if command else ""
+    script_str = script.get_value_for(environment) if script else ""
+    
+    # Convert None to empty string to avoid concatenation errors
+    command_str = command_str or ""
+    script_str = script_str or ""
+    
+    if not command_str and not script_str:
+        resources["cpu"] = 1
+        resources["threads"] = 1
         return resources
-    content = (command or "") + " " + (script or "")
+    
+    content = command_str + " " + script_str
     content = content.lower()
+    
     # Infer CPU requirements
     if any(tool in content for tool in ["bwa", "bowtie", "star", "hisat2", "salmon", "kallisto"]):
-        resources.cpu.value = 4
-        resources.cpu.source_method = "inferred"
+        resources["cpu"] = 4
     elif any(tool in content for tool in ["samtools", "bcftools", "bedtools", "awk", "sed", "grep"]):
-        resources.cpu.value = 1
-        resources.cpu.source_method = "inferred"
+        resources["cpu"] = 1
     elif any(tool in content for tool in ["gatk", "freebayes", "mutect", "varscan"]):
-        resources.cpu.value = 2
-        resources.cpu.source_method = "inferred"
+        resources["cpu"] = 2
     elif any(tool in content for tool in ["fastqc", "multiqc", "qualimap"]):
-        resources.cpu.value = 1
-        resources.cpu.source_method = "inferred"
+        resources["cpu"] = 1
     elif any(tool in content for tool in ["rscript", "python", "perl", "bash"]):
-        resources.cpu.value = 1
-        resources.cpu.source_method = "inferred"
+        resources["cpu"] = 1
     else:
-        resources.cpu.value = 1
-        resources.cpu.source_method = "inferred"
+        resources["cpu"] = 1
+    
     # Infer memory requirements
-    if any(tool in content for tool in ["gatk", "freebayes", "mutect", "varscan"]):
-        resources.mem_mb.value = 8192
-        resources.mem_mb.source_method = "inferred"
-    elif any(tool in content for tool in ["star", "hisat2", "salmon", "kallisto"]):
-        resources.mem_mb.value = 4096
-        resources.mem_mb.source_method = "inferred"
-    elif any(tool in content for tool in ["bwa", "bowtie", "samtools", "bcftools"]):
-        resources.mem_mb.value = 2048
-        resources.mem_mb.source_method = "inferred"
+    if any(tool in content for tool in ["bwa", "bowtie", "star", "hisat2"]):
+        resources["mem_mb"] = 4096  # 4GB for alignment tools
+    elif any(tool in content for tool in ["gatk", "freebayes", "mutect", "varscan"]):
+        resources["mem_mb"] = 8192  # 8GB for variant calling
+    elif any(tool in content for tool in ["samtools", "bcftools", "bedtools"]):
+        resources["mem_mb"] = 2048  # 2GB for sequence manipulation
     elif any(tool in content for tool in ["fastqc", "multiqc", "qualimap"]):
-        resources.mem_mb.value = 1024
-        resources.mem_mb.source_method = "inferred"
+        resources["mem_mb"] = 1024  # 1GB for quality control
+    elif any(tool in content for tool in ["rscript", "python", "perl"]):
+        resources["mem_mb"] = 1024  # 1GB for scripting
+    else:
+        resources["mem_mb"] = 1024  # Default 1GB
+    
     # Infer disk requirements
-    if any(ext in content for ext in [".bam", ".sam", ".vcf", ".fastq", ".fq"]):
-        resources.disk_mb.value = 4096
-        resources.disk_mb.source_method = "inferred"
-    elif any(ext in content for ext in [".txt", ".csv", ".tsv", ".json", ".yaml"]):
-        resources.disk_mb.value = 1024
-        resources.disk_mb.source_method = "inferred"
+    if any(tool in content for tool in ["bwa", "bowtie", "star", "hisat2", "samtools", "bcftools"]):
+        resources["disk_mb"] = 8192  # 8GB for sequence data
+    elif any(tool in content for tool in ["gatk", "freebayes", "mutect", "varscan"]):
+        resources["disk_mb"] = 4096  # 4GB for variant data
+    else:
+        resources["disk_mb"] = 2048  # Default 2GB
+    
     # Infer GPU requirements
-    if any(tool in content for tool in ["gpu", "cuda", "tensorflow", "pytorch", "nvidia"]):
-        resources.gpu.value = 1
-        resources.gpu.source_method = "inferred"
-        resources.gpu_mem_mb.value = 4096
-        resources.gpu_mem_mb.source_method = "inferred"
-    # Set default threads if not specified
-    if resources.threads.value is None:
-        resources.threads.value = 1
-        resources.threads.source_method = "inferred"
+    if any(tool in content for tool in ["cuda", "gpu", "tensorflow", "pytorch", "nvidia"]):
+        resources["gpu"] = 1
+        resources["gpu_mem_mb"] = 4096  # 4GB GPU memory
+    
+    # Infer time requirements
+    if any(tool in content for tool in ["bwa", "bowtie", "star", "hisat2"]):
+        resources["time_s"] = 7200  # 2 hours for alignment
+    elif any(tool in content for tool in ["gatk", "freebayes", "mutect", "varscan"]):
+        resources["time_s"] = 3600  # 1 hour for variant calling
+    else:
+        resources["time_s"] = 1800  # Default 30 minutes
+    
     return resources
 
 
-def apply_resource_profile(resources, profile):
-    """Apply a resource profile to existing resources, filling in missing values."""
-    if isinstance(profile, str):
-        if profile not in DEFAULT_PROFILES:
-            raise ValueError(f"Unknown resource profile: {profile}. Available: {list(DEFAULT_PROFILES.keys())}")
-        profile = DEFAULT_PROFILES[profile]
-    # For each field, fill missing value and set source_method
-    def fill(field, profile_field):
-        if field.value is None and profile_field.value is not None:
-            field.value = profile_field.value
-            field.source_method = "template"
-        return field
-    result = ResourceSpec(
-        cpu=fill(resources.cpu, profile.resources.cpu),
-        mem_mb=fill(resources.mem_mb, profile.resources.mem_mb),
-        disk_mb=fill(resources.disk_mb, profile.resources.disk_mb),
-        gpu=fill(resources.gpu, profile.resources.gpu),
-        gpu_mem_mb=fill(resources.gpu_mem_mb, profile.resources.gpu_mem_mb),
-        time_s=fill(resources.time_s, profile.resources.time_s),
-        threads=fill(resources.threads, profile.resources.threads),
-        extra=getattr(resources, 'extra', {}).copy() if hasattr(resources, 'extra') else {}
-    )
-    return result
+def apply_resource_profile(task: Task, profile: ResourceProfile) -> Task:
+    """Apply a resource profile to a task."""
+    def fill(field_name: str, profile_value: Optional[int]):
+        if profile_value is not None:
+            current_value = getattr(task, field_name, None)
+            if current_value is None or not hasattr(current_value, 'get_value_with_default'):
+                # Create new EnvironmentSpecificValue if needed
+                env_value = EnvironmentSpecificValue(profile_value, [profile.environment])
+                setattr(task, field_name, env_value)
+            else:
+                # Add to existing EnvironmentSpecificValue
+                current_value.set_for_environment(profile_value, profile.environment)
+    
+    fill("cpu", profile.cpu)
+    fill("mem_mb", profile.mem_mb)
+    fill("disk_mb", profile.disk_mb)
+    fill("gpu", profile.gpu)
+    fill("gpu_mem_mb", profile.gpu_mem_mb)
+    fill("time_s", profile.time_s)
+    
+    return task
 
 
-def validate_resources(resources: ResourceSpec, target_environment: str = "cluster") -> List[str]:
-    """Validate resource specifications and return warnings/errors."""
+def validate_resources(task: Task, target_environment: str = "cluster") -> List[str]:
+    """Validate resource specifications for a task."""
     issues = []
     
-    # Check for missing critical resources
-    if resources.cpu.value is None:
-        issues.append("Missing CPU specification")
-    elif resources.cpu.value < 1:
-        issues.append("CPU must be at least 1")
-    elif resources.cpu.value > 64:
-        issues.append("CPU count seems unusually high (>64)")
+    # Get resource values for the target environment
+    cpu = task.cpu.get_value_with_default(target_environment) if task.cpu else None
+    mem_mb = task.mem_mb.get_value_with_default(target_environment) if task.mem_mb else None
+    disk_mb = task.disk_mb.get_value_with_default(target_environment) if task.disk_mb else None
+    gpu = task.gpu.get_value_with_default(target_environment) if task.gpu else None
+    gpu_mem_mb = task.gpu_mem_mb.get_value_with_default(target_environment) if task.gpu_mem_mb else None
     
-    if resources.mem_mb.value is None:
-        issues.append("Missing memory specification")
-    elif resources.mem_mb.value < 128:
-        issues.append("Memory specification seems too low (<128MB)")
-    elif resources.mem_mb.value > 1024 * 1024:  # 1TB
-        issues.append("Memory specification seems unusually high (>1TB)")
+    # Check for missing CPU
+    if cpu is None or cpu <= 0:
+        issues.append("CPU specification is missing or invalid")
     
-    if resources.disk_mb.value is None:
-        issues.append("Missing disk specification")
-    elif resources.disk_mb.value < 256:
-        issues.append("Disk specification seems too low (<256MB)")
-    elif resources.disk_mb.value > 1024 * 1024 * 100:  # 100TB
-        issues.append("Disk specification seems unusually high (>100TB)")
+    # Check for missing memory
+    if mem_mb is None or mem_mb <= 0:
+        issues.append("Memory specification is missing or invalid")
     
-    # Note: Time is not typically a resource specification in workflow engines
-    # It's usually handled by the scheduler or execution environment
-    # So we don't validate time_s here
+    # Check for excessive CPU
+    if cpu and cpu > 64:
+        issues.append(f"CPU requirement ({cpu}) is excessive for {target_environment}")
     
-    # Environment-specific validations
-    if target_environment == "cluster":
-        if resources.cpu.value and resources.cpu.value > 32:
-            issues.append("High CPU count may exceed cluster limits")
-        if resources.mem_mb.value and resources.mem_mb.value > 1024 * 64:  # 64GB
-            issues.append("High memory requirement may exceed cluster limits")
+    # Check for excessive memory
+    if mem_mb and mem_mb > 131072:  # 128GB
+        issues.append(f"Memory requirement ({mem_mb}MB) is excessive for {target_environment}")
     
-    elif target_environment == "cloud":
-        if resources.gpu.value and resources.gpu.value > 8:
-            issues.append("High GPU count may exceed cloud instance limits")
+    # Check for excessive disk
+    if disk_mb and disk_mb > 1048576:  # 1TB
+        issues.append(f"Disk requirement ({disk_mb}MB) is excessive for {target_environment}")
     
-    elif target_environment == "shared":
-        if resources.cpu.value and resources.cpu.value > 8:
-            issues.append("High CPU count may impact shared system performance")
-        if resources.mem_mb.value and resources.mem_mb.value > 1024 * 16:  # 16GB
-            issues.append("High memory requirement may impact shared system performance")
+    # Check GPU requirements
+    if gpu and gpu > 8:
+        issues.append(f"GPU requirement ({gpu}) is excessive")
+    
+    if gpu_mem_mb and gpu_mem_mb > 32768:  # 32GB
+        issues.append(f"GPU memory requirement ({gpu_mem_mb}MB) is excessive")
+    
+    # Environment-specific checks
+    if target_environment in ["shared", "shared_filesystem"]:
+        if cpu and cpu > 4:
+            issues.append("CPU requirement too high for shared filesystem environment")
+        if mem_mb and mem_mb > 8192:  # 8GB
+            issues.append("Memory requirement too high for shared filesystem environment")
+    
+    elif target_environment == "cluster":
+        if cpu and cpu > 32:
+            issues.append("CPU requirement too high for cluster environment")
+        if mem_mb and mem_mb > 65536:  # 64GB
+            issues.append("Memory requirement too high for cluster environment")
     
     return issues
 
 
-def suggest_resource_profile(resources: ResourceSpec, target_environment: str = "cluster") -> str:
-    """Suggest an appropriate resource profile based on current resources and target environment."""
-    if resources.gpu.value and resources.gpu.value > 0:
+def suggest_resource_profile(task: Task, target_environment: str = "cluster") -> str:
+    """Suggest a resource profile based on task requirements."""
+    # Get current resource values
+    cpu = task.cpu.get_value_with_default(target_environment) if task.cpu else 1
+    mem_mb = task.mem_mb.get_value_with_default(target_environment) if task.mem_mb else 1024
+    gpu = task.gpu.get_value_with_default(target_environment) if task.gpu else 0
+    
+    # Suggest based on requirements
+    if gpu > 0:
         return "gpu"
-    
-    if resources.mem_mb.value and resources.mem_mb.value > 16384:  # 16GB
+    elif mem_mb > 32768:  # 32GB
         return "memory_intensive"
-    
-    if resources.disk_mb.value and resources.disk_mb.value > 32768:  # 32GB
+    elif task.disk_mb and task.disk_mb.get_value_with_default(target_environment) > 65536:  # 64GB
         return "io_intensive"
-    
-    # Default based on environment
-    return target_environment
+    elif cpu > 8:
+        return "hpc"
+    elif target_environment == "cloud":
+        return "cloud"
+    elif target_environment == "cluster":
+        return "cluster"
+    else:
+        return "shared"
 
 
 def load_custom_profile(profile_path: Union[str, Path]) -> ResourceProfile:
-    """Load a custom resource profile from a YAML file."""
-    try:
-        import yaml
-    except ImportError:
-        raise ImportError("PyYAML is required to load custom resource profiles")
+    """Load a custom resource profile from file."""
+    import json
     
     profile_path = Path(profile_path)
     if not profile_path.exists():
-        raise FileNotFoundError(f"Resource profile not found: {profile_path}")
+        raise FileNotFoundError(f"Profile file not found: {profile_path}")
     
     with open(profile_path, 'r') as f:
-        data = yaml.safe_load(f)
+        data = json.load(f)
     
-    # Handle both old ResourceSpec format and new ResourceProfile format
-    if "resources" in data:
-        # New format with metadata
-        resources_data = data.pop("resources", {})
-        resources = ResourceSpec(**resources_data)
-        return ResourceProfile(resources=resources, **data)
-    else:
-        # Old format - assume it's just resource data
-        resources = ResourceSpec(**data)
         return ResourceProfile(
-            name="custom",
-            description="Custom profile",
-            resources=resources
+        name=data.get("name", "custom"),
+        description=data.get("description", "Custom resource profile"),
+        environment=data.get("environment", "shared"),
+        priority=data.get("priority", "normal"),
+        cpu=data.get("cpu", 1),
+        mem_mb=data.get("mem_mb", 1024),
+        disk_mb=data.get("disk_mb", 2048),
+        gpu=data.get("gpu"),
+        gpu_mem_mb=data.get("gpu_mem_mb"),
+        time_s=data.get("time_s")
         )
 
 
 def save_custom_profile(profile: ResourceProfile, profile_path: Union[str, Path]) -> None:
-    """Save a custom resource profile to a YAML file."""
-    try:
-        import yaml
-    except ImportError:
-        raise ImportError("PyYAML is required to save custom resource profiles")
+    """Save a custom resource profile to file."""
+    import json
     
     profile_path = Path(profile_path)
     profile_path.parent.mkdir(parents=True, exist_ok=True)
     
-    # Convert to dict for YAML serialization
     data = {
         "name": profile.name,
         "description": profile.description,
         "environment": profile.environment,
         "priority": profile.priority,
-        "resources": {
-            "cpu": profile.resources.cpu,
-            "mem_mb": profile.resources.mem_mb,
-            "disk_mb": profile.resources.disk_mb,
-            "gpu": profile.resources.gpu,
-            "gpu_mem_mb": profile.resources.gpu_mem_mb,
-            "time_s": profile.resources.time_s,
-            "threads": profile.resources.threads,
-            "extra": profile.resources.extra
-        }
+        "cpu": profile.cpu,
+        "mem_mb": profile.mem_mb,
+        "disk_mb": profile.disk_mb,
     }
     
+    if profile.gpu is not None:
+        data["gpu"] = profile.gpu
+    if profile.gpu_mem_mb is not None:
+        data["gpu_mem_mb"] = profile.gpu_mem_mb
+    if profile.time_s is not None:
+        data["time_s"] = profile.time_s
+    
     with open(profile_path, 'w') as f:
-        yaml.dump(data, f, default_flow_style=False, indent=2)
+        json.dump(data, f, indent=2)
 
 
 def get_available_profiles() -> Dict[str, ResourceProfile]:
@@ -389,18 +406,25 @@ def get_available_profiles() -> Dict[str, ResourceProfile]:
     return DEFAULT_PROFILES.copy()
 
 
-def create_profile_from_existing(resources, name, description):
-    """Create a new resource profile from existing ResourceSpec."""
+def create_profile_from_existing(task: Task, name: str, description: str, environment: str = "shared_filesystem") -> ResourceProfile:
+    """Create a resource profile from an existing task for a specific environment."""
+    # Get values from the task for the specified environment
+    cpu = task.cpu.get_value_with_default(environment) if task.cpu else None
+    mem_mb = task.mem_mb.get_value_with_default(environment) if task.mem_mb else None
+    disk_mb = task.disk_mb.get_value_with_default(environment) if task.disk_mb else None
+    gpu = task.gpu.get_value_with_default(environment) if task.gpu else None
+    gpu_mem_mb = task.gpu_mem_mb.get_value_with_default(environment) if task.gpu_mem_mb else None
+    time_s = task.time_s.get_value_with_default(environment) if task.time_s else None
+    
     return ResourceProfile(
         name=name,
         description=description,
-        resources=ResourceSpec(
-            cpu=resources.cpu,
-            mem_mb=resources.mem_mb,
-            disk_mb=resources.disk_mb,
-            gpu=resources.gpu,
-            gpu_mem_mb=resources.gpu_mem_mb,
-            time_s=resources.time_s,
-            threads=resources.threads
-        )
+        environment=environment,
+        priority="normal",
+        cpu=cpu or 1,
+        mem_mb=mem_mb or 1024,
+        disk_mb=disk_mb or 2048,
+        gpu=gpu,
+        gpu_mem_mb=gpu_mem_mb,
+        time_s=time_s
     ) 

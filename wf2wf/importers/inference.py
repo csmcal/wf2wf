@@ -509,7 +509,7 @@ def _infer_error_handling(task: Task, environment: str, source_format: str):
     # Infer retry count
     if task.retry_count.get_value_for(environment) is None:
         retry_count = _infer_retry_count_from_environment(environment)
-        task.retry_count.set_for_environment(retry_count, environment)
+        task.set_retry_inferred(retry_count, environment)
     
     # Infer retry delay
     if task.retry_delay.get_value_for(environment) is None:

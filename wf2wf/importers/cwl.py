@@ -37,7 +37,7 @@ from wf2wf.core import (
 from wf2wf.importers.base import BaseImporter
 from wf2wf.importers.loss_integration import detect_and_apply_loss_sidecar
 from wf2wf.importers.inference import infer_environment_specific_values, infer_execution_model
-from wf2wf.importers.interactive import prompt_for_missing_information
+from wf2wf.interactive import prompt_for_missing_information
 from wf2wf.importers.resource_processor import process_workflow_resources
 from wf2wf.importers.utils import parse_file_format, normalize_task_id, parse_cwl_type, parse_requirements, parse_cwl_parameters
 
@@ -145,6 +145,16 @@ class CWLImporter(BaseImporter):
             cwl_version=version
         )
         
+        # Extract provenance information from CWL document
+        provenance = self._extract_provenance_from_cwl(parsed_data)
+        if provenance:
+            workflow.provenance = provenance
+        
+        # Extract documentation information from CWL document
+        documentation = self._extract_documentation_from_cwl(parsed_data)
+        if documentation:
+            workflow.documentation = documentation
+        
         # Extract requirements and hints as environment-specific values
         reqs = parse_requirements(parsed_data.get('requirements', []))
         hints = parse_requirements(parsed_data.get('hints', []))
@@ -167,6 +177,11 @@ class CWLImporter(BaseImporter):
                 "cwl_class": parsed_data.get('class')
             }
         )
+
+        # Extract intent if present
+        intent = parsed_data.get('s:intent')
+        if intent:
+            workflow.intent = intent
 
         # Extract and add tasks
         tasks = self._extract_tasks(parsed_data)
@@ -208,6 +223,57 @@ class CWLImporter(BaseImporter):
             logger.info(f"Created workflow: {name} (version {version}) with {len(tasks)} tasks")
         
         return workflow
+
+    def _extract_provenance_from_cwl(self, parsed_data: Dict[str, Any]) -> Optional[ProvenanceSpec]:
+        """Extract provenance information from CWL document."""
+        # Check for structured provenance first
+        if 's:provenance' in parsed_data:
+            prov_data = parsed_data['s:provenance']
+            return ProvenanceSpec(
+                authors=prov_data.get('authors', []),
+                contributors=prov_data.get('contributors', []),
+                created=prov_data.get('created'),
+                modified=prov_data.get('modified'),
+                version=prov_data.get('version'),
+                license=prov_data.get('license'),
+                doi=prov_data.get('doi'),
+                citations=prov_data.get('citations', []),
+                keywords=prov_data.get('keywords', []),
+                derived_from=prov_data.get('derived_from', []),
+                extras=prov_data.get('extras', {})
+            )
+        
+        # Check for simple metadata fields
+        authors = []
+        if 's:author' in parsed_data:
+            authors = [{"name": parsed_data['s:author']}]
+        
+        version = parsed_data.get('s:version')
+        created = parsed_data.get('s:dateCreated')
+        
+        if authors or version or created:
+            return ProvenanceSpec(
+                authors=authors,
+                version=version,
+                created=created
+            )
+        
+        return None
+
+    def _extract_documentation_from_cwl(self, parsed_data: Dict[str, Any]) -> Optional[DocumentationSpec]:
+        """Extract documentation information from CWL document."""
+        description = parsed_data.get('s:description')
+        label = parsed_data.get('s:label')
+        doc = parsed_data.get('s:documentation')
+        
+        if description or label or doc:
+            return DocumentationSpec(
+                description=description,
+                label=label,
+                doc=doc
+            )
+        
+        return None
 
     def _enhance_cwl_specific_features(self, workflow: Workflow, parsed_data: Dict[str, Any]):
         """Placeholder for future CWL-specific enhancements (format-specific logic only)."""
@@ -290,6 +356,20 @@ class CWLImporter(BaseImporter):
             label=label,
             doc=doc
         )
+        
+        # Extract task-level metadata from CWL document
+        provenance = self._extract_provenance_from_cwl(tool_data)
+        if provenance:
+            task.provenance = provenance
+        
+        documentation = self._extract_documentation_from_cwl(tool_data)
+        if documentation:
+            task.documentation = documentation
+        
+        # Extract intent if present
+        intent = tool_data.get('s:intent')
+        if intent:
+            task.intent = intent
         
         # Extract command
         base_command = tool_data.get('baseCommand', [])

@@ -344,72 +344,23 @@ class DAGManExporter(BaseExporter):
         self._record_loss_if_present_for_target(task, "file_transfer_mode", "File transfer modes not supported in DAGMan")
         self._record_loss_if_present_for_target(task, "staging_required", "Staging requirements not supported in DAGMan")
         self._record_loss_if_present_for_target(task, "cleanup_after", "Cleanup policies not supported in DAGMan")
-        
+            
         # Queue
         submit_lines.append("queue")
         
         return submit_lines
-
-
-# Legacy function for backward compatibility
-def from_workflow(
-    wf: Workflow,
-    out_file: Union[str, Path],
-    *,
-    workdir: Union[str, Path, None] = None,
-    scripts_dir: Union[str, Path, None] = None,
-    default_memory: str = "2GB",
-    default_disk: str = "2GB",
-    default_cpus: int = 1,
-    inline_submit: bool = False,
-    verbose: bool = False,
-    debug: bool = False,
-    **opts: Any,
-) -> None:
-    """Serialise *wf* into HTCondor DAGMan files (legacy function)."""
-    exporter = DAGManExporter(
-        interactive=opts.get("interactive", False),
-        verbose=verbose
-    )
-    # Pass all options including inline_submit
-    export_opts = {
-        "workdir": workdir,
-        "scripts_dir": scripts_dir,
-        "default_memory": default_memory,
-        "default_disk": default_disk,
-        "default_cpus": default_cpus,
-        "inline_submit": inline_submit,
-        "debug": debug,
-        **opts
-    }
-    exporter.export_workflow(wf, out_file, **export_opts)
-
-
-# Legacy helper functions for backward compatibility (deprecated)
-def _sanitize_condor_job_name(*args, **kwargs):
-    """Legacy function - use DAGManExporter._sanitize_name instead."""
-    raise DeprecationWarning("Use DAGManExporter._sanitize_name instead")
-
-def _write_task_wrapper_script(*args, **kwargs):
-    """Legacy function - use DAGManExporter._write_task_wrapper_script instead."""
-    raise DeprecationWarning("Use DAGManExporter._write_task_wrapper_script instead")
-
-def _write_dag_file(*args, **kwargs):
-    """Legacy function - use DAGManExporter._write_dag_file instead."""
-    raise DeprecationWarning("Use DAGManExporter._write_dag_file instead")
-
-def _write_submit_file(*args, **kwargs):
-    """Legacy function - use DAGManExporter._write_submit_file instead."""
-    raise DeprecationWarning("Use DAGManExporter._write_submit_file instead")
-
-def _parse_memory_string(*args, **kwargs):
-    """Legacy function - use DAGManExporter._parse_memory_string instead."""
-    raise DeprecationWarning("Use DAGManExporter._parse_memory_string instead")
-
-def _generate_submit_content(*args, **kwargs):
-    """Legacy function - use DAGManExporter._generate_submit_content instead."""
-    raise DeprecationWarning("Use DAGManExporter._generate_submit_content instead")
-
+    
+    
 # Remove unused legacy functions
 # prepare_conda_setup_jobs, build_and_push_docker_images, convert_docker_to_apptainer,
 # generate_job_scripts, write_condor_dag - these are not used by the main exporter
+
+
+def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any) -> None:
+    """Export a Workflow IR to DAGMan format (public API)."""
+    exporter = DAGManExporter(
+        interactive=opts.get("interactive", False),
+        verbose=opts.get("verbose", False),
+        target_environment=opts.get("target_environment", "distributed_computing")
+    )
+    exporter._generate_output(wf, Path(out_file), **opts)

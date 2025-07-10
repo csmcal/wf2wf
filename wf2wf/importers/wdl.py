@@ -52,7 +52,7 @@ from wf2wf.core import (
 from wf2wf.importers.base import BaseImporter
 from wf2wf.importers.loss_integration import detect_and_apply_loss_sidecar
 from wf2wf.importers.inference import infer_environment_specific_values, infer_execution_model
-from wf2wf.importers.interactive import prompt_for_missing_information
+from wf2wf.interactive import prompt_for_missing_information
 from wf2wf.importers.resource_processor import process_workflow_resources
 from wf2wf.importers.utils import (
     extract_balanced_braces, 

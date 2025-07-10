@@ -39,7 +39,7 @@ from wf2wf.core import Workflow, Task, EnvironmentSpecificValue, ParameterSpec, 
 from wf2wf.importers.base import BaseImporter
 from wf2wf.importers.loss_integration import detect_and_apply_loss_sidecar
 from wf2wf.importers.inference import infer_environment_specific_values, infer_execution_model
-from wf2wf.importers.interactive import prompt_for_missing_information, prompt_for_execution_model_confirmation
+from wf2wf.interactive import prompt_for_missing_information, prompt_for_execution_model_confirmation
 from wf2wf.workflow_analysis import detect_execution_model_from_content, create_execution_model_spec
 
 # Configure logger for this module
@@ -73,6 +73,19 @@ class SnakemakeImporter(BaseImporter):
         )
         # Extract and add tasks
         tasks = self._extract_tasks(parsed_data)
+        
+        # Check for empty workflow
+        # Consider workflow empty if:
+        # 1. No tasks were extracted, OR
+        # 2. DAG output is empty and there are no jobs (no target rules)
+        dag_output = parsed_data.get("dag_output", "")
+        jobs = parsed_data.get("jobs", {})
+        is_empty_dag = not dag_output.strip() or dag_output.strip() == "digraph snakemake_dag {}"
+        has_no_jobs = not jobs or (isinstance(jobs, list) and len(jobs) == 0) or (isinstance(jobs, dict) and len(jobs) == 0)
+        
+        if not tasks or (is_empty_dag and has_no_jobs):
+            raise RuntimeError("No jobs found")
+            
         for task in tasks:
             wf.add_task(task)
         # Build a mapping from rule name/job label to task ID
@@ -210,6 +223,11 @@ class SnakemakeImporter(BaseImporter):
         verbose = self.verbose
         debug = opts.get("debug", False)
 
+        # Check if snakemake executable is available (unless parse_only mode)
+        if not parse_only:
+            if not shutil.which("snakemake"):
+                raise ImportError("snakemake executable not found in PATH")
+
         if verbose:
             logger.info(f"Step 1: Parsing Snakefile: {path}")
 
@@ -294,7 +312,7 @@ class SnakemakeImporter(BaseImporter):
                 logger.warning(f"`snakemake --dag` failed: {e}")
                 logger.warning(f"STDOUT: {e.stdout}")
                 logger.warning(f"STDERR: {e.stderr}")
-            return ""
+            raise RuntimeError(f"snakemake --dag failed: {e}")
     
     def _run_snakemake_dryrun(self, path: Path, workdir: Path, configfile: str, cores: int, snakemake_args: List[str], verbose: bool) -> str:
         """Run snakemake --dry-run to get job details."""

@@ -808,6 +808,9 @@ class Task:
     max_runtime: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(None))
     checkpoint_interval: EnvironmentSpecificValue[int] = field(default_factory=lambda: EnvironmentSpecificValue(None))
 
+    # Track whether retry settings were explicitly set by user (vs. inferred)
+    _explicit_retry_settings: Set[str] = field(default_factory=set, init=False, repr=False, compare=False)  # Set of environments where retries were explicitly set
+
     # Failure handling (environment-specific)
     on_failure: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue("stop"))
     failure_notification: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue(None))
@@ -909,6 +912,29 @@ class Task:
                 field_value.add_environment(environment)
         elif field_name in self.extra:
             self.extra[field_name].add_environment(environment)
+
+    def set_retry_explicitly(self, retry_count: int, environment: str):
+        """Set retry count explicitly (user-specified, not inferred)."""
+        self.retry_count.set_for_environment(retry_count, environment)
+        self._explicit_retry_settings.add(environment)
+    
+    def set_retry_inferred(self, retry_count: int, environment: str):
+        """Set retry count as inferred (system-specified, not user-specified)."""
+        self.retry_count.set_for_environment(retry_count, environment)
+        # Don't add to explicit settings
+    
+    def has_explicit_retry_for_environment(self, environment: str) -> bool:
+        """Check if retry settings were explicitly set for the given environment."""
+        return environment in self._explicit_retry_settings
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert task to dictionary for JSON serialization, excluding internal fields."""
+        result = {}
+        for field_name, field_value in self.__dict__.items():
+            if field_name.startswith('_'):
+                continue  # Skip internal fields
+            result[field_name] = field_value
+        return result
 
     # ------------------------------------------------------------------
     # Runtime helpers (non-persistent)
@@ -1070,7 +1096,14 @@ class Workflow:
 
     def to_dict(self) -> Dict[str, Any]:
         """Return a plain-Python representation ready for JSON/TOML dump."""
-        return asdict(self)
+        result = asdict(self)
+        
+        # Remove _explicit_retry_settings from all tasks to avoid JSON schema validation issues
+        for task_id, task_data in result.get('tasks', {}).items():
+            if '_explicit_retry_settings' in task_data:
+                del task_data['_explicit_retry_settings']
+        
+        return result
 
     def to_json(self, *, indent: int = 2) -> str:
         """Return JSON representation using custom encoder."""
@@ -1172,6 +1205,10 @@ class Workflow:
         for field_name, field_value in data.items():
             if isinstance(field_value, dict) and "values" in field_value:
                 data[field_name] = WF2WFJSONDecoder.decode_environment_specific_value(field_value)
+
+        # Handle metadata field specially
+        if "metadata" in data and isinstance(data["metadata"], dict):
+            data["metadata"] = MetadataSpec(**data["metadata"])
 
         loss_map = data.pop("loss_map", [])
         return cls(tasks=tasks, edges=edges, loss_map=loss_map, **data)
@@ -1275,8 +1312,7 @@ class EnvironmentAdapter:
         # Apply default error handling if needed
         if env_config.default_error_handling:
             if task.retry_count.value is None:
-                task.retry_count.value = 2
-                task.retry_count.add_environment(env)
+                task.set_retry_inferred(2, env)
         
         # Apply default environment isolation if needed
         if env_config.default_environment_isolation:

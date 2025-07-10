@@ -1,10 +1,19 @@
-"""Pytest configuration and shared fixtures for wf2wf tests."""
+"""
+Pytest configuration and shared fixtures for wf2wf tests.
 
+This module provides common fixtures and configuration for all tests,
+including test data, mock objects, and utility functions.
+"""
+
+import os
 import pytest
 import tempfile
 import shutil
-import os
 from pathlib import Path
+from typing import List, Dict, Any
+from unittest.mock import patch, MagicMock
+from wf2wf.core import Workflow, Task, EnvironmentSpecificValue
+from wf2wf.interactive import get_prompter, set_test_responses, clear_test_responses
 
 
 @pytest.fixture(scope="session")
@@ -57,6 +66,35 @@ def temp_output_dir():
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
+@pytest.fixture
+def temp_dir():
+    """Create a temporary directory for test files."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yield Path(tmpdir)
+
+@pytest.fixture
+def sample_workflow():
+    """Create a sample workflow for testing."""
+    workflow = Workflow(name="test_workflow")
+    
+    # Add sample tasks
+    task1 = Task(id="task1")
+    task1.cpu.set_for_environment(2, "shared_filesystem")
+    task1.mem_mb.set_for_environment(4096, "shared_filesystem")
+    task1.command.set_for_environment("echo 'hello'", "shared_filesystem")
+    
+    task2 = Task(id="task2")
+    task2.cpu.set_for_environment(4, "shared_filesystem")
+    task2.mem_mb.set_for_environment(8192, "shared_filesystem")
+    task2.command.set_for_environment("echo 'world'", "shared_filesystem")
+    
+    workflow.tasks["task1"] = task1
+    workflow.tasks["task2"] = task2
+    
+    # Add dependency
+    workflow.add_edge("task1", "task2")
+    
+    return workflow
 
 @pytest.fixture
 def persistent_test_output(test_output_dir, request):
@@ -76,6 +114,149 @@ def persistent_test_output(test_output_dir, request):
 
     return test_dir
 
+@pytest.fixture
+def mock_environment_manager():
+    """Create a mock environment manager."""
+    mock = MagicMock()
+    mock.detect_and_parse_environments.return_value = {
+        'environment_metadata': {},
+        'environment_warnings': []
+    }
+    mock.infer_missing_environments.return_value = None
+    mock.prompt_for_missing_environments.return_value = None
+    mock.build_environment_images.return_value = {
+        'built_images': [],
+        'failed_builds': []
+    }
+    return mock
+
+
+@pytest.fixture
+def interactive_responses(monkeypatch):
+    """
+    Fixture to provide specific test responses for interactive prompts.
+    
+    This monkeypatches the actual input() and click.prompt() functions
+    to return predefined responses, allowing us to test the full interactive flow.
+    
+    Usage:
+        def test_something(interactive_responses):
+            interactive_responses.set_responses([
+                "4",  # CPU cores
+                "8192",  # Memory
+                "y"  # Add GPU requirements
+            ])
+    """
+    responses = []
+    response_index = [0]  # Use list to make it mutable in nested functions
+    
+    def mock_input(prompt=""):
+        """Mock input() function that returns predefined responses."""
+        if response_index[0] < len(responses):
+            response = responses[response_index[0]]
+            response_index[0] += 1
+            return response
+        return ""  # Default empty response
+    
+    def mock_click_prompt(message, default=None, show_default=True, **kwargs):
+        """Mock click.prompt() function that returns predefined responses."""
+        if response_index[0] < len(responses):
+            response = responses[response_index[0]]
+            response_index[0] += 1
+            return response
+        return default or ""
+    
+    def set_responses(new_responses):
+        """Set the responses that will be returned by input() and click.prompt()."""
+        nonlocal responses
+        responses = new_responses
+        response_index[0] = 0  # Reset index
+    
+    def get_responses():
+        """Get the current responses."""
+        return responses.copy()
+    
+    # Monkey patch the input function
+    monkeypatch.setattr("builtins.input", mock_input)
+    
+    # Monkey patch click.prompt if click is available
+    try:
+        import click
+        monkeypatch.setattr("click.prompt", mock_click_prompt)
+    except ImportError:
+        pass  # Click not available, will use input() fallback
+    
+    # Create a simple object with the methods
+    class InteractiveResponses:
+        def set_responses(self, new_responses):
+            set_responses(new_responses)
+        
+        def get_responses(self):
+            return get_responses()
+        
+        @property
+        def responses(self):
+            return responses
+    
+    return InteractiveResponses()
+
+@pytest.fixture
+def default_interactive_responses(monkeypatch):
+    """
+    Fixture that provides sensible default responses for most interactive prompts.
+    Use this when you want to test the happy path without specific edge cases.
+    """
+    responses = [
+        "1",      # CPU cores
+        "4096",   # Memory (MB)
+        "4096",   # Disk space (MB)
+        "1",      # Threads
+        "2",      # Retry count
+        "60",     # Retry delay
+        "default-runtime:latest",  # Container image
+        "environment.yml",  # Conda environment file
+        "conda",  # Environment type
+        "python=3.9",  # Conda environment specification
+        "biocontainers/default:latest",  # Container specification
+        "echo 'test'",  # Command
+        "test.sh",  # Script
+        "1",  # Choice
+        "n",  # Would you like to add GPU requirements?
+        "n",  # Would you like to add memory requirements?
+        "n",  # Would you like to add publish directory?
+        "n",  # Would you like to add input specifications?
+        "n",  # Would you like to add output specifications?
+        "default",  # Generic value
+        "1",  # Generic choice
+    ]
+    
+    response_index = [0]
+    
+    def mock_input(prompt=""):
+        if response_index[0] < len(responses):
+            response = responses[response_index[0]]
+            response_index[0] += 1
+            return response
+        return ""
+    
+    def mock_click_prompt(message, default=None, show_default=True, **kwargs):
+        if response_index[0] < len(responses):
+            response = responses[response_index[0]]
+            response_index[0] += 1
+            return response
+        return default or ""
+    
+    # Monkey patch the input function
+    monkeypatch.setattr("builtins.input", mock_input)
+    
+    # Monkey patch click.prompt if click is available
+    try:
+        import click
+        monkeypatch.setattr("click.prompt", mock_click_prompt)
+    except ImportError:
+        pass
+    
+    return responses
 
 @pytest.fixture(autouse=True)
 def ensure_clean_test_env(monkeypatch, tmp_path, project_root):

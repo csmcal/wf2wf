@@ -886,6 +886,10 @@ def parse_cwl_type(type_spec):
 def parse_requirements(requirements):
     """Parse CWL requirements and hints into RequirementSpec objects."""
     from wf2wf.core import RequirementSpec
+    
+    if requirements is None:
+        requirements = []
+    
     logger.debug(f"Parsing {len(requirements)} requirements/hints")
     parsed_requirements = []
     for req in requirements:

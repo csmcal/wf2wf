@@ -26,9 +26,9 @@ def check_dependency(package_name):
 
 
 def main():
-    """Run the snake2dagman test suite."""
+    """Run the wf2wf test suite."""
     print("=" * 60)
-    print("Running snake2dagman Test Suite")
+    print("Running wf2wf Test Suite")
     print("=" * 60)
 
     # Get the project root directory (where this script is located)
@@ -36,12 +36,12 @@ def main():
 
     # --- Dependency Check ---
     print("\n1. Checking dependencies...")
-    dependencies = ["pytest", "snakemake"]
+    dependencies = ["pytest"]
     all_deps_installed = all(check_dependency(dep) for dep in dependencies)
 
     if not all_deps_installed:
         print("\nPlease install the missing testing dependencies:")
-        print("   pip install pytest snakemake")
+        print("   pip install pytest")
         sys.exit(1)
 
     # --- Running Pytest ---

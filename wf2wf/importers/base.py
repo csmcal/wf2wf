@@ -14,12 +14,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from wf2wf.core import Workflow, Task, Edge
+from wf2wf.environ import EnvironmentManager
+from wf2wf.interactive import get_prompter
 from wf2wf.importers.loss_integration import detect_and_apply_loss_sidecar, create_loss_sidecar_summary
 from wf2wf.importers.inference import infer_environment_specific_values, infer_execution_model
-from wf2wf.importers.interactive import prompt_for_missing_information
-from wf2wf.environ import EnvironmentManager
 from wf2wf.workflow_analysis import detect_execution_model_from_content, create_execution_model_spec
 from wf2wf.importers.inference import infer_condor_attributes
+from wf2wf.importers.resource_processor import process_workflow_resources
+from wf2wf.interactive import get_prompter
+from wf2wf.utils.format_detection import detect_input_format, can_import
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +50,15 @@ class BaseImporter(ABC):
         
         # Initialize environment manager
         self.environment_manager = EnvironmentManager(interactive=interactive, verbose=verbose)
+        
+        # Configure logging
+        if verbose:
+            logging.getLogger(__name__).setLevel(logging.DEBUG)
+        
+        # Initialize interactive prompter
+        self.prompter = get_prompter()
+        self.prompter.interactive = interactive
+        self.prompter.verbose = verbose
         
         # Configure logging
         if verbose:
@@ -99,14 +111,13 @@ class BaseImporter(ABC):
             # Step 6: Interactive prompting if enabled
             if self.interactive:
                 # Enhanced interactive prompting with execution model confirmation
-                from wf2wf.importers.interactive import (
+                from wf2wf.interactive import (
                     prompt_for_missing_information, 
                     prompt_for_execution_model_confirmation,
                     prompt_for_workflow_optimization
                 )
                 
                 # Get content analysis for execution model confirmation
-                from wf2wf.workflow_analysis import detect_execution_model_from_content
                 content_analysis = detect_execution_model_from_content(path, self._get_source_format())
                 
                 # Prompt for execution model confirmation
@@ -135,7 +146,7 @@ class BaseImporter(ABC):
         except Exception as e:
             logger.error(f"Failed to import workflow from {path}: {e}")
             raise ImportError(f"Failed to import workflow from {path}: {e}") from e
-
+    
     def analyze_target_adaptation(self, workflow: Workflow, target_format: str) -> Dict[str, Any]:
         """
         Analyze what adaptations are needed for the target format.
@@ -182,7 +193,7 @@ class BaseImporter(ABC):
         analysis['potential_issues'].extend(env_analysis.get('issues', []))
         
         return analysis
-
+    
     def _analyze_format_specific_requirements(self, workflow: Workflow, target_format: str) -> Dict[str, List[str]]:
         """
         Analyze format-specific requirements for the target format.
@@ -238,7 +249,7 @@ class BaseImporter(ABC):
                     analysis['recommendations'].append(f"Task '{task.id}' should use script instead of command for CWL")
         
         return analysis
-
+    
     def _analyze_resource_requirements(self, workflow: Workflow, target_format: str) -> Dict[str, List[str]]:
         """
         Analyze resource requirements for the target format.
@@ -277,7 +288,7 @@ class BaseImporter(ABC):
                     analysis['issues'].append(f"Task '{task.id}' has very high memory requirement ({mem_value}MB)")
         
         return analysis
-
+    
     def _analyze_environment_requirements(self, workflow: Workflow, target_format: str) -> Dict[str, List[str]]:
         """
         Analyze environment requirements for the target format.
@@ -552,123 +563,6 @@ class BaseImporter(ABC):
                 logger.warning(f"Invalid edge data: {edge_data}")
         
         return edges
-    
-    def _apply_loss_sidecar(self, workflow: Workflow, source_path: Path):
-        """
-        Apply loss side-car if available.
-        
-        This method looks for a loss side-car file next to the source file
-        and applies any loss information to the workflow.
-        
-        Args:
-            workflow: Workflow object to apply loss information to
-            source_path: Path to the source workflow file
-        """
-        loss_path = source_path.with_suffix('.loss.json')
-        
-        if loss_path.exists():
-            if self.verbose:
-                logger.info(f"Found loss side-car: {loss_path}")
-            
-            try:
-                import json
-                loss_data = json.loads(loss_path.read_text())
-                
-                # Apply loss information to workflow
-                self._apply_loss_data(workflow, loss_data)
-                
-                if self.verbose:
-                    logger.info(f"Applied {len(loss_data.get('entries', []))} loss entries")
-                    
-            except Exception as e:
-                logger.warning(f"Failed to apply loss side-car {loss_path}: {e}")
-    
-    def _apply_loss_data(self, workflow: Workflow, loss_data: Dict[str, Any]):
-        """
-        Apply loss data to workflow.
-        
-        This method applies loss information from a loss side-car to the
-        workflow, attempting to restore lost information where possible.
-        
-        Args:
-            workflow: Workflow object to apply loss information to
-            loss_data: Dictionary containing loss information
-        """
-        entries = loss_data.get('entries', [])
-        
-        for entry in entries:
-            try:
-                self._apply_loss_entry(workflow, entry)
-            except Exception as e:
-                logger.warning(f"Failed to apply loss entry {entry}: {e}")
-    
-    def _apply_loss_entry(self, workflow: Workflow, entry: Dict[str, Any]):
-        """
-        Apply a single loss entry to the workflow.
-        
-        This method applies a single loss entry to the workflow, attempting
-        to restore lost information at the specified path.
-        
-        Args:
-            workflow: Workflow object to apply loss information to
-            entry: Dictionary containing loss entry information
-        """
-        json_pointer = entry.get('json_pointer', '')
-        lost_value = entry.get('lost_value')
-        field = entry.get('field')
-        status = entry.get('status', 'lost')
-        
-        if status == 'reapplied':
-            return  # Already applied
-        
-        # Parse JSON pointer to find the target location
-        target = self._resolve_json_pointer(workflow, json_pointer)
-        
-        if target is not None and lost_value is not None:
-            # Try to restore the lost value
-            if hasattr(target, 'set_for_environment'):
-                # Environment-specific field
-                target.set_for_environment(field, lost_value, 'shared_filesystem')
-            elif hasattr(target, field):
-                # Regular field
-                setattr(target, field, lost_value)
-            else:
-                # Try to set in extra dict
-                if hasattr(target, 'extra'):
-                    target.extra[field] = EnvironmentSpecificValue(lost_value, ['shared_filesystem'])
-            
-            # Mark as reapplied
-            entry['status'] = 'reapplied'
-    
-    def _resolve_json_pointer(self, obj: Any, json_pointer: str) -> Any:
-        """
-        Resolve a JSON pointer to find the target object.
-        
-        This method resolves a JSON pointer string to find the target object
-        in the workflow structure.
-        
-        Args:
-            obj: Object to search in (usually the workflow)
-            json_pointer: JSON pointer string (e.g., "/tasks/task1/cpu")
-            
-        Returns:
-            Target object or None if not found
-        """
-        if not json_pointer.startswith('/'):
-            return None
-        
-        parts = json_pointer.split('/')[1:]  # Skip empty first part
-        
-        current = obj
-        for part in parts:
-            if isinstance(current, dict) and part in current:
-                current = current[part]
-            elif hasattr(current, part):
-                current = getattr(current, part)
-            else:
-                return None
-        
-        return current
     
     def _infer_missing_information(self, workflow: Workflow, source_path: Path):
         """
@@ -957,72 +851,6 @@ class BaseImporter(ABC):
         # Default implementation - subclasses should override
         return self.__class__.__name__.lower().replace('importer', '')
     
-    def _prompt_for_missing_information(self, workflow: Workflow, source_path: Path):
-        """
-        Interactive prompting for missing information.
-        
-        This method prompts the user for missing information when interactive
-        mode is enabled.
-        
-        Args:
-            workflow: Workflow object to prompt for
-            source_path: Path to the source workflow file
-        """
-        if not self.interactive:
-            return
-        
-        # This is now handled by the shared interactive module
-        pass
-    
-    def _prompt_for_resource_requirements(self, workflow: Workflow):
-        """
-        Prompt for missing resource requirements.
-        
-        Args:
-            workflow: Workflow object to prompt for
-        """
-        # This is now handled by the shared interactive module
-        pass
-    
-    def _prompt_for_environment_specifications(self, workflow: Workflow):
-        """
-        Prompt for missing environment specifications.
-        
-        Args:
-            workflow: Workflow object to prompt for
-        """
-        # This is now handled by the shared interactive module
-        pass
-    
-    def _prompt_for_error_handling(self, workflow: Workflow):
-        """
-        Prompt for missing error handling.
-        
-        Args:
-            workflow: Workflow object to prompt for
-        """
-        # This is now handled by the shared interactive module
-        pass
-    
-    def _prompt_user(self, message: str, default: str = "") -> str:
-        """
-        Prompt the user for input.
-        
-        Args:
-            message: Message to display to the user
-            default: Default value to use if user just presses Enter
-            
-        Returns:
-            User's response or default value
-        """
-        # This is now handled by the shared interactive module
-        try:
-            response = input(message)
-            return response if response else default
-        except (EOFError, KeyboardInterrupt):
-            # User interrupted, return default
-            return default
-    
     def get_supported_extensions(self) -> List[str]:
         """
         Get list of file extensions supported by this importer.
@@ -1042,4 +870,4 @@ class BaseImporter(ABC):
         Returns:
             True if this importer can import the file
         """
-        return path.suffix.lower() in self.get_supported_extensions() 
+        return can_import(path, self.get_supported_extensions())

@@ -183,6 +183,10 @@ class CWLExporter(BaseExporter):
             "id": wf.name or "workflow",
         }
 
+        # Enable structured provenance when preserve_metadata is True
+        if preserve_metadata:
+            structure_prov = True
+
         # Add enhanced metadata if requested using shared infrastructure
         if preserve_metadata:
             metadata = self._get_workflow_metadata(wf)
@@ -194,6 +198,9 @@ class CWLExporter(BaseExporter):
                 self._add_provenance_to_doc(wf_doc, wf.provenance, structure=structure_prov)
             if wf.documentation:
                 self._add_documentation_to_doc(wf_doc, wf.documentation)
+            # Add intent if present
+            if wf.intent:
+                wf_doc["s:intent"] = wf.intent
 
         # Add inputs
         if wf.inputs:
@@ -213,12 +220,39 @@ class CWLExporter(BaseExporter):
         requirements = self._get_workflow_requirements_for_target(wf)
         hints = self._get_workflow_hints_for_target(wf)
         
+        # Add automatic CWL requirements for scatter and when features
+        auto_requirements = self._detect_cwl_requirements(wf)
+        if auto_requirements:
+            requirements.extend(auto_requirements)
+        
         if requirements:
             wf_doc["requirements"] = [self._requirement_spec_to_cwl(req) for req in requirements]
         if hints:
             wf_doc["hints"] = [self._requirement_spec_to_cwl(hint) for hint in hints]
 
         return wf_doc
+
+    def _detect_cwl_requirements(self, wf: Workflow) -> List[RequirementSpec]:
+        """Detect and create CWL requirements for scatter and when features."""
+        requirements = []
+        
+        # Check for scatter features
+        has_scatter = any(
+            task.scatter.get_value_for(self.target_environment) is not None
+            for task in wf.tasks.values()
+        )
+        if has_scatter:
+            requirements.append(RequirementSpec("ScatterFeatureRequirement", {}))
+        
+        # Check for when features
+        has_when = any(
+            task.when.get_value_for(self.target_environment) is not None
+            for task in wf.tasks.values()
+        )
+        if has_when:
+            requirements.append(RequirementSpec("ConditionalWhenRequirement", {}))
+        
+        return requirements
 
     def _generate_workflow_inputs_enhanced(self, wf: Workflow) -> Dict[str, Any]:
         """Generate enhanced workflow inputs."""
@@ -333,6 +367,10 @@ class CWLExporter(BaseExporter):
             "id": task.id,
         }
 
+        # Enable structured provenance when preserve_metadata is True
+        if preserve_metadata:
+            structure_prov = True
+
         # Add enhanced metadata if requested using shared infrastructure
         if preserve_metadata:
             metadata = self._get_task_metadata(task)
@@ -344,6 +382,9 @@ class CWLExporter(BaseExporter):
                 self._add_provenance_to_doc(tool_doc, task.provenance, structure=structure_prov)
             if task.documentation:
                 self._add_documentation_to_doc(tool_doc, task.documentation)
+            # Add intent if present
+            if task.intent:
+                tool_doc["s:intent"] = task.intent
 
         # Add inputs
         if task.inputs:
@@ -378,6 +419,8 @@ class CWLExporter(BaseExporter):
         resource_req = self._generate_resource_requirement_from_task(task)
         if resource_req:
             if "requirements" not in tool_doc:
+                tool_doc["requirements"] = []
+            elif tool_doc["requirements"] is None:
                 tool_doc["requirements"] = []
             tool_doc["requirements"].append(resource_req)
 

@@ -199,140 +199,14 @@ except ImportError:
         galaxy_exporter = None
 
 
-# Format detection mappings
-INPUT_FORMAT_MAP = {
-    ".smk": "snakemake",
-    ".snakefile": "snakemake",
-    ".dag": "dagman",
-    ".nf": "nextflow",
-    ".cwl": "cwl",
-    ".wdl": "wdl",
-    ".ga": "galaxy",
-    ".json": "json",
-    ".yaml": "yaml",
-    ".yml": "yaml",
-}
-
-OUTPUT_FORMAT_MAP = {
-    ".dag": "dagman",
-    ".smk": "snakemake",
-    ".nf": "nextflow",
-    ".cwl": "cwl",
-    ".wdl": "wdl",
-    ".ga": "galaxy",
-    ".bco": "bco",
-    ".json": "json",
-    ".yaml": "yaml",
-    ".yml": "yaml",
-}
-
-
-def detect_format_from_content(path: Path) -> Optional[str]:
-    """
-    Detect workflow format by examining file content.
-    
-    This function looks for format-specific patterns in the file content
-    to determine the actual format, regardless of file extension.
-    """
-    try:
-        content = path.read_text(encoding='utf-8', errors='ignore')
-        content_lower = content.lower()
-        
-        # Snakemake patterns
-        if any(pattern in content_lower for pattern in [
-            'rule ', 'input:', 'output:', 'shell:', 'run:', 'script:',
-            'wildcards:', 'params:', 'threads:', 'resources:',
-            'conda:', 'container:', 'benchmark:', 'log:'
-        ]):
-            return "snakemake"
-        
-        # DAGMan patterns
-        if any(pattern in content_lower for pattern in [
-            'job ', 'parent ', 'child ', 'retry ', 'priority ',
-            'executable =', 'request_cpus =', 'request_memory =',
-            'universe =', 'queue'
-        ]):
-            return "dagman"
-        
-        # Nextflow patterns
-        if any(pattern in content_lower for pattern in [
-            'process ', 'workflow ', 'channel ', 'publishDir ',
-            'input:', 'output:', 'script:', 'shell:', 'exec:',
-            'publishDir', 'tag', 'label'
-        ]):
-            return "nextflow"
-        
-        # CWL patterns
-        if any(pattern in content_lower for pattern in [
-            'cwlversion:', 'class:', 'inputs:', 'outputs:', 'steps:',
-            'requirements:', 'hints:', 'basecommand:', 'arguments:',
-            'stdin:', 'stdout:', 'stderr:', 'env:', 'doc:'
-        ]):
-            return "cwl"
-        
-        # WDL patterns
-        if any(pattern in content_lower for pattern in [
-            'workflow ', 'task ', 'call ', 'scatter ', 'if ',
-            'input {', 'output {', 'runtime {', 'command {',
-            'version', 'import '
-        ]):
-            return "wdl"
-        
-        # Galaxy patterns
-        if any(pattern in content_lower for pattern in [
-            'tool id=', 'tool name=', 'tool version=',
-            '<tool', '</tool>', '<param', '</param>',
-            '<inputs>', '</inputs>', '<outputs>', '</outputs>'
-        ]):
-            return "galaxy"
-        
-        # IR format patterns (JSON/YAML with wf2wf structure)
-        if any(pattern in content_lower for pattern in [
-            '"name":', '"version":', '"tasks":', '"edges":',
-            '"inputs":', '"outputs":', '"requirements":',
-            '"provenance":', '"documentation":'
-        ]):
-            # Check if it's a complete IR structure
-            if '"tasks":' in content_lower and '"edges":' in content_lower:
-                return "json" if path.suffix.lower() in [".json"] else "yaml"
-        
-        return None
-        
-    except (UnicodeDecodeError, IOError, OSError):
-        # File is binary or unreadable
-        return None
-
-
-def detect_input_format(path: Path) -> Optional[str]:
-    """Auto-detect input format from file extension and content."""
-    suffix = path.suffix.lower()
-    name = path.name.lower()
-
-    # Check suffix first
-    if suffix in INPUT_FORMAT_MAP:
-        detected_format = INPUT_FORMAT_MAP[suffix]
-        
-        # For ambiguous extensions (.json, .yaml), verify with content
-        if suffix in [".json", ".yaml", ".yml"]:
-            content_format = detect_format_from_content(path)
-            if content_format and content_format != detected_format:
-                # Content suggests a different format than extension
-                return content_format
-        
-        return detected_format
-
-    # Check specific filenames without extensions
-    if name in ["snakefile", "makefile"]:
-        return "snakemake"
-
-    # If no extension match, try content-based detection
-    return detect_format_from_content(path)
-
-
-def detect_output_format(path: Path) -> Optional[str]:
-    """Auto-detect output format from file extension."""
-    suffix = path.suffix.lower()
-    return OUTPUT_FORMAT_MAP.get(suffix)
+# Import shared format detection utilities
+from wf2wf.utils.format_detection import (
+    detect_input_format,
+    detect_output_format,
+    detect_format_from_content,
+    INPUT_FORMAT_MAP,
+    OUTPUT_FORMAT_MAP
+)
 
 
 def get_importer(fmt: str):
@@ -636,7 +510,7 @@ def cli():
 @click.option(
     "--interactive",
     is_flag=True,
-    help="Prompt before potentially destructive or lossy actions",
+    help="Enable interactive prompting for missing resource specifications, environment configurations, and execution parameters",
 )
 @click.option(
     "--intent",

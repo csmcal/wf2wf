@@ -555,19 +555,23 @@ def _parse_command_for_wdl(command: str) -> List[str]:
                 command_lines.append(line)
         return command_lines if command_lines else ["echo 'No valid command found'"]
     
-    # Simple command parsing
-    parts = shlex.split(command)
-    if not parts:
-        return ["echo 'Empty command'"]
-    
-    # Convert to WDL command format
-    command_lines = []
-    
-    # Handle simple commands
-    if len(parts) == 1:
-        command_lines.append(parts[0])
-    else:
-        # Multi-part command
-        command_lines.append(" ".join(parts))
-    
-    return command_lines
+    # Simple command parsing with error handling
+    try:
+        parts = shlex.split(command)
+        if not parts:
+            return ["echo 'Empty command'"]
+        
+        # Convert to WDL command format
+        command_lines = []
+        
+        # Handle simple commands
+        if len(parts) == 1:
+            command_lines.append(parts[0])
+        else:
+            # Multi-part command
+            command_lines.append(" ".join(parts))
+        
+        return command_lines
+    except ValueError:
+        # If shlex parsing fails (e.g., unclosed quotes), return the command as-is
+        return [command.strip()]
