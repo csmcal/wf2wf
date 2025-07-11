@@ -326,6 +326,10 @@ class TestDAGManExportPerformance:
         special_task.command.set_for_environment("echo 'File with spaces and (parentheses).txt' && echo \"Quotes and 'mixed' quotes\"", "distributed_computing")
         special_task.cpu.set_for_environment(2, "distributed_computing")
         special_task.mem_mb.set_for_environment(4096, "distributed_computing")
+        special_task.extra = {
+            "requirements": '(Memory > 4000) && (OpSysAndVer == "CentOS7")',
+            "+ProjectName": '"Project with spaces and symbols!"'
+        }
         wf.add_task(special_task)
 
         # Export to DAG

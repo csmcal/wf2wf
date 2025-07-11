@@ -35,9 +35,21 @@ from pathlib import Path
 from typing import Any, Dict, Union, List, Tuple
 from collections import defaultdict
 
-from wf2wf.core import Workflow, Task, EnvironmentSpecificValue, ParameterSpec, CheckpointSpec, LoggingSpec, SecuritySpec, NetworkingSpec, MetadataSpec, Edge, ScatterSpec
+from wf2wf.core import (
+    Workflow,
+    Task,
+    EnvironmentSpecificValue,
+    ParameterSpec,
+    CheckpointSpec,
+    LoggingSpec,
+    SecuritySpec,
+    NetworkingSpec,
+    MetadataSpec,
+    Edge,
+    ScatterSpec
+)
 from wf2wf.importers.base import BaseImporter
-from wf2wf.importers.loss_integration import detect_and_apply_loss_sidecar
+from wf2wf.loss import detect_and_apply_loss_sidecar
 from wf2wf.importers.inference import infer_environment_specific_values, infer_execution_model
 from wf2wf.interactive import prompt_for_missing_information, prompt_for_execution_model_confirmation
 from wf2wf.workflow_analysis import detect_execution_model_from_content, create_execution_model_spec

@@ -7,7 +7,7 @@ from wf2wf.exporters import cwl as cwl_exporter
 def test_cwl_roundtrip_advanced(tmp_path: Path):
     """Import advanced CWL, export again, re-import and check key features."""
     src_path = (
-        Path(__file__).parent.parent.parent
+        Path(__file__).parent.parent.parent.parent
         / "examples"
         / "cwl"
         / "advanced_features.cwl"

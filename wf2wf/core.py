@@ -1191,6 +1191,22 @@ class Workflow:
             if "outputs" in tdict:
                 tdict["outputs"] = _make_params(tdict["outputs"])
 
+            # Handle extra field specially - it contains EnvironmentSpecificValue objects
+            if "extra" in tdict and isinstance(tdict["extra"], dict):
+                extra_decoded = {}
+                for key, value in tdict["extra"].items():
+                    if isinstance(value, dict) and "values" in value:
+                        # This is an EnvironmentSpecificValue
+                        extra_decoded[key] = WF2WFJSONDecoder.decode_environment_specific_value(value)
+                    else:
+                        # This is a plain value, wrap it in EnvironmentSpecificValue
+                        extra_decoded[key] = EnvironmentSpecificValue(value)
+                tdict["extra"] = extra_decoded
+
+            # Handle metadata field specially for Task
+            if "metadata" in tdict and isinstance(tdict["metadata"], dict):
+                tdict["metadata"] = MetadataSpec(**tdict["metadata"])
+
             tasks[tid] = Task(id=tid, **{k: v for k, v in tdict.items() if k != "id"})
 
         edges = [Edge(**e) for e in data.pop("edges", [])]

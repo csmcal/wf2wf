@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 from wf2wf.core import Workflow, Task, Edge
 from wf2wf.environ import EnvironmentManager
 from wf2wf.interactive import get_prompter
-from wf2wf.importers.loss_integration import detect_and_apply_loss_sidecar, create_loss_sidecar_summary
+from wf2wf.loss import detect_and_apply_loss_sidecar, create_loss_sidecar_summary
 from wf2wf.importers.inference import infer_environment_specific_values, infer_execution_model
 from wf2wf.workflow_analysis import detect_execution_model_from_content, create_execution_model_spec
 from wf2wf.importers.inference import infer_condor_attributes

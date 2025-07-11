@@ -22,8 +22,8 @@ from wf2wf.loss import (
     prepare as loss_prepare,
     compute_checksum,
     write_loss_document,
+    detect_and_record_export_losses,
 )
-from wf2wf.exporters.loss_integration import detect_and_record_losses
 from wf2wf.exporters.inference import infer_missing_values
 from wf2wf.interactive import get_prompter
 
@@ -70,7 +70,7 @@ class BaseExporter(ABC):
             self.prompter.prompt_for_missing_values(workflow, "export", self.target_environment)
         
         # 4. Record format-specific losses
-        detect_and_record_losses(workflow, self.target_format, target_environment=self.target_environment, verbose=self.verbose)
+        detect_and_record_export_losses(workflow, self.target_format, target_environment=self.target_environment, verbose=self.verbose)
         
         # 5. Create output directory
         output_path.parent.mkdir(parents=True, exist_ok=True)

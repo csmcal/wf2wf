@@ -16,11 +16,11 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 from typing import Dict, Any
 
+from wf2wf.core import Workflow, Task, EnvironmentSpecificValue
 from wf2wf.importers.base import BaseImporter
-from wf2wf.importers.loss_integration import detect_and_apply_loss_sidecar, create_loss_sidecar_summary
+from wf2wf.loss import detect_and_apply_loss_sidecar, create_loss_sidecar_summary
 from wf2wf.importers.inference import infer_environment_specific_values, infer_execution_model
 from wf2wf.interactive import prompt_for_missing_information
-from wf2wf.core import Workflow, Task, EnvironmentSpecificValue
 
 
 class TestBaseImporter:
@@ -39,7 +39,6 @@ class TestBaseImporter:
         workflow = self._create_basic_workflow(parsed_data)
         
         # Apply loss side-car if available
-        from wf2wf.importers.loss_integration import detect_and_apply_loss_sidecar
         detect_and_apply_loss_sidecar(workflow, path, verbose=self.verbose)
         
         # Infer missing information
@@ -127,19 +126,21 @@ class TestBaseImporterInfrastructure:
         assert len(workflow.tasks) == 1
         assert 'test_task' in workflow.tasks
 
-    def test_base_importer_with_interactive_mode(self, tmp_path, monkeypatch):
+    def test_base_importer_with_interactive_mode(self, tmp_path, interactive_responses):
         """Test that BaseImporter works with interactive mode."""
-        # Patch click.prompt to always return '1'
-        monkeypatch.setattr("click.prompt", lambda *args, **kwargs: "1")
+        # Set test responses for the interactive prompter
+        interactive_responses.set_responses([
+            "test_workflow", "1.0", "", "1", "4096", "4096", "no", "none", "0", "3600"
+        ])
+        
         # Create a test file
         test_file = tmp_path / "test.workflow"
         test_file.write_text("test content")
         
         importer = TestBaseImporter(interactive=True, verbose=False)
         
-        # Mock the interactive prompting to avoid user input
-        with patch('wf2wf.importers.interactive.prompt_for_missing_information'):
-            workflow = importer.import_workflow(test_file)
+        # Test the full workflow with interactive prompting
+        workflow = importer.import_workflow(test_file)
         
         assert isinstance(workflow, Workflow)
 
@@ -177,9 +178,9 @@ class TestBaseImporterInfrastructure:
         
         # Check task properties
         task1 = workflow.tasks['task1']
-        assert task1.command.get_value_for('shared_filesystem') == 'echo task1'
-        assert task1.cpu.get_value_for('shared_filesystem') == 2
-        assert task1.mem_mb.get_value_for('shared_filesystem') == 2048
+        assert task1.command.get_value_with_default('shared_filesystem') == 'echo task1'
+        assert task1.cpu.get_value_with_default('shared_filesystem') == 2
+        assert task1.mem_mb.get_value_with_default('shared_filesystem') == 2048
 
 
 class TestLossIntegration:
@@ -196,18 +197,33 @@ class TestLossIntegration:
 
     def test_detect_and_apply_loss_sidecar_with_file(self, tmp_path):
         """Test that loss side-car detection works when file exists."""
+        import hashlib
+        
         workflow = Workflow(name='test')
         test_file = tmp_path / "test.workflow"
         test_file.write_text("test content")
         
-        # Create loss sidecar file
+        # Compute actual checksum for the test file
+        sha256_hash = hashlib.sha256()
+        with open(test_file, 'rb') as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(chunk)
+        actual_checksum = f"sha256:{sha256_hash.hexdigest()}"
+        
+        # Create loss sidecar file with correct format
         loss_file = test_file.with_suffix('.loss.json')
         loss_data = {
+            "wf2wf_version": "0.1.0",
+            "target_engine": "snakemake",
+            "source_checksum": actual_checksum,
             "entries": [
                 {
+                    "json_pointer": "/tasks/task1/gpu",
                     "field": "gpu",
+                    "lost_value": 2,
                     "reason": "GPU resources not supported in target format",
-                    "severity": "warning"
+                    "origin": "wf2wf",
+                    "severity": "warn"
                 }
             ]
         }
@@ -228,22 +244,40 @@ class TestLossIntegration:
 
     def test_create_loss_sidecar_summary_with_file(self, tmp_path):
         """Test that loss side-car summary works when file exists."""
+        import hashlib
+        
         workflow = Workflow(name='test')
         test_file = tmp_path / "test.workflow"
         test_file.write_text("test content")
         
-        # Create loss sidecar file
+        # Compute actual checksum for the test file
+        sha256_hash = hashlib.sha256()
+        with open(test_file, 'rb') as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(chunk)
+        actual_checksum = f"sha256:{sha256_hash.hexdigest()}"
+        
+        # Create loss sidecar file with correct format
         loss_file = test_file.with_suffix('.loss.json')
         loss_data = {
+            "wf2wf_version": "0.1.0",
+            "target_engine": "snakemake",
+            "source_checksum": actual_checksum,
             "entries": [
                 {
+                    "json_pointer": "/tasks/task1/gpu",
                     "field": "gpu",
+                    "lost_value": 2,
                     "reason": "GPU resources not supported",
-                    "severity": "warning"
+                    "origin": "wf2wf",
+                    "severity": "warn"
                 },
                 {
+                    "json_pointer": "/tasks/task1/custom_attr",
                     "field": "custom_attr",
+                    "lost_value": "custom_value",
                     "reason": "Custom attributes not supported",
+                    "origin": "user",
                     "severity": "info"
                 }
             ]
@@ -253,8 +287,8 @@ class TestLossIntegration:
         summary = create_loss_sidecar_summary(workflow, test_file)
         assert summary['loss_sidecar_found'] is True
         assert summary['total_entries'] == 2
-        assert summary['warnings'] == 1
-        assert summary['info'] == 1
+        assert summary['by_severity']['warn'] == 1
+        assert summary['by_severity']['info'] == 1
 
 
 class TestInference:
@@ -292,8 +326,8 @@ class TestInference:
         infer_environment_specific_values(workflow, 'snakemake')
         
         # Check that some values were inferred
-        assert task.cpu.get_value_for('shared_filesystem') is not None
-        assert task.mem_mb.get_value_for('shared_filesystem') is not None
+        assert task.cpu.get_value_with_default('shared_filesystem') is not None
+        assert task.mem_mb.get_value_with_default('shared_filesystem') is not None
 
     def test_infer_environment_specific_values_with_existing_values(self):
         """Test inference with existing environment-specific values."""
@@ -317,10 +351,12 @@ class TestInference:
 class TestInteractive:
     """Test interactive prompting functionality."""
 
-    def test_prompt_for_missing_information(self, monkeypatch):
+    def test_prompt_for_missing_information(self, interactive_responses):
         """Test interactive prompting for missing information."""
-        # Mock click.prompt to return test values
-        monkeypatch.setattr("click.prompt", lambda *args, **kwargs: "test_value")
+        # Set test responses for the interactive prompter
+        interactive_responses.set_responses([
+            "test_workflow", "1.0", "", "1", "4096", "4096", "no", "none", "0", "3600"
+        ])
         
         workflow = Workflow(name='test')
         task = Task(id='test_task')
@@ -330,13 +366,15 @@ class TestInteractive:
         prompt_for_missing_information(workflow, 'snakemake')
         
         # Check that values were set
-        assert task.cpu.get_value_for('shared_filesystem') is not None
-        assert task.mem_mb.get_value_for('shared_filesystem') is not None
+        assert task.cpu.get_value_with_default('shared_filesystem') is not None
+        assert task.mem_mb.get_value_with_default('shared_filesystem') is not None
 
-    def test_prompt_for_missing_information_with_existing_values(self, monkeypatch):
+    def test_prompt_for_missing_information_with_existing_values(self, interactive_responses):
         """Test interactive prompting with existing values."""
-        # Mock click.prompt to return test values
-        monkeypatch.setattr("click.prompt", lambda *args, **kwargs: "test_value")
+        # Set test responses for the interactive prompter
+        interactive_responses.set_responses([
+            "test_workflow", "1.0", "", "1", "4096", "4096", "no", "none", "0", "3600"
+        ])
         
         workflow = Workflow(name='test')
         task = Task(id='test_task')
@@ -358,10 +396,12 @@ class TestInteractive:
 class TestIntegration:
     """Test integration workflows."""
 
-    def test_full_import_workflow(self, tmp_path, monkeypatch):
+    def test_full_import_workflow(self, tmp_path, interactive_responses):
         """Test the full import workflow with all components."""
-        # Mock interactive prompting
-        monkeypatch.setattr("click.prompt", lambda *args, **kwargs: "test_value")
+        # Set test responses for the interactive prompter
+        interactive_responses.set_responses([
+            "test_workflow", "1.0", "", "1", "4096", "4096", "no", "none", "0", "3600"
+        ])
         
         # Create a test file
         test_file = tmp_path / "test.workflow"
@@ -382,9 +422,8 @@ class TestIntegration:
         
         importer = TestBaseImporter(interactive=True, verbose=True)
         
-        # Mock the interactive prompting to avoid user input
-        with patch('wf2wf.importers.interactive.prompt_for_missing_information'):
-            workflow = importer.import_workflow(test_file)
+        # Test the full workflow with interactive prompting
+        workflow = importer.import_workflow(test_file)
         
         assert isinstance(workflow, Workflow)
         assert workflow.name == 'test_workflow'
@@ -400,9 +439,9 @@ class TestIntegration:
         
         # Check that environment-specific values were set
         task = workflow.tasks['test_task']
-        assert task.command.get_value_for('shared_filesystem') == 'echo "hello world"'
-        assert task.cpu.get_value_for('shared_filesystem') == 1
-        assert task.mem_mb.get_value_for('shared_filesystem') == 1024
+        assert task.command.get_value_with_default('shared_filesystem') == 'echo "hello world"'
+        assert task.cpu.get_value_with_default('shared_filesystem') == 1
+        assert task.mem_mb.get_value_with_default('shared_filesystem') == 1024
 
     def test_error_handling_in_import_workflow(self, tmp_path):
         """Test error handling in the import workflow."""

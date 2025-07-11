@@ -21,6 +21,7 @@ import tarfile
 
 from wf2wf.core import Workflow, ParameterSpec
 from wf2wf.exporters.base import BaseExporter
+from wf2wf.exporters.cwl import from_workflow
 
 logger = logging.getLogger(__name__)
 
@@ -238,11 +239,8 @@ def _export_bco_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any):
     # Optionally export CWL and link it
     if include_cwl:
         try:
-            from wf2wf.exporters import load as _load_exporter
-
-            cwl_exporter = _load_exporter("cwl")
             cwl_path = out_path.with_suffix(".cwl")
-            cwl_exporter.from_workflow(wf, cwl_path)
+            from_workflow(wf, cwl_path)
             bco["execution_domain"]["script"] = cwl_path.name
         except Exception as e:
             raise RuntimeError(f"Failed to generate CWL alongside BCO: {e}")

@@ -75,6 +75,11 @@ def _infer_task_environment_values(task: Task, environment: str, source_format: 
         environment: Target environment name
         source_format: Source format name
     """
+    # Debug: Check the type of retry_count
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.debug(f"Task {task.id}: retry_count type is {type(task.retry_count)}, value is {task.retry_count}")
+    
     # Infer resource requirements - only if not already set
     if task.cpu.get_value_for(environment) is None:
         cpu = _infer_cpu_from_command(task.command.get_value_for('shared_filesystem'), environment, source_format)
@@ -101,6 +106,11 @@ def _infer_task_environment_values(task: Task, environment: str, source_format: 
         _infer_environment_isolation(task, environment, source_format)
     
     # Infer error handling - only if not already set
+    if not isinstance(task.retry_count, EnvironmentSpecificValue):
+        logger.warning(f"Task {task.id}: retry_count is not EnvironmentSpecificValue, it's {type(task.retry_count)}")
+        # Convert to EnvironmentSpecificValue if it's not already
+        task.retry_count = EnvironmentSpecificValue(task.retry_count if task.retry_count is not None else 0)
+    
     if task.retry_count.get_value_for(environment) is None:
         _infer_error_handling(task, environment, source_format)
     

@@ -158,7 +158,7 @@ class TestCWLFidelityPreservation:
         assert results_param.format == "http://edamontology.org/format_3475"
         assert results_param.output_binding["glob"] == "results.tsv"
 
-    def test_requirements_and_hints_preservation(self, persistent_test_output):
+    def test_requirements_and_hints_preservation(self, tmp_path):
         """Test preservation of CWL requirements and hints."""
         workflow = Workflow(name="requirements_test", version="1.0")
 
@@ -197,30 +197,49 @@ class TestCWLFidelityPreservation:
         workflow.add_task(task)
 
         # Export to CWL
-        cwl_file = persistent_test_output / "requirements.cwl"
-        from_workflow(workflow, cwl_file, preserve_metadata=True)
+        cwl_file = tmp_path / "requirements.cwl"
+        from_workflow(workflow, cwl_file, preserve_metadata=True, verbose=True)
 
         # Re-import and verify requirements preservation
         imported_workflow = to_workflow(cwl_file, preserve_metadata=True)
         imported_task = imported_workflow.tasks["requirements_task"]
 
-        # Verify requirements
+        # Debug: Print what was imported
+        print(f"Imported task ID: {imported_task.id}")
         imported_requirements = imported_task.requirements.get_value_for("shared_filesystem") or []
+        imported_hints = imported_task.hints.get_value_for("shared_filesystem") or []
+        print(f"Imported requirements count: {len(imported_requirements)}")
+        print(f"Imported hints count: {len(imported_hints)}")
+        for i, req in enumerate(imported_requirements):
+            print(f"  Requirement {i}: {req.class_name} - {req.data}")
+        for i, hint in enumerate(imported_hints):
+            print(f"  Hint {i}: {hint.class_name} - {hint.data}")
+
+        # Verify requirements
         docker_req = next(
             r for r in imported_requirements if r.class_name == "DockerRequirement"
         )
         assert docker_req.data["dockerPull"] == "biocontainers/fastqc:v0.11.9_cv8"
 
         resource_req = next(
-            r
-            for r in imported_requirements
-            if r.class_name == "ResourceRequirement"
+            r for r in imported_requirements if r.class_name == "ResourceRequirement"
         )
         assert resource_req.data["coresMin"] == 4
         assert resource_req.data["ramMin"] == 8192
+        assert resource_req.data["tmpdirMin"] == 10240
+        assert resource_req.data["outdirMin"] == 5120
+
+        env_req = next(
+            r for r in imported_requirements if r.class_name == "EnvironmentVarRequirement"
+        )
+        env_def = env_req.data["envDef"]
+        assert len(env_def) == 2
+        assert env_def[0]["envName"] == "TMPDIR"
+        assert env_def[0]["envValue"] == "/tmp"
+        assert env_def[1]["envName"] == "THREADS"
+        assert env_def[1]["envValue"] == "$(runtime.cores)"
 
         # Verify hints
-        imported_hints = imported_task.hints.get_value_for("shared_filesystem") or []
         network_hint = next(
             h for h in imported_hints if h.class_name == "NetworkAccess"
         )

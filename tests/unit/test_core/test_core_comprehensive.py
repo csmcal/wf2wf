@@ -173,16 +173,16 @@ class TestGPUResources:
     def test_task_without_gpu(self):
         """Test task without GPU requirements."""
         task = Task(id="cpu_task")
-        assert task.gpu.get_value_for("shared_filesystem") == 0
-        assert task.gpu_mem_mb.get_value_for("shared_filesystem") == 0
+        assert task.gpu.get_value_with_default("shared_filesystem") == 0
+        assert task.gpu_mem_mb.get_value_with_default("shared_filesystem") == 0
 
     def test_dagman_exporter_gpu_requirements(self, tmp_path):
         """Test DAGMan exporter includes GPU requirements."""
         wf = Workflow(name="gpu_test")
         task = Task(id="gpu_task")
-        task.command.set_for_environment("echo 'gpu job'", "shared_filesystem")
-        task.gpu.set_for_environment(2, "shared_filesystem")
-        task.gpu_mem_mb.set_for_environment(16384, "shared_filesystem")
+        task.command.set_for_environment("echo 'gpu job'", "distributed_computing")
+        task.gpu.set_for_environment(2, "distributed_computing")
+        task.gpu_mem_mb.set_for_environment(16384, "distributed_computing")
         wf.add_task(task)
 
         dag_path = tmp_path / "gpu_test.dag"
@@ -207,10 +207,10 @@ class TestGPUResources:
         """Test DAGMan exporter handles GPU capability requirements."""
         wf = Workflow(name="gpu_capability_test")
         task = Task(id="gpu_capability_job")
-        task.command.set_for_environment("python train_model.py", "shared_filesystem")
-        task.gpu.set_for_environment(1, "shared_filesystem")
-        task.gpu_mem_mb.set_for_environment(4000, "shared_filesystem")
-        task.extra["gpu_capability"] = EnvironmentSpecificValue(7.5, ["shared_filesystem"])
+        task.command.set_for_environment("python train_model.py", "distributed_computing")
+        task.gpu.set_for_environment(1, "distributed_computing")
+        task.gpu_mem_mb.set_for_environment(4000, "distributed_computing")
+        task.extra["gpu_capability"] = EnvironmentSpecificValue(7.5, ["distributed_computing"])
         wf.add_task(task)
 
         dag_path = tmp_path / "gpu_capability_test.dag"
@@ -258,12 +258,12 @@ class TestCustomCondorAttributes:
         """Test DAGMan exporter includes custom Condor attributes."""
         wf = Workflow(name="custom_attr_test")
         task = Task(id="custom_task")
-        task.command.set_for_environment("echo 'test'", "shared_filesystem")
-        task.cpu.set_for_environment(2, "shared_filesystem")
-        task.mem_mb.set_for_environment(4096, "shared_filesystem")
-        task.extra["+WantGPULab"] = EnvironmentSpecificValue("true", ["shared_filesystem"])
-        task.extra["requirements"] = EnvironmentSpecificValue('(OpSysAndVer == "CentOS7")', ["shared_filesystem"])
-        task.extra["rank"] = EnvironmentSpecificValue("Memory", ["shared_filesystem"])
+        task.command.set_for_environment("echo 'test'", "distributed_computing")
+        task.cpu.set_for_environment(2, "distributed_computing")
+        task.mem_mb.set_for_environment(4096, "distributed_computing")
+        task.extra["+WantGPULab"] = EnvironmentSpecificValue("true", ["distributed_computing"])
+        task.extra["requirements"] = EnvironmentSpecificValue('(OpSysAndVer == "CentOS7")', ["distributed_computing"])
+        task.extra["rank"] = EnvironmentSpecificValue("Memory", ["distributed_computing"])
         wf.add_task(task)
 
         dag_path = tmp_path / "custom_attr_test.dag"
@@ -332,21 +332,21 @@ class TestMixedResourceTypes:
         # Heavy compute job
         heavy_task = Task(
             id="heavy_compute",
-            command=EnvironmentSpecificValue("python train_model.py", ["shared_filesystem"]),
-            cpu=EnvironmentSpecificValue(16, ["shared_filesystem"]),
-            mem_mb=EnvironmentSpecificValue(65536, ["shared_filesystem"]),
-            disk_mb=EnvironmentSpecificValue(512000, ["shared_filesystem"]),
-            gpu=EnvironmentSpecificValue(4, ["shared_filesystem"]),
-            gpu_mem_mb=EnvironmentSpecificValue(16000, ["shared_filesystem"]),
+            command=EnvironmentSpecificValue("python train_model.py", ["distributed_computing"]),
+            cpu=EnvironmentSpecificValue(16, ["distributed_computing"]),
+            mem_mb=EnvironmentSpecificValue(65536, ["distributed_computing"]),
+            disk_mb=EnvironmentSpecificValue(512000, ["distributed_computing"]),
+            gpu=EnvironmentSpecificValue(4, ["distributed_computing"]),
+            gpu_mem_mb=EnvironmentSpecificValue(16000, ["distributed_computing"]),
         )
         wf.add_task(heavy_task)
 
         # Light job
         light_task = Task(
             id="light_job",
-            command=EnvironmentSpecificValue("python preprocess.py", ["shared_filesystem"]),
-            cpu=EnvironmentSpecificValue(1, ["shared_filesystem"]),
-            mem_mb=EnvironmentSpecificValue(512, ["shared_filesystem"]),
+            command=EnvironmentSpecificValue("python preprocess.py", ["distributed_computing"]),
+            cpu=EnvironmentSpecificValue(1, ["distributed_computing"]),
+            mem_mb=EnvironmentSpecificValue(512, ["distributed_computing"]),
         )
         wf.add_task(light_task)
 
@@ -387,13 +387,13 @@ class TestResourceDefaults:
     def test_task_default_resources(self):
         """Test that tasks have sensible default resource values."""
         task = Task(id="default_task")
-        assert task.cpu.get_value_for("shared_filesystem") == 1
-        assert task.mem_mb.get_value_for("shared_filesystem") == 4096
-        assert task.disk_mb.get_value_for("shared_filesystem") == 4096
-        assert task.gpu.get_value_for("shared_filesystem") == 0
-        assert task.gpu_mem_mb.get_value_for("shared_filesystem") == 0
-        assert task.time_s.get_value_for("shared_filesystem") == 3600
-        assert task.threads.get_value_for("shared_filesystem") == 1
+        assert task.cpu.get_value_with_default("shared_filesystem") == 1
+        assert task.mem_mb.get_value_with_default("shared_filesystem") == 4096
+        assert task.disk_mb.get_value_with_default("shared_filesystem") == 4096
+        assert task.gpu.get_value_with_default("shared_filesystem") == 0
+        assert task.gpu_mem_mb.get_value_with_default("shared_filesystem") == 0
+        assert task.time_s.get_value_with_default("shared_filesystem") == 3600
+        assert task.threads.get_value_with_default("shared_filesystem") == 1
 
     def test_workflow_with_default_and_custom_resources(self):
         """Test workflow mixing default and custom resource specifications."""
@@ -412,10 +412,10 @@ class TestResourceDefaults:
         wf.add_task(custom_task)
 
         # Verify defaults vs custom
-        assert default_task.cpu.get_value_for("shared_filesystem") == 1
-        assert custom_task.cpu.get_value_for("shared_filesystem") == 8
-        assert default_task.mem_mb.get_value_for("shared_filesystem") == 4096
-        assert custom_task.mem_mb.get_value_for("shared_filesystem") == 16384
+        assert default_task.cpu.get_value_with_default("shared_filesystem") == 1
+        assert custom_task.cpu.get_value_with_default("shared_filesystem") == 8
+        assert default_task.mem_mb.get_value_with_default("shared_filesystem") == 4096
+        assert custom_task.mem_mb.get_value_with_default("shared_filesystem") == 16384
 
 
 class TestNewSpecClasses:

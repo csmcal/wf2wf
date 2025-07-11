@@ -114,7 +114,7 @@ class TestLossTracking:
         entries = as_list()
         assert len(entries) == 1
         entry = entries[0]
-        assert entry["category"] == "checkpointing"
+        assert entry["category"] == "specification_class"
         # Convert spec object to dict for assertion
         from wf2wf.core import WF2WFJSONEncoder
         spec_dict = json.loads(json.dumps(checkpoint_spec, cls=WF2WFJSONEncoder))
@@ -314,18 +314,11 @@ class TestLossTracking:
         task = Task(id="task1")
         workflow.add_task(task)
         
-        # Create a loss entry
+        # Create a loss entry with simple integer value
         loss_entry = {
             "json_pointer": "/tasks/task1/cpu",
             "field": "cpu",
-            "lost_value": {
-                "values": [
-                    {
-                        "value": 4,
-                        "environments": ["shared_filesystem"]
-                    }
-                ]
-            },
+            "lost_value": 4,
             "status": "lost"
         }
         
@@ -334,8 +327,7 @@ class TestLossTracking:
         
         # Check that the value was reinjected
         assert loss_entry["status"] == "reapplied"
-        cpu_value = workflow.tasks["task1"].cpu.get_value_for("shared_filesystem")
-        assert cpu_value == 4
+        assert workflow.tasks["task1"].cpu.default_value == 4
 
     def test_loss_reinjection_failure(self):
         """Test loss reinjection failure handling."""

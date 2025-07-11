@@ -922,6 +922,21 @@ def parse_cwl_parameters(params, param_type):
                     doc=param_spec.get('doc'),
                     default=param_spec.get('default')
                 )
+                # Add extra fields if present
+                if 'format' in param_spec:
+                    param.format = param_spec['format']
+                if 'secondaryFiles' in param_spec:
+                    param.secondary_files = param_spec['secondaryFiles']
+                if 'streamable' in param_spec:
+                    param.streamable = param_spec['streamable']
+                if 'loadContents' in param_spec:
+                    param.load_contents = param_spec['loadContents']
+                if 'loadListing' in param_spec:
+                    param.load_listing = param_spec['loadListing']
+                if 'outputBinding' in param_spec:
+                    param.output_binding = param_spec['outputBinding']
+                if 'inputBinding' in param_spec:
+                    param.input_binding = param_spec['inputBinding']
             else:
                 param_type_spec = parse_cwl_type(str(param_spec))
                 param = ParameterSpec(

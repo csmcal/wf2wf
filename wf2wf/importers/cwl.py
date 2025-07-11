@@ -35,7 +35,7 @@ from wf2wf.core import (
     ScatterSpec
 )
 from wf2wf.importers.base import BaseImporter
-from wf2wf.importers.loss_integration import detect_and_apply_loss_sidecar
+from wf2wf.loss import detect_and_apply_loss_sidecar
 from wf2wf.importers.inference import infer_environment_specific_values, infer_execution_model
 from wf2wf.interactive import prompt_for_missing_information
 from wf2wf.importers.resource_processor import process_workflow_resources
@@ -125,7 +125,69 @@ class CWLImporter(BaseImporter):
         
         return cwl_data
 
-    def _create_basic_workflow(self, parsed_data: Dict[str, Any]) -> Workflow:
+    def import_workflow(self, path: Path, **opts) -> Workflow:
+        """
+        Override import_workflow to pass workflow path for external tool resolution.
+        """
+        try:
+            # Step 1: Parse source format
+            if self.verbose:
+                logger.info(f"Parsing {path} with {self.__class__.__name__}")
+            
+            parsed_data = self._parse_source(path, **opts)
+            
+            # Step 2: Create basic workflow structure with workflow path
+            workflow = self._create_basic_workflow(parsed_data, workflow_path=str(path))
+            
+            # Step 3: Apply loss side-car if available
+            detect_and_apply_loss_sidecar(workflow, path, self.verbose)
+            
+            # Step 4: Infer missing information
+            self._infer_missing_information(workflow, path)
+            
+            # Step 5: Environment management
+            self._handle_environment_management(workflow, path, opts)
+            
+            # Step 6: Interactive prompting if enabled
+            if self.interactive:
+                # Enhanced interactive prompting with execution model confirmation
+                from wf2wf.interactive import (
+                    prompt_for_missing_information, 
+                    prompt_for_execution_model_confirmation,
+                    prompt_for_workflow_optimization
+                )
+                
+                # Get content analysis for execution model confirmation
+                content_analysis = detect_execution_model_from_content(path, self._get_source_format())
+                
+                # Prompt for execution model confirmation
+                prompt_for_execution_model_confirmation(
+                    workflow, 
+                    self._get_source_format(),
+                    content_analysis
+                )
+                
+                # Standard missing information prompting
+                prompt_for_missing_information(workflow, self._get_source_format())
+                
+                # Check for target format optimization if specified
+                target_format = opts.get('target_format')
+                if target_format:
+                    prompt_for_workflow_optimization(workflow, target_format)
+            
+            # Step 7: Validate and return
+            workflow.validate()
+            
+            if self.verbose:
+                logger.info(f"Successfully imported workflow with {len(workflow.tasks)} tasks")
+            
+            return workflow
+            
+        except Exception as e:
+            logger.error(f"Failed to import workflow from {path}: {e}")
+            raise ImportError(f"Failed to import workflow from {path}: {e}") from e
+
+    def _create_basic_workflow(self, parsed_data: Dict[str, Any], workflow_path: str = None) -> Workflow:
         """Create basic workflow from CWL data, with shared inference and prompting."""
         if self.verbose:
             logger.info("Creating basic workflow from CWL data")
@@ -184,7 +246,7 @@ class CWLImporter(BaseImporter):
             workflow.intent = intent
 
         # Extract and add tasks
-        tasks = self._extract_tasks(parsed_data)
+        tasks = self._extract_tasks(parsed_data, source_path=workflow_path)
         for task in tasks:
             workflow.add_task(task)
 
@@ -280,7 +342,7 @@ class CWLImporter(BaseImporter):
         # Add any format-specific logic here
         pass
 
-    def _extract_tasks(self, parsed_data: Dict[str, Any]) -> List[Task]:
+    def _extract_tasks(self, parsed_data: Dict[str, Any], source_path: str) -> List[Task]:
         """Extract tasks from CWL workflow or tool."""
         if self.verbose:
             logger.info("Extracting tasks from CWL data")
@@ -301,7 +363,11 @@ class CWLImporter(BaseImporter):
                     tasks.append(tool_task)
                 elif isinstance(run, str):
                     import os
-                    tool_path = os.path.join(os.path.dirname(parsed_data.get('source_path', '') or ''), run)
+                    # Always resolve tool_path relative to the workflow file's directory
+                    base_dir = os.path.dirname(source_path) if source_path else os.getcwd()
+                    tool_path = os.path.normpath(os.path.join(base_dir, run))
+                    if self.verbose:
+                        logger.info(f"[CWLImporter] Resolving tool: run='{run}', source_path='{source_path}', base_dir='{base_dir}', tool_path='{tool_path}'")
                     try:
                         with open(tool_path, 'r', encoding='utf-8') as f:
                             tool_data = yaml.safe_load(f)
@@ -403,17 +469,33 @@ class CWLImporter(BaseImporter):
             if hasattr(inp, 'transfer_mode'):
                 inp.transfer_mode.set_for_environment('always', 'distributed_computing')
         
-        # Extract resource requirements
-        self._extract_resource_requirements(task, tool_data)
-        
-        # Extract container requirements
-        self._extract_container_requirements(task, tool_data)
-        
-        # Extract requirements and hints
-        reqs = parse_requirements(tool_data.get('requirements', []))
-        hints = parse_requirements(tool_data.get('hints', []))
+        # Extract requirements and hints FIRST - preserve all original RequirementSpec objects
+        all_requirements = tool_data.get('requirements', [])
+        all_hints = tool_data.get('hints', [])
+        # If requirements/hints are dicts, convert to list
+        if isinstance(all_requirements, dict):
+            all_requirements = list(all_requirements.values())
+        if isinstance(all_hints, dict):
+            all_hints = list(all_hints.values())
+        reqs = parse_requirements(all_requirements)
+        hints = parse_requirements(all_hints)
+        if self.verbose:
+            logger.info(f"[CWLImporter] Tool {tool_id} has {len(all_requirements)} requirements and {len(all_hints)} hints")
+            logger.info(f"[CWLImporter] Raw requirements: {all_requirements}")
+            logger.info(f"[CWLImporter] Raw hints: {all_hints}")
+            logger.info(f"[CWLImporter] Parsed {len(reqs)} requirements and {len(hints)} hints")
+            for i, req in enumerate(reqs):
+                logger.info(f"[CWLImporter] Requirement {i}: {req.class_name} - {req.data}")
+            for i, hint in enumerate(hints):
+                logger.info(f"[CWLImporter] Hint {i}: {hint.class_name} - {hint.data}")
         task.requirements = EnvironmentSpecificValue(reqs, ['shared_filesystem'])
         task.hints = EnvironmentSpecificValue(hints, ['shared_filesystem'])
+        
+        # Extract resource requirements (this extracts specific fields but doesn't remove from requirements)
+        self._extract_resource_requirements(task, tool_data)
+        
+        # Extract container requirements (this extracts specific fields but doesn't remove from requirements)
+        self._extract_container_requirements(task, tool_data)
         
         # --- Add submit_file if present ---
         if 'submit_file' in tool_data:
@@ -439,10 +521,14 @@ class CWLImporter(BaseImporter):
                 logger.info(f"Added scatter operation to {task.id}")
         
         # Extract requirements and hints
-        reqs = parse_requirements(step_data.get('requirements', []))
-        hints = parse_requirements(step_data.get('hints', []))
-        task.requirements = EnvironmentSpecificValue(reqs, ['shared_filesystem'])
-        task.hints = EnvironmentSpecificValue(hints, ['shared_filesystem'])
+        step_reqs = step_data.get('requirements', [])
+        step_hints = step_data.get('hints', [])
+        if step_reqs:
+            reqs = parse_requirements(step_reqs)
+            task.requirements = EnvironmentSpecificValue(reqs, ['shared_filesystem'])
+        if step_hints:
+            hints = parse_requirements(step_hints)
+            task.hints = EnvironmentSpecificValue(hints, ['shared_filesystem'])
         
         # Extract metadata
         task.meta = step_data.get('metadata', {})

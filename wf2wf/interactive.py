@@ -252,6 +252,26 @@ class InteractivePrompter:
         value = env_value.get_value_for("")
         return value is not None
 
+    def prompt_text(self, prompt: str, default: str = "") -> str:
+        """Prompt user for text input."""
+        return self._prompt_user(f"{prompt} (default: {default}): ", str, default)
+    
+    def prompt_int(self, prompt: str, default: int = 0, min_value: int = None, max_value: int = None) -> int:
+        """Prompt user for integer input with optional min/max validation."""
+        while True:
+            result = self._prompt_user(f"{prompt} (default: {default}): ", int, default)
+            if min_value is not None and result < min_value:
+                print(f"Value must be at least {min_value}")
+                continue
+            if max_value is not None and result > max_value:
+                print(f"Value must be at most {max_value}")
+                continue
+            return result
+
+    def prompt_choice(self, prompt: str, choices: list, default: str) -> str:
+        """Prompt user to choose from a list of options."""
+        return self._prompt_choice(prompt, choices, default)
+
 
 # Global prompter instance
 _global_prompter = InteractivePrompter()

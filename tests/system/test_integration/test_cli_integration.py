@@ -36,11 +36,15 @@ class TestConfigurationFileHandling:
             "conda_prefix": "/opt/conda/envs",
         }
 
-        wf = Workflow(name="config_test", config=config)
-        assert wf.config["default_memory"] == "8GB"
-        assert wf.config["default_disk"] == "10GB"
-        assert wf.config["default_cpus"] == 4
-        assert wf.config["conda_prefix"] == "/opt/conda/envs"
+        # Create metadata spec with config data
+        from wf2wf.core import MetadataSpec
+        metadata = MetadataSpec(format_specific={"config": config})
+        
+        wf = Workflow(name="config_test", metadata=metadata)
+        assert wf.metadata.format_specific["config"]["default_memory"] == "8GB"
+        assert wf.metadata.format_specific["config"]["default_disk"] == "10GB"
+        assert wf.metadata.format_specific["config"]["default_cpus"] == 4
+        assert wf.metadata.format_specific["config"]["conda_prefix"] == "/opt/conda/envs"
 
     def test_workflow_config_serialization(self):
         """Test workflow configuration serialization/deserialization."""
@@ -49,23 +53,27 @@ class TestConfigurationFileHandling:
             "custom_attributes": {"requirements": '(OpSysAndVer == "CentOS7")'},
         }
 
-        wf = Workflow(name="serialization_test", config=config)
+        # Create metadata spec with config data
+        from wf2wf.core import MetadataSpec
+        metadata = MetadataSpec(format_specific={"config": config})
+        
+        wf = Workflow(name="serialization_test", metadata=metadata)
 
         # Convert to JSON and back
         wf_json = wf.to_json()
         wf_dict = json.loads(wf_json)
 
-        assert wf_dict["config"]["memory_default"] == "16GB"
+        assert wf_dict["metadata"]["format_specific"]["config"]["memory_default"] == "16GB"
         assert (
-            wf_dict["config"]["custom_attributes"]["requirements"]
+            wf_dict["metadata"]["format_specific"]["config"]["custom_attributes"]["requirements"]
             == '(OpSysAndVer == "CentOS7")'
         )
 
         # Reconstruct workflow
         wf_restored = Workflow.from_json(wf_json)
-        assert wf_restored.config["memory_default"] == "16GB"
+        assert wf_restored.metadata.format_specific["config"]["memory_default"] == "16GB"
         assert (
-            wf_restored.config["custom_attributes"]["requirements"]
+            wf_restored.metadata.format_specific["config"]["custom_attributes"]["requirements"]
             == '(OpSysAndVer == "CentOS7")'
         )
 
@@ -75,7 +83,7 @@ class TestConfigurationFileHandling:
 
         # Task without explicit resources
         default_task = Task(id="default_task")
-        default_task.command.set_for_environment("echo 'default'", "shared_filesystem")
+        default_task.command.set_for_environment("echo 'default'", "distributed_computing")
         wf.add_task(default_task)
 
         # Default resource values
@@ -85,16 +93,18 @@ class TestConfigurationFileHandling:
 
         # Simulate applying defaults to tasks without explicit resources
         for task in wf.tasks.values():
-            if (not hasattr(task, "cpu") or task.cpu.get_value_with_default("shared_filesystem") is None) and \
-               (not hasattr(task, "mem_mb") or task.mem_mb.get_value_with_default("shared_filesystem") is None):
-                task.cpu.set_for_environment(default_cpu, "shared_filesystem")
-                task.mem_mb.set_for_environment(default_mem_mb, "shared_filesystem")
-                task.disk_mb.set_for_environment(default_disk_mb, "shared_filesystem")
+            # Check if task has environment-specific values set
+            if not task.cpu.has_environment_specific_value("distributed_computing"):
+                task.cpu.set_for_environment(default_cpu, "distributed_computing")
+            if not task.mem_mb.has_environment_specific_value("distributed_computing"):
+                task.mem_mb.set_for_environment(default_mem_mb, "distributed_computing")
+            if not task.disk_mb.has_environment_specific_value("distributed_computing"):
+                task.disk_mb.set_for_environment(default_disk_mb, "distributed_computing")
 
         # Verify defaults were applied correctly
-        assert wf.tasks["default_task"].cpu.get_value_with_default("shared_filesystem") == 4
-        assert wf.tasks["default_task"].mem_mb.get_value_with_default("shared_filesystem") == 8192
-        assert wf.tasks["default_task"].disk_mb.get_value_with_default("shared_filesystem") == 10240
+        assert wf.tasks["default_task"].cpu.get_value_with_default("distributed_computing") == 4
+        assert wf.tasks["default_task"].mem_mb.get_value_with_default("distributed_computing") == 8192
+        assert wf.tasks["default_task"].disk_mb.get_value_with_default("distributed_computing") == 10240
 
     def test_workflow_metadata_preservation(self):
         """Test that workflow metadata is preserved through operations."""
@@ -105,23 +115,27 @@ class TestConfigurationFileHandling:
             "tags": ["test", "metadata"],
         }
 
-        wf = Workflow(name="metadata_test", meta=metadata)
+        # Create metadata spec with meta data
+        from wf2wf.core import MetadataSpec
+        metadata_spec = MetadataSpec(format_specific={"meta": metadata})
+        
+        wf = Workflow(name="metadata_test", metadata=metadata_spec)
 
         # Add some tasks
         task1 = Task(id="task1")
-        task1.command.set_for_environment("echo 'task1'", "shared_filesystem")
+        task1.command.set_for_environment("echo 'task1'", "distributed_computing")
         task2 = Task(id="task2")
-        task2.command.set_for_environment("echo 'task2'", "shared_filesystem")
+        task2.command.set_for_environment("echo 'task2'", "distributed_computing")
         wf.add_task(task1)
         wf.add_task(task2)
         wf.add_edge("task1", "task2")
 
         # Metadata should be preserved
-        assert wf.meta["author"] == "test_user"
-        assert wf.meta["description"] == "Test workflow for metadata preservation"
-        assert wf.meta["version"] == "1.0.0"
-        assert "test" in wf.meta["tags"]
-        assert "metadata" in wf.meta["tags"]
+        assert wf.metadata.format_specific["meta"]["author"] == "test_user"
+        assert wf.metadata.format_specific["meta"]["description"] == "Test workflow for metadata preservation"
+        assert wf.metadata.format_specific["meta"]["version"] == "1.0.0"
+        assert "test" in wf.metadata.format_specific["meta"]["tags"]
+        assert "metadata" in wf.metadata.format_specific["meta"]["tags"]
 
 
 class TestResourceDefaultsAndCustomization:
@@ -139,7 +153,7 @@ class TestResourceDefaultsAndCustomization:
         task = Task(
             id="custom_attrs_task",
         )
-        task.command.set_for_environment("echo 'custom attributes'", "shared_filesystem")
+        task.command.set_for_environment("echo 'custom attributes'", "distributed_computing")
         task.extra = custom_attrs
 
         assert task.extra["requirements"] == '(OpSysAndVer == "CentOS7")'
@@ -159,10 +173,10 @@ class TestResourceDefaultsAndCustomization:
         task = Task(
             id="custom_task",
         )
-        task.command.set_for_environment("python gpu_analysis.py", "shared_filesystem")
-        task.cpu.set_for_environment(4, "shared_filesystem")
-        task.mem_mb.set_for_environment(8192, "shared_filesystem")
-        task.gpu.set_for_environment(1, "shared_filesystem")
+        task.command.set_for_environment("python gpu_analysis.py", "distributed_computing")
+        task.cpu.set_for_environment(4, "distributed_computing")
+        task.mem_mb.set_for_environment(8192, "distributed_computing")
+        task.gpu.set_for_environment(1, "distributed_computing")
         task.extra = custom_attrs
         wf.add_task(task)
 
@@ -184,15 +198,13 @@ class TestResourceDefaultsAndCustomization:
 
     def test_mixed_resource_specifications(self):
         """Test mixing standard and custom resource specifications."""
-        task = Task(
-            id="mixed_resources",
-            command="python complex_job.py",
-        )
-        task.cpu.set_for_environment(16, "shared_filesystem")
-        task.mem_mb.set_for_environment(32768, "shared_filesystem")
-        task.disk_mb.set_for_environment(100000, "shared_filesystem")
-        task.gpu.set_for_environment(2, "shared_filesystem")
-        task.gpu_mem_mb.set_for_environment(8000, "shared_filesystem")
+        task = Task(id="mixed_resources")
+        task.command.set_for_environment("python complex_job.py", "distributed_computing")
+        task.cpu.set_for_environment(16, "distributed_computing")
+        task.mem_mb.set_for_environment(32768, "distributed_computing")
+        task.disk_mb.set_for_environment(100000, "distributed_computing")
+        task.gpu.set_for_environment(2, "distributed_computing")
+        task.gpu_mem_mb.set_for_environment(8000, "distributed_computing")
         task.extra = {
                     "requirements": '(OpSysAndVer == "CentOS7")',
                     "+WantGPULab": "true",
@@ -200,11 +212,11 @@ class TestResourceDefaultsAndCustomization:
         }
 
         # Standard resources
-        assert task.cpu.get_value_with_default("shared_filesystem") == 16
-        assert task.mem_mb.get_value_with_default("shared_filesystem") == 32768
-        assert task.disk_mb.get_value_with_default("shared_filesystem") == 100000
-        assert task.gpu.get_value_with_default("shared_filesystem") == 2
-        assert task.gpu_mem_mb.get_value_with_default("shared_filesystem") == 8000
+        assert task.cpu.get_value_with_default("distributed_computing") == 16
+        assert task.mem_mb.get_value_with_default("distributed_computing") == 32768
+        assert task.disk_mb.get_value_with_default("distributed_computing") == 100000
+        assert task.gpu.get_value_with_default("distributed_computing") == 2
+        assert task.gpu_mem_mb.get_value_with_default("distributed_computing") == 8000
         assert task.extra["requirements"] == '(OpSysAndVer == "CentOS7")'
         assert task.extra["+WantGPULab"] == "true"
         assert task.extra["rank"] == "Memory"
@@ -221,9 +233,14 @@ class TestWorkflowValidationAndErrorHandling:
         # Valid JSON should work
         valid_config = '{"default_memory": "8GB", "default_cpus": 4}'
         config_dict = json.loads(valid_config)
-        wf = Workflow(name="valid_config", config=config_dict)
-        assert wf.config["default_memory"] == "8GB"
-        assert wf.config["default_cpus"] == 4
+        
+        # Create metadata spec with config data
+        from wf2wf.core import MetadataSpec
+        metadata = MetadataSpec(format_specific={"config": config_dict})
+        
+        wf = Workflow(name="valid_config", metadata=metadata)
+        assert wf.metadata.format_specific["config"]["default_memory"] == "8GB"
+        assert wf.metadata.format_specific["config"]["default_cpus"] == 4
 
         # Invalid JSON should raise appropriate error
         invalid_config = (
@@ -235,37 +252,36 @@ class TestWorkflowValidationAndErrorHandling:
     def test_resource_validation_edge_cases(self):
         """Test resource validation with edge cases."""
         # Zero resources should be allowed
-        task_zero = Task(
-            id="zero_resources",
-            command="echo 'minimal'",
-        )
-        task_zero.cpu.set_for_environment(0, "shared_filesystem")
-        task_zero.mem_mb.set_for_environment(0, "shared_filesystem")
-        task_zero.disk_mb.set_for_environment(0, "shared_filesystem")
-        assert task_zero.cpu.get_value_with_default("shared_filesystem") == 0
-        assert task_zero.mem_mb.get_value_with_default("shared_filesystem") == 0
-        assert task_zero.disk_mb.get_value_with_default("shared_filesystem") == 0
+        task_zero = Task(id="zero_resources")
+        task_zero.command.set_for_environment("echo 'minimal'", "distributed_computing")
+        task_zero.cpu.set_for_environment(0, "distributed_computing")
+        task_zero.mem_mb.set_for_environment(0, "distributed_computing")
+        task_zero.disk_mb.set_for_environment(0, "distributed_computing")
+        assert task_zero.cpu.get_value_with_default("distributed_computing") == 0
+        assert task_zero.mem_mb.get_value_with_default("distributed_computing") == 0
+        assert task_zero.disk_mb.get_value_with_default("distributed_computing") == 0
 
         # Large resource values should be allowed
-        task_large = Task(
-            id="large_resources",
-            command="echo 'large'",
-        )
-        task_large.cpu.set_for_environment(128, "shared_filesystem")
-        task_large.mem_mb.set_for_environment(1048576, "shared_filesystem")
-        task_large.disk_mb.set_for_environment(10485760, "shared_filesystem")
-        assert task_large.cpu.get_value_with_default("shared_filesystem") == 128
-        assert task_large.mem_mb.get_value_with_default("shared_filesystem") == 1048576
-        assert task_large.disk_mb.get_value_with_default("shared_filesystem") == 10485760
+        task_large = Task(id="large_resources")
+        task_large.command.set_for_environment("echo 'large'", "distributed_computing")
+        task_large.cpu.set_for_environment(128, "distributed_computing")
+        task_large.mem_mb.set_for_environment(1048576, "distributed_computing")
+        task_large.disk_mb.set_for_environment(10485760, "distributed_computing")
+        assert task_large.cpu.get_value_with_default("distributed_computing") == 128
+        assert task_large.mem_mb.get_value_with_default("distributed_computing") == 1048576
+        assert task_large.disk_mb.get_value_with_default("distributed_computing") == 10485760
 
     def test_workflow_consistency_validation(self):
         """Test validation of workflow consistency."""
         wf = Workflow(name="consistency_test")
 
         # Add tasks
-        task1 = Task(id="task1", command="echo 'task1'")
-        task2 = Task(id="task2", command="echo 'task2'")
-        task3 = Task(id="task3", command="echo 'task3'")
+        task1 = Task(id="task1")
+        task1.command.set_for_environment("echo 'task1'", "distributed_computing")
+        task2 = Task(id="task2")
+        task2.command.set_for_environment("echo 'task2'", "distributed_computing")
+        task3 = Task(id="task3")
+        task3.command.set_for_environment("echo 'task3'", "distributed_computing")
 
         wf.add_task(task1)
         wf.add_task(task2)
@@ -290,35 +306,41 @@ class TestIntegrationScenarios:
 
     def test_complex_workflow_integration(self, tmp_path):
         """Test complex workflow with multiple features combined."""
-        wf = Workflow(
-            name="complex_integration",
-            config={"default_memory": "4GB", "conda_prefix": "/opt/conda/envs"},
-            meta={"author": "integration_test", "version": "1.0"},
-        )
+        # Create metadata spec with config and meta data
+        from wf2wf.core import MetadataSpec
+        metadata = MetadataSpec(format_specific={
+            "config": {"default_memory": "4GB", "conda_prefix": "/opt/conda/envs"},
+            "meta": {"author": "integration_test", "version": "1.0"}
+        })
+        
+        wf = Workflow(name="complex_integration", metadata=metadata)
 
         # Task with conda environment and custom resources
         conda_task = Task(
             id="conda_analysis",
-            command="python analyze.py",
         )
-        conda_task.cpu.set_for_environment(8, "shared_filesystem")
-        conda_task.mem_mb.set_for_environment(16384, "shared_filesystem")
+        conda_task.command.set_for_environment("python analyze.py", "distributed_computing")
+        conda_task.cpu.set_for_environment(8, "distributed_computing")
+        conda_task.mem_mb.set_for_environment(16384, "distributed_computing")
+        conda_task.conda.set_for_environment("analysis_env.yaml", "distributed_computing")
         conda_task.extra = {"requirements": "(HasLargeScratch == True)"}
         wf.add_task(conda_task)
 
         # Task with container and GPU
         container_task = Task(
             id="gpu_processing",
-            command="python gpu_process.py",
         )
-        container_task.cpu.set_for_environment(4, "shared_filesystem")
-        container_task.mem_mb.set_for_environment(8192, "shared_filesystem")
-        container_task.gpu.set_for_environment(1, "shared_filesystem")
-        container_task.gpu_mem_mb.set_for_environment(4000, "shared_filesystem")
+        container_task.command.set_for_environment("python gpu_process.py", "distributed_computing")
+        container_task.cpu.set_for_environment(4, "distributed_computing")
+        container_task.mem_mb.set_for_environment(8192, "distributed_computing")
+        container_task.gpu.set_for_environment(1, "distributed_computing")
+        container_task.gpu_mem_mb.set_for_environment(4000, "distributed_computing")
+        container_task.container.set_for_environment("docker://gpu-python:latest", "distributed_computing")
         wf.add_task(container_task)
 
         # Regular task
-        regular_task = Task(id="final_summary", command="python summarize.py")
+        regular_task = Task(id="final_summary")
+        regular_task.command.set_for_environment("python summarize.py", "distributed_computing")
         wf.add_task(regular_task)
 
         # Add dependencies
@@ -387,12 +409,25 @@ class TestIntegrationScenarios:
 
         # Add tasks to workflow
         for task_config in tasks_config:
-            task = Task(
-                id=task_config["id"],
-                command=task_config["command"],
-                environment=task_config.get("environment"),
-                resources=task_config["resources"],
-            )
+            task = Task(id=task_config["id"])
+            task.command.set_for_environment(task_config["command"], "distributed_computing")
+            
+            # Set resources
+            if "resources" in task_config:
+                resources = task_config["resources"]
+                if "cpu" in resources:
+                    task.cpu.set_for_environment(resources["cpu"], "distributed_computing")
+                if "mem_mb" in resources:
+                    task.mem_mb.set_for_environment(resources["mem_mb"], "distributed_computing")
+            
+            # Set environment-specific values
+            if "environment" in task_config:
+                env = task_config["environment"]
+                if "conda" in env:
+                    task.conda.set_for_environment(env["conda"], "distributed_computing")
+                if "container" in env:
+                    task.container.set_for_environment(env["container"], "distributed_computing")
+            
             wf.add_task(task)
 
         # Add dependencies

@@ -9,7 +9,7 @@ import sys
 import pathlib
 
 # Ensure local package import
-proj_root = pathlib.Path(__file__).resolve().parents[2]
+proj_root = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(proj_root))
 
 from wf2wf.importers import snakemake as sm_importer

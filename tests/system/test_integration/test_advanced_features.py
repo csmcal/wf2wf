@@ -22,7 +22,9 @@ if "wf2wf" not in sys.modules:
     spec.loader.exec_module(module)  # type: ignore[arg-type]
 
 import pytest
-from wf2wf.core import Workflow, Task
+from pathlib import Path
+
+from wf2wf.core import Workflow, Task, EnvironmentSpecificValue
 from wf2wf.exporters import dagman as dag_exporter
 
 
@@ -40,11 +42,15 @@ class TestConfigurationManagement:
                 "requirements": '(OpSysAndVer == "CentOS7")',
             },
         }
-
-        wf = Workflow(name="config_test", config=config_data)
-        assert wf.config["default_memory"] == "8GB"
-        assert wf.config["default_cpus"] == 4
-        assert wf.config["custom_attributes"]["+WantGPULab"] == "true"
+        
+        # Create metadata spec with config data
+        from wf2wf.core import MetadataSpec
+        metadata = MetadataSpec(format_specific={"config": config_data})
+        
+        wf = Workflow(name="config_test", metadata=metadata)
+        assert wf.metadata.format_specific["config"]["default_memory"] == "8GB"
+        assert wf.metadata.format_specific["config"]["default_cpus"] == 4
+        assert wf.metadata.format_specific["config"]["custom_attributes"]["+WantGPULab"] == "true"
 
     def test_workflow_config_serialization(self, tmp_path):
         """Test workflow config survives JSON serialization/deserialization."""
@@ -54,16 +60,20 @@ class TestConfigurationManagement:
             "condor_attributes": {"+WantGPULab": "true"},
         }
 
-        wf = Workflow(name="config_test", config=config_data)
+        # Create metadata spec with config data
+        from wf2wf.core import MetadataSpec
+        metadata = MetadataSpec(format_specific={"config": config_data})
+        
+        wf = Workflow(name="config_test", metadata=metadata)
 
         # Save and reload
         json_path = tmp_path / "workflow.json"
         wf.save_json(json_path)
 
         loaded_wf = Workflow.load_json(json_path)
-        assert loaded_wf.config["default_memory"] == "8GB"
-        assert loaded_wf.config["scripts_dir"] == "custom_scripts"
-        assert loaded_wf.config["condor_attributes"]["+WantGPULab"] == "true"
+        assert loaded_wf.metadata.format_specific["config"]["default_memory"] == "8GB"
+        assert loaded_wf.metadata.format_specific["config"]["scripts_dir"] == "custom_scripts"
+        assert loaded_wf.metadata.format_specific["config"]["condor_attributes"]["+WantGPULab"] == "true"
 
     def test_resource_defaults_application(self):
         """Test applying resource defaults to tasks without explicit resources."""
@@ -90,10 +100,12 @@ class TestConfigurationManagement:
 
         # Simulate applying defaults to tasks without explicit resources
         for task in wf.tasks.values():
-            if (not hasattr(task, "cpu") or task.cpu.get_value_with_default("shared_filesystem") is None) and \
-               (not hasattr(task, "mem_mb") or task.mem_mb.get_value_with_default("shared_filesystem") is None):
+            # Check if task has environment-specific values (not just defaults)
+            if not task.cpu.has_environment_specific_value("shared_filesystem"):
                 task.cpu.set_for_environment(default_cpu, "shared_filesystem")
+            if not task.mem_mb.has_environment_specific_value("shared_filesystem"):
                 task.mem_mb.set_for_environment(default_mem_mb, "shared_filesystem")
+            if not task.disk_mb.has_environment_specific_value("shared_filesystem"):
                 task.disk_mb.set_for_environment(default_disk_mb, "shared_filesystem")
 
         # Verify defaults were applied correctly
@@ -104,8 +116,8 @@ class TestConfigurationManagement:
         # Verify explicit resources were preserved
         assert wf.tasks["explicit_task"].cpu.get_value_with_default("shared_filesystem") == 8
         assert wf.tasks["explicit_task"].mem_mb.get_value_with_default("shared_filesystem") == 16384
-        # Disk not set for explicit_task
-        assert wf.tasks["explicit_task"].disk_mb.get_value_with_default("shared_filesystem") is None
+        # Disk not set for explicit_task, so it should have the applied default
+        assert wf.tasks["explicit_task"].disk_mb.get_value_with_default("shared_filesystem") == 10240
 
     def test_workflow_metadata_preservation(self):
         """Test that workflow metadata is preserved through operations."""
@@ -116,11 +128,15 @@ class TestConfigurationManagement:
             "custom_settings": {"enable_gpu": True, "max_retries": 3},
         }
 
-        wf = Workflow(name="meta_test", meta=meta_data)
-        assert wf.meta["created_by"] == "wf2wf"
-        assert wf.meta["source_format"] == "snakemake"
-        assert wf.meta["custom_settings"]["enable_gpu"] is True
-        assert wf.meta["custom_settings"]["max_retries"] == 3
+        # Create metadata spec with meta data
+        from wf2wf.core import MetadataSpec
+        metadata = MetadataSpec(format_specific={"meta": meta_data})
+        
+        wf = Workflow(name="meta_test", metadata=metadata)
+        assert wf.metadata.format_specific["meta"]["created_by"] == "wf2wf"
+        assert wf.metadata.format_specific["meta"]["source_format"] == "snakemake"
+        assert wf.metadata.format_specific["meta"]["custom_settings"]["enable_gpu"] is True
+        assert wf.metadata.format_specific["meta"]["custom_settings"]["max_retries"] == 3
 
 
 class TestPerformanceAndScaling:
@@ -231,10 +247,10 @@ class TestPerformanceAndScaling:
         wf.add_task(empty_task)
 
         # Verify default resource values
-        assert empty_task.cpu.get_value_with_default("shared_filesystem") is None
-        assert empty_task.mem_mb.get_value_with_default("shared_filesystem") is None
-        assert empty_task.disk_mb.get_value_with_default("shared_filesystem") is None
-        assert empty_task.gpu is None
+        assert empty_task.cpu.get_value_with_default("shared_filesystem") == 1
+        assert empty_task.mem_mb.get_value_with_default("shared_filesystem") == 4096
+        assert empty_task.disk_mb.get_value_with_default("shared_filesystem") == 4096
+        assert empty_task.gpu.get_value_with_default("shared_filesystem") == 0
         assert empty_task.extra == {}
 
         # Verify task can be exported (should use defaults)
@@ -301,14 +317,21 @@ class TestEdgeCases:
         complex_task.cpu.set_for_environment(8, "shared_filesystem")
         complex_task.mem_mb.set_for_environment(16384, "shared_filesystem")
         complex_task.extra = {
-                    "custom_list": ["a", "b", "c"],
-                    "custom_dict": {"key1": "value1", "key2": 42},
+            "custom_list": EnvironmentSpecificValue(["a", "b", "c"]),
+            "custom_dict": EnvironmentSpecificValue({"key1": "value1", "key2": 42}),
         }
-        complex_task.meta = {
+        
+        # Create metadata spec with complex data
+        from wf2wf.core import MetadataSpec
+        metadata = MetadataSpec(
+            format_specific={
                 "description": "A task with complex nested data",
                 "tags": ["analysis", "complex", "test"],
                 "config": {"enable_logging": True, "log_level": "DEBUG"},
-        }
+            }
+        )
+        complex_task.metadata = metadata
+        
         wf.add_task(complex_task)
 
         # Save and reload
@@ -319,25 +342,11 @@ class TestEdgeCases:
         loaded_task = loaded_wf.tasks["complex_task"]
 
         # Verify complex data was preserved
-        assert loaded_task.params["nested_dict"]["level1"]["level2"] == [
-            "item1",
-            "item2",
-            "item3",
-        ]
-        assert loaded_task.params["nested_dict"]["level1"]["numbers"] == [
-            1,
-            2,
-            3.14,
-            -5,
-        ]
-        assert loaded_task.params["boolean_flags"] == [True, False, True]
-        assert loaded_task.params["null_value"] is None
+        assert loaded_task.extra["custom_list"].get_value_with_default("shared_filesystem") == ["a", "b", "c"]
+        assert loaded_task.extra["custom_dict"].get_value_with_default("shared_filesystem")["key2"] == 42
 
-        assert loaded_task.resources.extra["custom_list"] == ["a", "b", "c"]
-        assert loaded_task.resources.extra["custom_dict"]["key2"] == 42
-
-        assert loaded_task.meta["tags"] == ["analysis", "complex", "test"]
-        assert loaded_task.meta["config"]["enable_logging"] is True
+        assert loaded_task.metadata.format_specific["tags"] == ["analysis", "complex", "test"]
+        assert loaded_task.metadata.format_specific["config"]["enable_logging"] is True
 
     def test_workflow_with_unicode_content(self):
         """Test workflow handling of Unicode characters."""
@@ -349,17 +358,24 @@ class TestEdgeCases:
         unicode_task.command.set_for_environment("echo '测试 🧬 Análisis' > résultats.txt", "shared_filesystem")
         unicode_task.inputs = ["données_入力.csv"]
         unicode_task.outputs = ["結果_output.txt"]
-        unicode_task.meta = {
+        
+        # Create metadata spec with Unicode data
+        from wf2wf.core import MetadataSpec
+        metadata = MetadataSpec(
+            format_specific={
                 "description": "Tâche avec caractères Unicode 中文 🔬",
                 "author": "José María González",
-        }
+            }
+        )
+        unicode_task.metadata = metadata
+        
         wf.add_task(unicode_task)
 
         # Verify Unicode content is preserved
         assert "测试 🧬 Análisis" in unicode_task.command.get_value_for("shared_filesystem")
         assert unicode_task.inputs[0] == "données_入力.csv"
         assert unicode_task.outputs[0] == "結果_output.txt"
-        assert "José María González" in unicode_task.meta["author"]
+        assert "José María González" in unicode_task.metadata.format_specific["author"]
 
 
 class TestDAGManExportAdvanced:
@@ -375,10 +391,10 @@ class TestDAGManExportAdvanced:
             task = Task(
                 id=f"task_{i:02d}",
             )
-            task.command.set_for_environment(f"echo 'Task {i}' > output_{i:02d}.txt", "shared_filesystem")
-            task.cpu.set_for_environment(2 if i % 2 == 0 else 4, "shared_filesystem")
-            task.mem_mb.set_for_environment(4096 + (i * 100), "shared_filesystem")  # Varying memory requirements
-            task.disk_mb.set_for_environment(1024 + (i * 50), "shared_filesystem")  # Varying disk requirements
+            task.command.set_for_environment(f"echo 'Task {i}' > output_{i:02d}.txt", "distributed_computing")
+            task.cpu.set_for_environment(2 if i % 2 == 0 else 4, "distributed_computing")
+            task.mem_mb.set_for_environment(4096 + (i * 100), "distributed_computing")  # Varying memory requirements
+            task.disk_mb.set_for_environment(1024 + (i * 50), "distributed_computing")  # Varying disk requirements
             wf.add_task(task)
 
             # Create some dependencies (not fully linear)

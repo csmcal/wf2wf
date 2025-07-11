@@ -1,17 +1,10 @@
 """Loss tracking and management system for wf2wf.
 
-This module provides comprehensive loss tracking during workflow format conversions,
+This package provides comprehensive loss tracking during workflow format conversions,
 including detection, recording, validation, and restoration of lost information.
-
-For detailed implementation, see the wf2wf.loss submodules:
-- wf2wf.loss.core: Core loss tracking functionality
-- wf2wf.loss.context_detection: Format-specific loss detection
-- wf2wf.loss.export: Export loss detection for different formats
-- wf2wf.loss.import_: Import loss detection and validation
 """
 
-# Import all public functions and classes from submodules
-from .loss.core import (
+from .core import (
     LossEntry,
     reset,
     record,
@@ -23,6 +16,9 @@ from .loss.core import (
     record_environment_adaptation,
     record_spec_class_loss,
     record_environment_specific_loss,
+    record_resource_specification_loss,
+    record_file_transfer_loss,
+    record_error_handling_loss,
     generate_summary,
     create_loss_document,
     write_loss_document,
@@ -30,7 +26,7 @@ from .loss.core import (
     create_loss_sidecar_summary,
 )
 
-from .loss.context_detection import (
+from .context_detection import (
     detect_format_specific_losses,
     record_environment_specific_value_loss,
     validate_environment_specific_value,
@@ -39,7 +35,7 @@ from .loss.context_detection import (
     EnvironmentLossRecorder,
 )
 
-from .loss.export import (
+from .export import (
     detect_and_record_export_losses,
     record_cwl_losses,
     record_dagman_losses,
@@ -49,7 +45,7 @@ from .loss.export import (
     record_galaxy_losses,
 )
 
-from .loss.import_ import (
+from .import_ import (
     detect_and_record_import_losses,
     validate_loss_sidecar,
     validate_loss_entry,
@@ -68,6 +64,9 @@ __all__ = [
     "record_environment_adaptation",
     "record_spec_class_loss",
     "record_environment_specific_loss",
+    "record_resource_specification_loss",
+    "record_file_transfer_loss",
+    "record_error_handling_loss",
     "generate_summary",
     "create_loss_document",
     "write_loss_document",
@@ -95,4 +94,4 @@ __all__ = [
     "detect_and_record_import_losses",
     "validate_loss_sidecar",
     "validate_loss_entry",
-]
+] 

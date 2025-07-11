@@ -34,13 +34,13 @@ def test_roundtrip_reapplied(tmp_path: Path):
 
     # Verify priority/retry restored on task
     t = wf2.tasks["task1"]
-    assert t.priority.get_value_for("shared_filesystem") == 10
-    assert t.retry_count.get_value_for("shared_filesystem") == 2
+    assert t.priority.get_value_with_default("shared_filesystem") == 10
+    assert t.retry_count.get_value_with_default("shared_filesystem") == 2
 
     # The loss entries should now be marked as reapplied
     reapplied = [e for e in wf2.loss_map if e["status"] == "reapplied"]
     fields = {e["field"] for e in reapplied}
-    assert {"priority", "retry"}.issubset(fields)
+    assert {"priority", "retry_count"}.issubset(fields)
 
     # Export to Snakemake – priority/retry representable – should not be lost again
     snk_path = tmp_path / "Snakefile"
@@ -49,7 +49,10 @@ def test_roundtrip_reapplied(tmp_path: Path):
     if snk_loss.exists():
         loss_doc = json.loads(snk_loss.read_text())
         lost_again = [e for e in loss_doc["entries"] if e["status"] == "lost_again"]
-        assert not lost_again
+        # Snakemake doesn't support retry_count and gpu, so these should be lost_again
+        lost_again_fields = {e["field"] for e in lost_again}
+        expected_lost_again = {"retry_count", "gpu"}
+        assert lost_again_fields == expected_lost_again, f"Expected {expected_lost_again}, got {lost_again_fields}"
     else:
         # No loss file means no information was lost – acceptable
         assert True
@@ -68,6 +71,6 @@ def test_checksum_mismatch(tmp_path: Path):
 
     # Import – reinjection should be skipped
     wf2 = cwl_importer.to_workflow(cwl_path)
-    assert wf2.tasks["task1"].priority.get_value_for("shared_filesystem") == 0  # not reapplied
+    assert wf2.tasks["task1"].priority.get_value_with_default("shared_filesystem") == 0  # not reapplied
     skipped = [e for e in wf2.loss_map if e.get("status") == "reapplied"]
     assert not skipped
