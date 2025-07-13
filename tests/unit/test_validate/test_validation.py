@@ -410,21 +410,20 @@ class TestSchemaFileValidation:
 
     def test_schema_file_validation(self):
         """Test that the schema file itself is valid JSON Schema."""
-        schema_file = Path(__file__).parent.parent.parent / "wf2wf" / "schemas" / "v0.1" / "wf.json"
-        
+        # Use project-root-relative path
+        import os
+        repo_root = Path(__file__).parent.parent.parent.parent
+        schema_file = repo_root / "wf2wf" / "schemas" / "v0.1" / "wf.json"
         try:
             with open(schema_file, 'r') as f:
                 schema = json.load(f)
-            
             # Check required JSON Schema fields
             required_fields = ["$schema", "type", "properties"]
             for field in required_fields:
                 if field not in schema:
                     pytest.fail(f"Schema missing required field: {field}")
-            
             # Check that schema has definitions
             assert "definitions" in schema, "Schema missing definitions"
-            
         except Exception as e:
             pytest.fail(f"Schema file validation failed: {e}")
 

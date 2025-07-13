@@ -596,9 +596,9 @@ def detect_and_apply_loss_sidecar(workflow: "Workflow", source_path: Path, verbo
         # Load loss data
         loss_data = json.loads(loss_path.read_text())
         
-        # Validate the loss side-car
+        # Validate the loss side-car (pass workflow IR for checksum)
         from .import_ import validate_loss_sidecar
-        if not validate_loss_sidecar(loss_data, source_path, verbose):
+        if not validate_loss_sidecar(loss_data, workflow, verbose):
             logger.warning(f"Invalid loss side-car: {loss_path}")
             return False
         

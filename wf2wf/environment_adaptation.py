@@ -230,7 +230,9 @@ def _apply_environment_defaults(
     
     # Apply environment isolation defaults
     if env_def.default_environment_isolation:
-        if not task.environment.container and not task.environment.conda:
+        container = task.container.get_value_for(target_environment)
+        conda = task.conda.get_value_for(target_environment)
+        if not container and not conda:
             warnings.append(f"Task {task.id} lacks environment isolation specification")
             recommendations.append(f"Consider adding container or conda specification for {target_environment}")
     

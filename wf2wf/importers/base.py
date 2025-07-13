@@ -431,7 +431,7 @@ class BaseImporter(ABC):
         
         return tasks
     
-    def _create_task_from_data(self, task_id: str, task_data: Dict[str, Any]) -> Task:
+    def _create_task_from_data(self, task_id: str, task_data: Dict[str, Any], source_environment: str = None) -> Task:
         """
         Create a Task object from task data.
         
@@ -441,10 +441,15 @@ class BaseImporter(ABC):
         Args:
             task_id: ID of the task
             task_data: Dictionary containing task data
+            source_environment: Source execution environment (auto-detected if None)
             
         Returns:
             Task object
         """
+        # Auto-detect source environment if not provided
+        if source_environment is None:
+            source_environment = self._get_format_default_execution_model(self._get_source_format())
+        
         # Extract basic task information
         label = task_data.get('label')
         doc = task_data.get('doc')
@@ -453,7 +458,7 @@ class BaseImporter(ABC):
         task = Task(id=task_id, label=label, doc=doc)
         
         # Extract environment-specific values
-        self._extract_environment_specific_values(task, task_data)
+        self._extract_environment_specific_values(task, task_data, source_environment)
         
         # Extract I/O
         task.inputs = task_data.get('inputs', [])
@@ -461,9 +466,9 @@ class BaseImporter(ABC):
         
         # Extract advanced features
         if 'when' in task_data:
-            task.when.set_for_environment(task_data['when'], 'shared_filesystem')
+            task.when.set_for_environment(task_data['when'], source_environment)
         if 'scatter' in task_data:
-            task.scatter.set_for_environment(task_data['scatter'], 'shared_filesystem')
+            task.scatter.set_for_environment(task_data['scatter'], source_environment)
         
         # Extract metadata
         task.provenance = task_data.get('provenance')
@@ -472,7 +477,7 @@ class BaseImporter(ABC):
         
         return task
     
-    def _extract_environment_specific_values(self, task: Task, task_data: Dict[str, Any]):
+    def _extract_environment_specific_values(self, task: Task, task_data: Dict[str, Any], source_environment: str = None):
         """
         Extract environment-specific values from task data.
         
@@ -483,7 +488,12 @@ class BaseImporter(ABC):
         Args:
             task: Task object to populate
             task_data: Dictionary containing task data
+            source_environment: Source execution environment (auto-detected if None)
         """
+        # Auto-detect source environment if not provided
+        if source_environment is None:
+            source_environment = self._get_format_default_execution_model(self._get_source_format())
+        
         # Map of field names to their environment-specific counterparts
         field_mapping = {
             'command': 'command',
@@ -532,8 +542,10 @@ class BaseImporter(ABC):
             if source_field in task_data:
                 value = task_data[source_field]
                 if value is not None:
-                    # Set for shared_filesystem environment by default
-                    task.set_for_environment(target_field, value, 'shared_filesystem')
+                    # Set for the detected source environment
+                    task.set_for_environment(target_field, value, source_environment)
+                    # ALSO set as default value for fallback
+                    task.set_for_environment(target_field, value, None)  # None = default
     
     def _extract_edges(self, parsed_data: Dict[str, Any]) -> List[Edge]:
         """
@@ -579,10 +591,10 @@ class BaseImporter(ABC):
         
         # Enhanced execution model detection
         execution_model = self._detect_execution_model(workflow, source_path, source_format)
-        workflow.execution_model.set_for_environment(execution_model, 'shared_filesystem')
+        workflow.execution_model.set_for_environment(execution_model, execution_model)
         
-        # Infer environment-specific values
-        infer_environment_specific_values(workflow, source_format)
+        # Infer environment-specific values for the detected execution model
+        infer_environment_specific_values(workflow, source_format, execution_model)
         
         # Infer Condor-specific attributes if converting to DAGMan
         if source_format == 'snakemake':

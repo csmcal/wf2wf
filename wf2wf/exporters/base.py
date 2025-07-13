@@ -109,7 +109,7 @@ class BaseExporter(ABC):
         if isinstance(env_value, ScatterSpec):
             return env_value
         
-        # Try to get environment-specific value
+        # Try to get environment-specific value for the target environment
         value = env_value.get_value_for(environment)
         if value is not None:
             return value

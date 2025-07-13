@@ -39,14 +39,12 @@ ADVANCED_EXAMPLES = [
     EXAMPLES_DIR / "advanced" / "retries.smk",
     EXAMPLES_DIR / "advanced" / "container_priority.smk",
     EXAMPLES_DIR / "advanced" / "run_block.smk",
-    EXAMPLES_DIR / "advanced" / "config.yaml",
     EXAMPLES_DIR / "advanced" / "notebook.smk",
     EXAMPLES_DIR / "advanced" / "gpu.smk",
 ]
 
 FULL_WORKFLOW_EXAMPLES = [
     EXAMPLES_DIR / "full_workflow" / "data_analysis.smk",
-    EXAMPLES_DIR / "full_workflow" / "config.yaml",
 ]
 
 ERROR_HANDLING_EXAMPLES = [
@@ -165,6 +163,11 @@ class TestSnakemakeImporterBasic:
         data_dir = snakefile.parent / "data"
         if data_dir.exists():
             shutil.copytree(data_dir, tmp_path / "data")
+        
+        # Copy any raw files (for wildcards examples)
+        raw_dir = snakefile.parent / "raw"
+        if raw_dir.exists():
+            shutil.copytree(raw_dir, tmp_path / "raw")
         
         # Copy any script files
         scripts_dir = snakefile.parent / "scripts"
@@ -307,6 +310,11 @@ class TestSnakemakeImporterAdvanced:
         data_dir = snakefile.parent / "data"
         if data_dir.exists():
             shutil.copytree(data_dir, tmp_path / "data")
+        
+        # Copy any raw files (for wildcards examples)
+        raw_dir = snakefile.parent / "raw"
+        if raw_dir.exists():
+            shutil.copytree(raw_dir, tmp_path / "raw")
         
         # Copy any script files
         scripts_dir = snakefile.parent / "scripts"
@@ -798,7 +806,7 @@ rule all:
         workflow = sm_importer.to_workflow(large_smk, workdir=tmp_path)
         
         # Check that all rules were imported
-        assert len(workflow.tasks) == 101  # 100 rules + all rule
+        assert len(workflow.tasks) == 100  # 100 rules (excluding "all" rule which is a target specification)
         
         # Validate workflow
         workflow.validate()
@@ -861,7 +869,7 @@ rule all:
         workflow = sm_importer.to_workflow(complex_smk, workdir=tmp_path)
         
         # Check dependency structure
-        assert len(workflow.tasks) == 17  # start + branch_a + branch_b + merge + 5*2 chains + all
+        assert len(workflow.tasks) == 17  # start + branch_a + branch_b + merge + 5*2 chains + all (since all has output)
         
         # Check edges
         edges = {(e.parent, e.child) for e in workflow.edges}
@@ -960,10 +968,7 @@ rule param_rule:
 rule env_rule:
     input: "param_output.txt"
     output: "env_output.txt"
-    env:
-        CUSTOM_VAR="custom_value",
-        PATH="/usr/local/bin:$PATH"
-    shell: "echo $CUSTOM_VAR > {output}"
+    shell: "CUSTOM_VAR=custom_value PATH=/usr/local/bin:$PATH echo $CUSTOM_VAR > {output}"
 
 # Rule with log file
 rule log_rule:
@@ -1023,13 +1028,22 @@ rule final:
         
         # Check comprehensive feature coverage
         expected_tasks = [
-            "all", "basic", "conda_rule", "container_rule", "wildcard_rule",
+            "basic", "conda_rule", "container_rule", "wildcard_rule",
             "param_rule", "env_rule", "log_rule", "benchmark_rule",
             "priority_rule", "retry_rule", "final"
         ]
         
         for task_name in expected_tasks:
             assert task_name in workflow.tasks
+        
+        # Check that "all" rule is not included as a task (it's a target specification)
+        assert "all" not in workflow.tasks
+        
+        # Check that the "all" rule's input specification is captured as workflow outputs
+        expected_outputs = ["final_output.txt"]
+        workflow_output_ids = [output.id for output in workflow.outputs]
+        for expected_output in expected_outputs:
+            assert expected_output in workflow_output_ids
         
         # Check specific features
         basic_task = workflow.tasks["basic"]
@@ -1070,6 +1084,11 @@ rule final:
         data_dir = snakefile.parent / "data"
         if data_dir.exists():
             shutil.copytree(data_dir, tmp_path / "data")
+        
+        # Copy any raw files (for wildcards examples)
+        raw_dir = snakefile.parent / "raw"
+        if raw_dir.exists():
+            shutil.copytree(raw_dir, tmp_path / "raw")
         
         # Copy any script files
         scripts_dir = snakefile.parent / "scripts"

@@ -1614,9 +1614,24 @@ class EnvironmentManager:
         if not spec:
             return False
         
+        # Check for container specifications first (these are not files)
+        container_prefixes = ['docker://', 'container://', 'singularity://', 'apptainer://']
+        if any(spec.startswith(prefix) for prefix in container_prefixes):
+            return False
+        
         # Check for common environment file extensions
         env_extensions = ['.yml', '.yaml', '.txt', '.lock']
-        return any(spec.endswith(ext) for ext in env_extensions) or '/' in spec or '\\' in spec
+        if any(spec.endswith(ext) for ext in env_extensions):
+            return True
+        
+        # Check for path separators (but not for container specs)
+        if '/' in spec or '\\' in spec:
+            # Additional check: if it looks like a container image (has : but no file extension)
+            if ':' in spec and not any(spec.endswith(ext) for ext in env_extensions):
+                return False
+            return True
+        
+        return False
     
     def infer_missing_environments(
         self, 
@@ -1676,37 +1691,42 @@ class EnvironmentManager:
         if not command:
             return None
         
-        # Common patterns for container inference
-        patterns = [
-            r'python\s+(\d+\.\d+)',  # python 3.9
-            r'R\s+script',  # R scripts
-            r'perl\s+',  # Perl scripts
-            r'java\s+',  # Java applications
-            r'tensorflow',  # TensorFlow
-            r'pytorch',  # PyTorch
-            r'bioconductor',  # Bioconductor
-        ]
+        # Check for machine learning frameworks first (more specific)
+        if re.search(r'tensorflow', command, re.IGNORECASE):
+            return "tensorflow/tensorflow:latest"
+        if re.search(r'pytorch', command, re.IGNORECASE):
+            return "pytorch/pytorch:latest"
         
-        for pattern in patterns:
-            if re.search(pattern, command, re.IGNORECASE):
-                if 'python' in pattern:
-                    match = re.search(r'python\s+(\d+\.\d+)', command, re.IGNORECASE)
-                    if match:
-                        version = match.group(1)
-                        return f"python:{version}"
-                    return "python:3.9"
-                elif 'R' in pattern:
-                    return "rocker/r-base:latest"
-                elif 'perl' in pattern:
-                    return "perl:latest"
-                elif 'java' in pattern:
-                    return "openjdk:latest"
-                elif 'tensorflow' in pattern:
-                    return "tensorflow/tensorflow:latest"
-                elif 'pytorch' in pattern:
-                    return "pytorch/pytorch:latest"
-                elif 'bioconductor' in pattern:
-                    return "bioconductor/bioconductor_docker:latest"
+        # Check for bioinformatics tools
+        bio_tools = ['blast', 'fastqc', 'bwa', 'samtools', 'gatk', 'bcftools']
+        for tool in bio_tools:
+            if re.search(rf'\b{tool}\b', command, re.IGNORECASE):
+                return "biocontainers/bioconductor_docker:latest"
+        
+        # Check for Python commands (more flexible pattern)
+        if re.search(r'python', command, re.IGNORECASE):
+            # Try to extract version if present
+            version_match = re.search(r'python\s+(\d+\.\d+)', command, re.IGNORECASE)
+            if version_match:
+                version = version_match.group(1)
+                return f"python:{version}"
+            return "python:3.9"
+        
+        # Check for R commands
+        if re.search(r'rscript', command, re.IGNORECASE):
+            return "rocker/r-base:latest"
+        
+        # Check for Perl
+        if re.search(r'perl', command, re.IGNORECASE):
+            return "perl:latest"
+        
+        # Check for Java
+        if re.search(r'java', command, re.IGNORECASE):
+            return "openjdk:latest"
+        
+        # Default for general Linux commands
+        if re.search(r'echo|cat|grep|sed|awk|sort|uniq', command, re.IGNORECASE):
+            return "ubuntu:latest"
         
         return None
     
@@ -1736,19 +1756,17 @@ class EnvironmentManager:
                 return match.group(1)
         
         # Look for common tool patterns that suggest conda environments
-        tool_patterns = [
-            r'fastqc',
-            r'bwa',
-            r'samtools',
-            r'gatk',
-            r'bcftools',
-            r'plink',
-            r'Rscript',
-        ]
+        if re.search(r'python', command, re.IGNORECASE):
+            return "environment.yml"
         
-        for pattern in tool_patterns:
-            if re.search(pattern, command, re.IGNORECASE):
-                return f"{pattern.lower()}-env"
+        if re.search(r'rscript', command, re.IGNORECASE):
+            return "r_environment.yml"
+        
+        # Check for bioinformatics tools
+        bio_tools = ['blast', 'fastqc', 'bwa', 'samtools', 'gatk', 'bcftools']
+        for tool in bio_tools:
+            if re.search(rf'\b{tool}\b', command, re.IGNORECASE):
+                return "bioinformatics.yml"
         
         return None
     

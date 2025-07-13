@@ -148,9 +148,12 @@ def generate(
                 tasks_without_memory.append(task.id)
             if task.resources.disk_mb == 0:
                 tasks_without_disk.append(task.id)
-            if not task.environment.container and not task.environment.conda:
+            # Get environment-specific values for shared_filesystem environment
+            container = task.container.get_value_for('shared_filesystem')
+            conda = task.conda.get_value_for('shared_filesystem')
+            if not container and not conda:
                 tasks_without_containers.append(task.id)
-            if task.retry == 0:
+            if task.retry_count.get_value_for('shared_filesystem') == 0:
                 tasks_without_retry.append(task.id)
             
             # Check file transfer modes

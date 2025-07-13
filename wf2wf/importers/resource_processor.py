@@ -234,7 +234,10 @@ def check_workflow_compatibility(
     if target_format in ["dagman", "nextflow"]:
         uncontainerized_tasks = []
         for task in workflow.tasks.values():
-            if not task.environment.container and not task.environment.conda:
+            # Get environment-specific values for shared_filesystem environment
+            container = task.container.get_value_for('shared_filesystem')
+            conda = task.conda.get_value_for('shared_filesystem')
+            if not container and not conda:
                 uncontainerized_tasks.append(task.id)
         
         if uncontainerized_tasks:
@@ -250,7 +253,7 @@ def check_workflow_compatibility(
     if target_format in ["dagman", "nextflow"]:
         tasks_without_retry = []
         for task in workflow.tasks.values():
-            if task.retry == 0:
+            if task.retry_count.get_value_for('shared_filesystem') == 0:
                 tasks_without_retry.append(task.id)
         
         if tasks_without_retry:
@@ -262,8 +265,8 @@ def check_workflow_compatibility(
             ):
                 # Apply default retry settings
                 for task in workflow.tasks.values():
-                    if task.retry == 0:
-                        task.retry = 2  # Default 2 retries
+                    if task.retry_count.get_value_for('shared_filesystem') == 0:
+                        task.retry_count.set_for_environment(2, 'shared_filesystem')  # Default 2 retries
                 if verbose:
                     print("  Applied default retry settings (2 retries)")
     

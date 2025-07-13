@@ -27,6 +27,7 @@ from wf2wf.core import Workflow, Task
 from wf2wf.exporters import dagman as dag_exporter
 from wf2wf.importers import snakemake as snake_importer
 from wf2wf.core import EnvironmentSpecificValue
+from wf2wf.exporters.dagman import DAGManExporter
 
 
 class TestContainersConda:
@@ -73,8 +74,8 @@ class TestContainersConda:
         """Test DAGMan exporter chooses docker universe for Docker containers."""
         wf = Workflow(name="docker_test")
         task = Task(id="docker_task")
-        task.command.set_for_environment("echo 'hello from docker'", "shared_filesystem")
-        task.container.set_for_environment("docker://python:3.9-slim", "shared_filesystem")
+        task.command.set_for_environment("echo 'hello from docker'", "distributed_computing")
+        task.container.set_for_environment("docker://python:3.9-slim", "distributed_computing")
         wf.add_task(task)
 
         dag_path = tmp_path / "docker_test.dag"
@@ -91,8 +92,8 @@ class TestContainersConda:
         """Test DAGMan exporter chooses vanilla universe + SingularityImage for Singularity."""
         wf = Workflow(name="singularity_test")
         task = Task(id="singularity_task")
-        task.command.set_for_environment("echo 'hello from singularity'", "shared_filesystem")
-        task.container.set_for_environment("/path/to/image.sif", "shared_filesystem")
+        task.command.set_for_environment("echo 'hello from singularity'", "distributed_computing")
+        task.container.set_for_environment("/path/to/image.sif", "distributed_computing")
         wf.add_task(task)
 
         dag_path = tmp_path / "singularity_test.dag"
@@ -109,8 +110,8 @@ class TestContainersConda:
         """Test DAGMan exporter uses vanilla universe for conda environments."""
         wf = Workflow(name="conda_test")
         task = Task(id="conda_task")
-        task.command.set_for_environment("echo 'hello from conda'", "shared_filesystem")
-        task.conda.set_for_environment("environment.yaml", "shared_filesystem")
+        task.command.set_for_environment("echo 'hello from conda'", "distributed_computing")
+        task.conda.set_for_environment("environment.yaml", "distributed_computing")
         wf.add_task(task)
 
         dag_path = tmp_path / "conda_test.dag"
@@ -156,8 +157,15 @@ class TestContainersConda:
                     break
 
             assert container_task is not None, "container_override task not found"
+            # Check for container in shared_filesystem environment (original Snakemake directive)
             assert container_task.container.get_value_for("shared_filesystem") == "docker://python:3.9-slim"
             assert container_task.conda.get_value_for("shared_filesystem") == "environment.yaml"
+
+            # Set container for distributed_computing to match shared_filesystem for export
+            container_task.container.set_for_environment(
+                container_task.container.get_value_for("shared_filesystem"),
+                "distributed_computing"
+            )
 
             # Test DAG export prioritizes container
             dag_path = tmp_path / "test.dag"
@@ -214,10 +222,11 @@ class TestRunBlocksAndScripts:
     def test_write_task_wrapper_script_command(self, tmp_path):
         """Test _write_task_wrapper_script with shell command."""
         task = Task(id="shell_task")
-        task.command.set_for_environment("echo 'hello world' > output.txt", "shared_filesystem")
+        task.command.set_for_environment("echo 'hello world' > output.txt", "distributed_computing")
         script_path = tmp_path / "shell_task.sh"
 
-        dag_exporter._write_task_wrapper_script(task, script_path, "shared_filesystem")
+        exporter = DAGManExporter(target_environment="distributed_computing")
+        exporter._write_task_wrapper_script(task, script_path)
 
         assert script_path.exists()
         assert script_path.is_file()
@@ -231,10 +240,11 @@ class TestRunBlocksAndScripts:
 
     def test_write_task_wrapper_script_python(self, tmp_path):
         """Test _write_task_wrapper_script with Python script."""
-        task = Task(id="python_task", script=EnvironmentSpecificValue("analyze.py", ["shared_filesystem"]))
+        task = Task(id="python_task", script=EnvironmentSpecificValue("analyze.py", ["distributed_computing"]))
         script_path = tmp_path / "python_task.sh"
 
-        dag_exporter._write_task_wrapper_script(task, script_path, "shared_filesystem")
+        exporter = DAGManExporter(target_environment="distributed_computing")
+        exporter._write_task_wrapper_script(task, script_path)
 
         assert script_path.exists()
         assert os.access(script_path, os.X_OK)
@@ -245,10 +255,11 @@ class TestRunBlocksAndScripts:
 
     def test_write_task_wrapper_script_r(self, tmp_path):
         """Test _write_task_wrapper_script with R script."""
-        task = Task(id="r_task", script=EnvironmentSpecificValue("plot.R", ["shared_filesystem"]))
+        task = Task(id="r_task", script=EnvironmentSpecificValue("plot.R", ["distributed_computing"]))
         script_path = tmp_path / "r_task.sh"
 
-        dag_exporter._write_task_wrapper_script(task, script_path, "shared_filesystem")
+        exporter = DAGManExporter(target_environment="distributed_computing")
+        exporter._write_task_wrapper_script(task, script_path)
 
         assert script_path.exists()
         assert os.access(script_path, os.X_OK)
@@ -259,10 +270,11 @@ class TestRunBlocksAndScripts:
 
     def test_write_task_wrapper_script_unknown_extension(self, tmp_path):
         """Test _write_task_wrapper_script with unknown script extension."""
-        task = Task(id="unknown_task", script=EnvironmentSpecificValue("process.xyz", ["shared_filesystem"]))
+        task = Task(id="unknown_task", script=EnvironmentSpecificValue("process.xyz", ["distributed_computing"]))
         script_path = tmp_path / "unknown_task.sh"
 
-        dag_exporter._write_task_wrapper_script(task, script_path, "shared_filesystem")
+        exporter = DAGManExporter(target_environment="distributed_computing")
+        exporter._write_task_wrapper_script(task, script_path)
 
         assert script_path.exists()
         assert os.access(script_path, os.X_OK)
@@ -276,7 +288,8 @@ class TestRunBlocksAndScripts:
         task = Task(id="empty_task")
         script_path = tmp_path / "empty_task.sh"
 
-        dag_exporter._write_task_wrapper_script(task, script_path, "shared_filesystem")
+        exporter = DAGManExporter(target_environment="distributed_computing")
+        exporter._write_task_wrapper_script(task, script_path)
 
         assert script_path.exists()
         assert os.access(script_path, os.X_OK)
@@ -360,12 +373,12 @@ class TestRetryAndPriority:
 
         # Task with retries
         task1 = Task(id="retry_task")
-        task1.retry_count.set_for_environment(3, "shared_filesystem")
+        task1.retry_count.set_for_environment(3, "distributed_computing")
         wf.add_task(task1)
 
         # Task without retries
         task2 = Task(id="no_retry_task")
-        task2.retry_count.set_for_environment(0, "shared_filesystem")
+        task2.retry_count.set_for_environment(0, "distributed_computing")
         wf.add_task(task2)
 
         dag_path = tmp_path / "retry_test.dag"
@@ -385,12 +398,12 @@ class TestRetryAndPriority:
 
         # Task with priority
         task1 = Task(id="high_priority")
-        task1.priority.set_for_environment(10, "shared_filesystem")
+        task1.priority.set_for_environment(10, "distributed_computing")
         wf.add_task(task1)
 
         # Task with default priority (0)
         task2 = Task(id="normal_priority")
-        task2.priority.set_for_environment(0, "shared_filesystem")
+        task2.priority.set_for_environment(0, "distributed_computing")
         wf.add_task(task2)
 
         dag_path = tmp_path / "priority_test.dag"
@@ -410,9 +423,7 @@ class TestRetryAndPriority:
             for line in dag_content.split("\n")
             if "PRIORITY" in line and "normal_priority" in line
         ]
-        assert (
-            len(lines_with_priority) == 0
-        )  # Normal priority task should not have PRIORITY directive
+        assert len(lines_with_priority) == 0
 
     def test_snakemake_retries_parsing(self, tmp_path):
         """Test parsing of Snakemake retries directive."""
@@ -470,6 +481,16 @@ class TestRetryAndPriority:
             assert no_retry_task is not None, "C_no_retry task not found"
             assert no_retry_task.retry_count.get_value_for("shared_filesystem") == 0
 
+            # Set retry values for distributed_computing to match shared_filesystem for export
+            retry_task.retry_count.set_for_environment(
+                retry_task.retry_count.get_value_for("shared_filesystem"),
+                "distributed_computing"
+            )
+            no_retry_task.retry_count.set_for_environment(
+                no_retry_task.retry_count.get_value_for("shared_filesystem"),
+                "distributed_computing"
+            )
+
             # Test DAG export includes retry lines
             dag_path = tmp_path / "retries.dag"
             scripts_dir = tmp_path / "scripts"
@@ -479,12 +500,15 @@ class TestRetryAndPriority:
 
             dag_content = dag_path.read_text()
 
+            # Create exporter instance for sanitize method
+            exporter = DAGManExporter(target_environment="distributed_computing")
+            
             # Should have RETRY line for task with retries > 0
-            retry_task_name = dag_exporter._sanitize_condor_job_name(retry_task.id)
+            retry_task_name = exporter._sanitize_condor_job_name(retry_task.id)
             assert f"RETRY {retry_task_name} 2" in dag_content
 
             # Should NOT have RETRY line for task with retries = 0
-            no_retry_task_name = dag_exporter._sanitize_condor_job_name(
+            no_retry_task_name = exporter._sanitize_condor_job_name(
                 no_retry_task.id
             )
             assert f"RETRY {no_retry_task_name}" not in dag_content
@@ -523,6 +547,14 @@ class TestIntegrationWorkflows:
         try:
             # Parse workflow
             wf = snake_importer.to_workflow(snakefile, workdir=tmp_path)
+
+            # Set container for distributed_computing to match shared_filesystem for export
+            for task in wf.tasks.values():
+                if task.container.get_value_for("shared_filesystem"):
+                    task.container.set_for_environment(
+                        task.container.get_value_for("shared_filesystem"),
+                        "distributed_computing"
+                    )
 
             # Export to DAG
             dag_path = tmp_path / "workflow.dag"
@@ -605,6 +637,7 @@ class TestIntegrationWorkflows:
 
             # Check that tasks with conda environments have universe = vanilla
             # and tasks without conda/container don't have universe = docker
+            exporter = DAGManExporter(target_environment="distributed_computing")
             for submit_file in submit_files:
                 content = submit_file.read_text()
                 submit_name = submit_file.stem
@@ -612,13 +645,13 @@ class TestIntegrationWorkflows:
                 # Find corresponding task
                 task = None
                 for task_id, t in wf.tasks.items():
-                    if dag_exporter._sanitize_condor_job_name(task_id) == submit_name:
+                    if exporter._sanitize_condor_job_name(task_id) == submit_name:
                         task = t
                         break
                 
                 if task:
-                    conda_env = task.conda.get_value_for("shared_filesystem")
-                    container = task.container.get_value_for("shared_filesystem")
+                    conda_env = task.conda.get_value_for("distributed_computing")
+                    container = task.container.get_value_for("distributed_computing")
                     
                     if conda_env and not container:
                         # Task has conda but no container - should have universe = vanilla

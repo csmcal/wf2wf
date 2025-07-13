@@ -199,11 +199,12 @@ class BCOExporter(BaseExporter):
             logger.info(f"  Inputs: {len(workflow.inputs)}")
             logger.info(f"  Outputs: {len(workflow.outputs)}")
         
-        # Use the existing from_workflow logic
+        # Call the module-level _export_bco_workflow function directly
         _export_bco_workflow(workflow, output_path, **opts)
-        
-        if self.verbose:
-            logger.info(f"✓ BCO workflow exported to {output_path}")
+    
+    def from_workflow(self, workflow: Workflow, output_path: Path, **opts: Any) -> None:
+        """Export workflow to BCO format (method interface for CLI compatibility)."""
+        self._generate_output(workflow, output_path, **opts)
 
 
 def _export_bco_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any):
@@ -240,7 +241,9 @@ def _export_bco_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any):
     if include_cwl:
         try:
             cwl_path = out_path.with_suffix(".cwl")
-            from_workflow(wf, cwl_path)
+            # Import CWL exporter to avoid circular call
+            from .cwl import from_workflow as cwl_from_workflow
+            cwl_from_workflow(wf, cwl_path)
             bco["execution_domain"]["script"] = cwl_path.name
         except Exception as e:
             raise RuntimeError(f"Failed to generate CWL alongside BCO: {e}")

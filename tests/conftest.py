@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 from unittest.mock import patch, MagicMock
 from wf2wf.core import Workflow, Task, EnvironmentSpecificValue
-from wf2wf.interactive import get_prompter, set_test_responses, clear_test_responses
+from wf2wf.interactive import get_prompter
 
 
 @pytest.fixture(scope="session")

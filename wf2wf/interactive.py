@@ -24,18 +24,6 @@ class InteractivePrompter:
     def __init__(self, interactive: bool = True, verbose: bool = False):
         self.interactive = interactive
         self.verbose = verbose
-        self._test_responses: List[str] = []
-        self._test_mode = False
-    
-    def set_test_responses(self, responses: List[str]) -> None:
-        """Set test responses for automated testing."""
-        self._test_responses = responses.copy()
-        self._test_mode = True
-    
-    def clear_test_responses(self) -> None:
-        """Clear test responses."""
-        self._test_responses = []
-        self._test_mode = False
     
     def prompt_for_missing_values(
         self, 
@@ -170,14 +158,7 @@ class InteractivePrompter:
             logger.debug(f"Prompting: {prompt} (type: {value_type}, default: {default})")
         
         try:
-            if self._test_mode:
-                if not self._test_responses:
-                    logger.warning("No test responses available, using default")
-                    return default
-                user_input = self._test_responses.pop(0)
-                logger.debug(f"Test response: {user_input}")
-            else:
-                user_input = input(prompt).strip()
+            user_input = input(prompt).strip()
             
             if not user_input:
                 if self.verbose:
@@ -206,14 +187,7 @@ class InteractivePrompter:
             print(f"  {i}. {choice}{marker}")
         
         try:
-            if self._test_mode:
-                if not self._test_responses:
-                    logger.warning("No test responses available, using default")
-                    return default
-                user_input = self._test_responses.pop(0)
-                logger.debug(f"Test choice response: {user_input}")
-            else:
-                user_input = input("Enter choice: ").strip()
+            user_input = input("Enter choice: ").strip()
             
             if not user_input:
                 if self.verbose:
@@ -296,16 +270,6 @@ def prompt_for_missing_values(
 ) -> None:
     """Convenience function for prompting for missing values."""
     _global_prompter.prompt_for_missing_values(workflow, context, target_environment)
-
-
-def set_test_responses(responses: List[str]) -> None:
-    """Set test responses for automated testing."""
-    _global_prompter.set_test_responses(responses)
-
-
-def clear_test_responses() -> None:
-    """Clear test responses."""
-    _global_prompter.clear_test_responses() 
 
 
 def prompt_for_missing_information(workflow: Workflow, source_format: str) -> None:

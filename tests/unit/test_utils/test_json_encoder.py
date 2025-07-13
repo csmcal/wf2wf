@@ -20,8 +20,8 @@ def test_environment_specific_value_serialization():
     
     # Create an EnvironmentSpecificValue with multiple environments
     env_value = EnvironmentSpecificValue(value=4, environments=["shared_filesystem"])
-    env_value.set_for_environment(8, "distributed_computing", "inferred", 0.8)
-    env_value.set_for_environment(16, "cloud_native", "explicit", 1.0)
+    env_value.set_for_environment(8, "distributed_computing")
+    env_value.set_for_environment(16, "cloud_native")
     
     # Serialize
     serialized = json.dumps(env_value, cls=WF2WFJSONEncoder, indent=2)

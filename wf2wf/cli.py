@@ -22,6 +22,9 @@ import datetime
 import shutil
 import time
 import platform
+import logging
+import subprocess
+import tempfile
 
 import click
 
@@ -121,12 +124,12 @@ except ImportError:
         galaxy_importer = None
 
 try:
-    from wf2wf.exporters import dagman as dagman_exporter
+    from wf2wf.exporters.dagman import DAGManExporter as dagman_exporter
 
     DAGMAN_EXPORT_AVAILABLE = True
 except ImportError:
     try:
-        from exporters import dagman as dagman_exporter
+        from exporters.dagman import DAGManExporter as dagman_exporter
 
         DAGMAN_EXPORT_AVAILABLE = True
     except ImportError:
@@ -134,12 +137,12 @@ except ImportError:
         dagman_exporter = None
 
 try:
-    from wf2wf.exporters import snakemake as snakemake_exporter
+    from wf2wf.exporters.snakemake import SnakemakeExporter as snakemake_exporter
 
     SNAKEMAKE_EXPORT_AVAILABLE = True
 except ImportError:
     try:
-        from exporters import snakemake as snakemake_exporter
+        from exporters.snakemake import SnakemakeExporter as snakemake_exporter
 
         SNAKEMAKE_EXPORT_AVAILABLE = True
     except ImportError:
@@ -147,12 +150,12 @@ except ImportError:
         snakemake_exporter = None
 
 try:
-    from wf2wf.exporters import cwl as cwl_exporter
+    from wf2wf.exporters.cwl import CWLExporter as cwl_exporter
 
     CWL_EXPORT_AVAILABLE = True
 except ImportError:
     try:
-        from exporters import cwl as cwl_exporter
+        from exporters.cwl import CWLExporter as cwl_exporter
 
         CWL_EXPORT_AVAILABLE = True
     except ImportError:
@@ -160,12 +163,12 @@ except ImportError:
         cwl_exporter = None
 
 try:
-    from wf2wf.exporters import nextflow as nextflow_exporter
+    from wf2wf.exporters.nextflow import NextflowExporter as nextflow_exporter
 
     NEXTFLOW_EXPORT_AVAILABLE = True
 except ImportError:
     try:
-        from exporters import nextflow as nextflow_exporter
+        from exporters.nextflow import NextflowExporter as nextflow_exporter
 
         NEXTFLOW_EXPORT_AVAILABLE = True
     except ImportError:
@@ -173,12 +176,12 @@ except ImportError:
         nextflow_exporter = None
 
 try:
-    from wf2wf.exporters import wdl as wdl_exporter
+    from wf2wf.exporters.wdl import WDLExporter as wdl_exporter
 
     WDL_EXPORT_AVAILABLE = True
 except ImportError:
     try:
-        from exporters import wdl as wdl_exporter
+        from exporters.wdl import WDLExporter as wdl_exporter
 
         WDL_EXPORT_AVAILABLE = True
     except ImportError:
@@ -186,17 +189,31 @@ except ImportError:
         wdl_exporter = None
 
 try:
-    from wf2wf.exporters import galaxy as galaxy_exporter
+    from wf2wf.exporters.galaxy import GalaxyExporter as galaxy_exporter
 
     GALAXY_EXPORT_AVAILABLE = True
 except ImportError:
     try:
-        from exporters import galaxy as galaxy_exporter
+        from exporters.galaxy import GalaxyExporter as galaxy_exporter
 
         GALAXY_EXPORT_AVAILABLE = True
     except ImportError:
         GALAXY_EXPORT_AVAILABLE = False
         galaxy_exporter = None
+
+# Import adaptation system
+try:
+    from wf2wf.adaptation import adapt_workflow, AdaptationRegistry, EnvironmentMapper
+    ADAPTATION_AVAILABLE = True
+except ImportError:
+    try:
+        from adaptation import adapt_workflow, AdaptationRegistry, EnvironmentMapper
+        ADAPTATION_AVAILABLE = True
+    except ImportError:
+        ADAPTATION_AVAILABLE = False
+        adapt_workflow = None
+        AdaptationRegistry = None
+        EnvironmentMapper = None
 
 
 # Import shared format detection utilities
@@ -207,6 +224,9 @@ from wf2wf.utils.format_detection import (
     INPUT_FORMAT_MAP,
     OUTPUT_FORMAT_MAP
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def get_importer(fmt: str):
@@ -245,7 +265,7 @@ def get_exporter(fmt: str):
         "nextflow": nextflow_exporter if NEXTFLOW_EXPORT_AVAILABLE else None,
         "wdl": wdl_exporter if WDL_EXPORT_AVAILABLE else None,
         "galaxy": galaxy_exporter if GALAXY_EXPORT_AVAILABLE else None,
-        "bco": None,  # will be resolved via exporters.load dynamic import
+        "bco": None,  # will be resolved via exporters.get_exporter
         "json": None,
         "yaml": None,
     }
@@ -259,9 +279,9 @@ def get_exporter(fmt: str):
                 f"Snakemake exporter is not available. Please install snakemake: 'pip install snakemake' or 'conda install snakemake'"
             )
         try:
-            from wf2wf.exporters import load as _load_exporter
+            from wf2wf.exporters import get_exporter as _get_exporter
 
-            exporter = _load_exporter(fmt)
+            exporter = _get_exporter(fmt)
         except Exception as e:
             raise click.ClickException(
                 f"Exporter for format '{fmt}' is not available or not implemented: {e}"
@@ -417,9 +437,8 @@ def cli():
 )
 @click.option(
     "--target-environment",
-    type=click.Choice(["shared", "cluster", "cloud", "hpc"]),
-    default="cluster",
-    help="Target environment for resource validation (default: cluster)",
+    type=click.Choice(["shared_filesystem", "distributed_computing", "hybrid", "cloud_native", "unknown"]),
+    help="Target execution environment (auto-detected from output format if not specified)",
 )
 # DAGMan export options
 @click.option(
@@ -517,6 +536,29 @@ def cli():
     multiple=True,
     help="Ontology IRI describing workflow intent (can repeat)",
 )
+# Adaptation options
+@click.option(
+    "--adapt-environments",
+    is_flag=True,
+    default=True,
+    help="Enable environment adaptation (default: enabled)",
+)
+@click.option(
+    "--adaptation-strategy",
+    type=click.Choice(["conservative", "aggressive", "balanced"]),
+    default="balanced",
+    help="Adaptation strategy for resource scaling (default: balanced)",
+)
+@click.option(
+    "--source-environment",
+    type=click.Choice(["shared_filesystem", "distributed_computing", "hybrid", "cloud_native", "unknown"]),
+    help="Source execution environment (auto-detected if not specified)",
+)
+@click.option(
+    "--adaptation-report",
+    type=click.Path(path_type=Path),
+    help="Write adaptation report to this file",
+)
 def convert(
     input_path: Path,
     input_format: Optional[str],
@@ -531,7 +573,7 @@ def convert(
     resource_profile: Optional[str],
     infer_resources: bool,
     validate_resources: bool,
-    target_environment: str,
+    target_environment: Optional[str],
     scripts_dir: Optional[Path],
     default_memory: str,
     default_disk: str,
@@ -552,6 +594,11 @@ def convert(
     intent: tuple,
     report_md: Union[Path, None],
     interactive: bool,
+    # Adaptation parameters
+    adapt_environments: bool,
+    adaptation_strategy: str,
+    source_environment: Optional[str],
+    adaptation_report: Optional[Path],
 ):
     """Convert workflows between different formats.
 
@@ -652,6 +699,9 @@ def convert(
         click.echo(f"Input: {input_path}")
         click.echo(f"Output: {output_path}")
 
+    # Initialize content_analysis for both interactive and non-interactive modes
+    content_analysis = None
+
     # ------------------------------------------------------------------
     # Interactive execution model selection
     # ------------------------------------------------------------------
@@ -672,23 +722,38 @@ def convert(
                 click.echo("Using automatic execution model detection...")
         else:
             # User wants to specify manually
-            click.echo("Please enter your choice (1-5): ", nl=False)
-            try:
-                choice = input().strip()
-                choice_map = {
-                    "1": "shared_filesystem",
-                    "2": "distributed_computing", 
-                    "3": "hybrid",
-                    "4": "cloud_native",
-                    "5": "unknown"
-                }
-                execution_model = choice_map.get(choice, "unknown")
-                if verbose:
-                    click.echo(f"User specified execution model: {execution_model}")
-                # Skip automatic detection
-                content_analysis = None
-            except (EOFError, KeyboardInterrupt):
-                raise click.ClickException("Aborted by user")
+            click.echo("Please select the execution model:")
+            click.echo("  1) Shared Filesystem (NFS, Lustre, local cluster)")
+            click.echo("  2) Distributed Computing (HTCondor, Grid, cloud batch)")
+            click.echo("  3) Hybrid (Nextflow, mixed cloud/HPC)")
+            click.echo("  4) Cloud-native (S3/GCS/Azure, serverless)")
+            click.echo("  5) Other / Not sure")
+            
+            # Use the existing prompt system for choice selection
+            choice_map = {
+                "1": "shared_filesystem",
+                "2": "distributed_computing", 
+                "3": "hybrid",
+                "4": "cloud_native",
+                "5": "unknown"
+            }
+            
+            # Present choices one by one and let user select
+            if _prompt.ask("Use Shared Filesystem (option 1)?", default=False):
+                execution_model = "shared_filesystem"
+            elif _prompt.ask("Use Distributed Computing (option 2)?", default=False):
+                execution_model = "distributed_computing"
+            elif _prompt.ask("Use Hybrid (option 3)?", default=False):
+                execution_model = "hybrid"
+            elif _prompt.ask("Use Cloud-native (option 4)?", default=False):
+                execution_model = "cloud_native"
+            else:
+                execution_model = "unknown"
+            
+            if verbose:
+                click.echo(f"User specified execution model: {execution_model}")
+            # Skip automatic detection
+            content_analysis = None
     else:
         # Non-interactive mode - use automatic detection
         if verbose:
@@ -828,6 +893,88 @@ def convert(
         )
 
     # ------------------------------------------------------------------
+    # Environment Adaptation
+    # ------------------------------------------------------------------
+    
+    if adapt_environments and ADAPTATION_AVAILABLE:
+        if verbose:
+            click.echo("\n🔧 Applying environment adaptation...")
+        
+        # Determine source and target environments
+        actual_source_env = source_environment
+        actual_target_env = target_environment
+        
+        # Auto-detect source environment if not specified
+        if not actual_source_env:
+            if content_analysis and content_analysis.execution_model:
+                actual_source_env = content_analysis.execution_model
+            else:
+                # Default based on input format
+                format_to_env = {
+                    "snakemake": "shared_filesystem",
+                    "dagman": "distributed_computing", 
+                    "nextflow": "hybrid",
+                    "cwl": "shared_filesystem",
+                    "wdl": "shared_filesystem",
+                    "galaxy": "shared_filesystem"
+                }
+                actual_source_env = format_to_env.get(input_format, "unknown")
+        
+        # Auto-detect target environment if not specified
+        if not actual_target_env:
+            # Default based on output format
+            format_to_env = {
+                "snakemake": "shared_filesystem",
+                "dagman": "distributed_computing",
+                "nextflow": "hybrid", 
+                "cwl": "shared_filesystem",
+                "wdl": "shared_filesystem",
+                "galaxy": "shared_filesystem",
+                "bco": "unknown"
+            }
+            actual_target_env = format_to_env.get(output_format, "unknown")
+        
+        if verbose:
+            click.echo(f"  Source environment: {actual_source_env}")
+            click.echo(f"  Target environment: {actual_target_env}")
+        
+        # Only adapt if environments are different
+        if actual_source_env != actual_target_env:
+            try:
+                # Apply adaptation
+                wf = adapt_workflow(
+                    wf, 
+                    actual_source_env, 
+                    actual_target_env,
+                    strategy=adaptation_strategy
+                )
+                
+                if verbose:
+                    click.echo("✓ Environment adaptation completed")
+                
+                # Write adaptation report if requested
+                if adaptation_report:
+                    from wf2wf.adaptation.logging import export_adaptation_report
+                    report_content = export_adaptation_report("json")
+                    adaptation_report.write_text(report_content)
+                    if verbose:
+                        click.echo(f"  Adaptation report written to: {adaptation_report}")
+                
+            except Exception as e:
+                if verbose:
+                    click.echo(f"⚠ Environment adaptation failed: {e}")
+                # Continue without adaptation rather than failing
+        else:
+            if verbose:
+                click.echo("  No adaptation needed (same environment)")
+    elif adapt_environments and not ADAPTATION_AVAILABLE:
+        if verbose:
+            click.echo("⚠ Environment adaptation requested but adaptation system not available")
+    else:
+        if verbose:
+            click.echo("  Environment adaptation disabled")
+
+    # ------------------------------------------------------------------
     # Interactive prompt: Check for missing configurations
     # ------------------------------------------------------------------
     
@@ -899,9 +1046,13 @@ def convert(
         env_dry_run = os.environ.get("WF2WF_ENVIRON_DRYRUN", "1") != "0"
 
         for task in wf.tasks.values():
-            env = task.environment
-            if env.conda and not env.container:
-                path = Path(env.conda).expanduser()
+            # Get environment-specific values for shared_filesystem environment
+            conda = task.conda.get_value_for('shared_filesystem')
+            container = task.container.get_value_for('shared_filesystem')
+            env_vars = task.env_vars.get_value_for('shared_filesystem') or {}
+            
+            if conda and not container:
+                path = Path(conda).expanduser()
                 if path.exists():
                     cache_key = (str(path), backend_choice, registry_val, apptainer)
                     if cache_key not in env_cache:
@@ -927,7 +1078,8 @@ def convert(
                                 else None
                             )
                             if sif_path:
-                                env.env_vars["WF2WF_SIF"] = str(sif_path)
+                                env_vars["WF2WF_SIF"] = str(sif_path)
+                                task.env_vars.set_for_environment(env_vars, 'shared_filesystem')
                         else:
                             env_cache[cache_key] = f"docker://{entry['digest']}"
 
@@ -936,12 +1088,14 @@ def convert(
                             sbom_info = generate_sbom(
                                 entry["digest"], dry_run=env_dry_run
                             )
-                            env.env_vars["WF2WF_SBOM"] = str(sbom_info)
-                            env.env_vars["WF2WF_SBOM_DIGEST"] = sbom_info.digest
+                            env_vars["WF2WF_SBOM"] = str(sbom_info)
+                            env_vars["WF2WF_SBOM_DIGEST"] = sbom_info.digest
+                            task.env_vars.set_for_environment(env_vars, 'shared_filesystem')
 
-                    env.container = env_cache[cache_key]
+                    container_value = env_cache[cache_key]
+                    task.container.set_for_environment(container_value, 'shared_filesystem')
                     if verbose:
-                        print(f"[auto-env] {task.id}: -> {env.container}")
+                        print(f"[auto-env] {task.id}: -> {container_value}")
 
     # Step 3: Export from IR – propagate intent flag to exporter opts (for BCO keywords)
     if verbose:
@@ -954,11 +1108,14 @@ def convert(
     if output_format in ["json", "yaml"]:
         save_workflow_to_json_yaml(wf, output_path)
     else:
-        exporter = get_exporter(output_format)
-        if not exporter:
+        exporter_class = get_exporter(output_format)
+        if not exporter_class:
             raise click.ClickException(
                 f"No exporter available for format: {output_format}"
             )
+
+        # Instantiate the exporter with interactive and verbose options
+        exporter = exporter_class(interactive=interactive, verbose=verbose)
 
         # Build exporter options
         export_opts = {}
@@ -973,13 +1130,11 @@ def convert(
             if workdir:
                 export_opts["workdir"] = workdir
 
-        if verbose:
-            export_opts["verbose"] = verbose
         if debug:
             export_opts["debug"] = debug
 
         try:
-            exporter.from_workflow(wf, output_path, **export_opts)
+            exporter.export_workflow(wf, output_path, **export_opts)
         except Exception as e:
             raise click.ClickException(
                 f"Failed to export {output_format} workflow: {e}"
@@ -1140,25 +1295,36 @@ def info(workflow_file: Path, format: str):
     Shows workflow metadata, task count, and dependency structure.
     """
     try:
+        logger.debug(f"Starting info command for {workflow_file}")
+        
         # Try to load as IR format first
         if workflow_file.suffix.lower() in [".json", ".yaml", ".yml"]:
+            logger.debug(f"Loading {workflow_file} as IR format")
             wf = load_workflow_from_json_yaml(workflow_file)
+            logger.debug(f"Successfully loaded IR workflow with {len(wf.tasks)} tasks")
         else:
+            logger.debug(f"Attempting to auto-detect format for {workflow_file}")
             # Try to auto-detect and import
             input_format = detect_input_format(workflow_file)
             if not input_format:
+                logger.error(f"Cannot detect format of {workflow_file}")
                 raise click.ClickException(
                     f"Cannot detect format of {workflow_file}"
                 )
 
+            logger.debug(f"Detected format: {input_format}")
             importer = get_importer(input_format)
             if not importer:
+                logger.error(f"No importer available for format: {input_format}")
                 raise click.ClickException(
                     f"No importer available for format: {input_format}"
                 )
 
+            logger.debug(f"Importing with {importer.__class__.__name__}")
             wf = importer.to_workflow(workflow_file)
+            logger.debug(f"Successfully imported workflow with {len(wf.tasks)} tasks")
 
+        logger.debug("Building info data structure")
         info_data = {
             "name": wf.name,
             "version": wf.version,
@@ -1166,18 +1332,21 @@ def info(workflow_file: Path, format: str):
             "edges": len(wf.edges),
             "task_list": list(wf.tasks.keys()),
             "dependencies": [(e.parent, e.child) for e in wf.edges],
-            "config": wf.config,
-            "meta": wf.meta,
+            "metadata": wf.metadata.to_dict() if wf.metadata else {},
         }
 
+        logger.debug(f"Serializing info data to {format} format")
         if format == "yaml":
             import yaml
 
             click.echo(yaml.dump(info_data, default_flow_style=False, indent=2))
         else:
             click.echo(json.dumps(info_data, indent=2))
+        
+        logger.debug("Info command completed successfully")
 
     except Exception as e:
+        logger.error(f"Failed to read workflow: {e}")
         raise click.ClickException(f"Failed to read workflow: {e}")
 
 

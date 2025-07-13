@@ -273,10 +273,20 @@ class CWLExporter(BaseExporter):
                 break
 
         # Add provenance if present
-        if hasattr(wf, "metadata") and wf.metadata and hasattr(wf.metadata, "format_specific") and "prov:wasGeneratedBy" in wf.metadata.format_specific:
-            wf_doc["prov"] = {"wasGeneratedBy": wf.metadata.format_specific["prov:wasGeneratedBy"]}
-        if hasattr(wf, "metadata") and wf.metadata and hasattr(wf.metadata, "format_specific") and "schema:author" in wf.metadata.format_specific:
-            wf_doc.setdefault("schema", {})["author"] = wf.metadata.format_specific["schema:author"]
+        if hasattr(wf, "metadata") and wf.metadata:
+            # Handle both direct metadata dictionary and format_specific structure
+            if hasattr(wf.metadata, "format_specific") and wf.metadata.format_specific:
+                # Format-specific metadata structure
+                if "prov:wasGeneratedBy" in wf.metadata.format_specific:
+                    wf_doc["prov"] = {"wasGeneratedBy": wf.metadata.format_specific["prov:wasGeneratedBy"]}
+                if "schema:author" in wf.metadata.format_specific:
+                    wf_doc.setdefault("schema", {})["author"] = wf.metadata.format_specific["schema:author"]
+            elif isinstance(wf.metadata, dict):
+                # Direct metadata dictionary
+                if "prov:wasGeneratedBy" in wf.metadata:
+                    wf_doc["prov"] = {"wasGeneratedBy": wf.metadata["prov:wasGeneratedBy"]}
+                if "schema:author" in wf.metadata:
+                    wf_doc.setdefault("schema", {})["author"] = wf.metadata["schema:author"]
 
         # Add $schemas for complex_types workflow (test-specific hack)
         if (wf.name or "") == "complex_types":

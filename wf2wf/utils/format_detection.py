@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional, Dict, List
+import warnings
 
 
 # Format detection mappings
@@ -66,6 +67,16 @@ def detect_format_from_content(path: Path) -> Optional[str]:
         content = path.read_text(encoding='utf-8', errors='ignore')
         content_lower = content.lower()
         
+        # IR format patterns (JSON/YAML with wf2wf structure) - check FIRST
+        if any(pattern in content_lower for pattern in [
+            '"name":', '"version":', '"tasks":', '"edges":',
+            '"inputs":', '"outputs":', '"requirements":',
+            '"provenance":', '"documentation":'
+        ]):
+            # Check if it's a complete IR structure
+            if '"tasks":' in content_lower and '"edges":' in content_lower:
+                return "json" if path.suffix.lower() in [".json"] else "yaml"
+        
         # Snakemake patterns
         if any(pattern in content_lower for pattern in [
             'rule ', 'input:', 'output:', 'shell:', 'run:', 'script:',
@@ -84,9 +95,9 @@ def detect_format_from_content(path: Path) -> Optional[str]:
         
         # Nextflow patterns
         if any(pattern in content_lower for pattern in [
-            'process ', 'workflow ', 'channel ', 'publishDir ',
+            'process ', 'workflow ', 'channel ', 'publishdir ',
             'input:', 'output:', 'script:', 'shell:', 'exec:',
-            'publishDir', 'tag', 'label'
+            'publishdir', 'tag ', 'label '  # Add space after tag and label to avoid JSON field matches
         ]):
             return "nextflow"
         
@@ -147,14 +158,12 @@ def detect_input_format(path: Path) -> Optional[str]:
     # Check suffix first
     if suffix in INPUT_FORMAT_MAP:
         detected_format = INPUT_FORMAT_MAP[suffix]
-        
-        # For ambiguous extensions (.json, .yaml), verify with content
-        if suffix in [".json", ".yaml", ".yml"]:
-            content_format = detect_format_from_content(path)
-            if content_format and content_format != detected_format:
-                # Content suggests a different format than extension
-                return content_format
-        
+        content_format = detect_format_from_content(path)
+        if content_format and content_format != detected_format:
+            warnings.warn(
+                f"File '{path}' has extension '{suffix}' (detected as {detected_format}), "
+                f"but content appears to be {content_format}. Proceeding with {detected_format} based on '{suffix}' extension."
+            )
         return detected_format
 
     # Check specific filenames without extensions

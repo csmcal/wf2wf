@@ -97,10 +97,10 @@ def test_wildcard_expansion(mock_run, tmp_path, snakemake_examples):
 # ---------------------------------------------------------------------------
 
 R_DOT = (
-    """digraph snakemake_dag {0[label=\"A_mem\"];1[label=\"B_disk_cpu\"];0 -> 1;}\n"""
+    """digraph snakemake_dag {0[label=\"A_heavy_mem\"];1[label=\"B_heavy_disk_and_cpu\"];0 -> 1;}\n"""
 )
 
-R_DRY = """rule A_mem:\n    jobid: 0\n    resources: mem_mb=10240\nrule B_disk_cpu:\n    jobid: 1\n    resources: disk_gb=100, threads=8\n"""
+R_DRY = """rule A_heavy_mem:\n    jobid: 0\n    resources: mem_mb=10240\nrule B_heavy_disk_and_cpu:\n    jobid: 1\n    resources: disk_gb=100, threads=8\n"""
 
 
 @patch("wf2wf.importers.snakemake.shutil.which", lambda x: "/usr/bin/snakemake")
@@ -112,9 +112,16 @@ def test_resource_requests(mock_run, tmp_path, snakemake_examples):
     (tmp_path / "start.txt").touch()
 
     wf = sm_importer.to_workflow(str(snakefile), workdir=str(tmp_path))
-    # task lookup helpers
-    a_task = next(t for t in wf.tasks.values() if t.id.startswith("A_mem"))
-    b_task = next(t for t in wf.tasks.values() if t.id.startswith("B_disk_cpu"))
+    
+    # task lookup helpers - use updated task names
+    a_tasks = [t for t in wf.tasks.values() if "A_heavy_mem" in t.id]
+    b_tasks = [t for t in wf.tasks.values() if "B_heavy_disk_and_cpu" in t.id]
+    
+    assert len(a_tasks) > 0, f"No A_heavy_mem tasks found. Available: {list(wf.tasks.keys())}"
+    assert len(b_tasks) > 0, f"No B_heavy_disk_and_cpu tasks found. Available: {list(wf.tasks.keys())}"
+    
+    a_task = a_tasks[0]
+    b_task = b_tasks[0]
 
     assert a_task.mem_mb.get_value_for("shared_filesystem") == 10240
     # Check disk and CPU values using environment-specific access
@@ -140,7 +147,7 @@ def test_resource_requests(mock_run, tmp_path, snakemake_examples):
     for submit_file in submit_files:
         all_submit_content += submit_file.read_text() + "\n"
 
-    # A_mem should have request_memory = 10240MB
+    # A_heavy_mem should have request_memory = 10240MB
     assert re.search(r"request_memory\s*=\s*10240MB", all_submit_content)
-    # B_disk_cpu should have request_disk and cpus 8
+    # B_heavy_disk_and_cpu should have request_disk and cpus 8
     assert re.search(r"request_cpus\s*=\s*8", all_submit_content)

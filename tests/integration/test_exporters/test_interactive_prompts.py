@@ -7,7 +7,7 @@ ensuring that user inputs are properly handled and values are set correctly.
 
 import pytest
 from wf2wf.core import Workflow, Task
-from wf2wf.interactive import get_prompter, set_test_responses, clear_test_responses
+from wf2wf.interactive import get_prompter
 
 
 class TestInteractivePrompts:

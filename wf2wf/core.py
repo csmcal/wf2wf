@@ -127,6 +127,13 @@ class EnvironmentSpecificValue:
         """Check if there's a default value set."""
         return self.default_value is not None
 
+    def copy(self) -> "EnvironmentSpecificValue":
+        """Create a deep copy of this EnvironmentSpecificValue."""
+        new_env_value = EnvironmentSpecificValue()
+        new_env_value.default_value = self.default_value
+        new_env_value.values = [entry.copy() for entry in self.values]
+        return new_env_value
+
 # -----------------------------------------------------------------------------
 # Predefined Execution Environments
 # -----------------------------------------------------------------------------
@@ -295,13 +302,13 @@ class ExecutionModelSpec:
     def __post_init__(self):
         """Set creation timestamp if not provided."""
         if self.created_at is None:
-            from datetime import datetime
-            self.created_at = datetime.utcnow().isoformat() + "Z"
+            from datetime import datetime, timezone
+            self.created_at = datetime.now(timezone.utc).isoformat()
     
     def update_modified(self):
         """Update the modified timestamp."""
-        from datetime import datetime
-        self.modified_at = datetime.utcnow().isoformat() + "Z"
+        from datetime import datetime, timezone
+        self.modified_at = datetime.now(timezone.utc).isoformat()
     
     def get_environment_characteristics(self) -> Dict[str, Any]:
         """Get environment characteristics as a dictionary."""
@@ -927,6 +934,48 @@ class Task:
         """Check if retry settings were explicitly set for the given environment."""
         return environment in self._explicit_retry_settings
 
+    def copy(self) -> "Task":
+        """Create a deep copy of this task."""
+        # Create a new task with the same basic attributes
+        new_task = Task(
+            id=self.id,
+            label=self.label,
+            doc=self.doc,
+            inputs=self.inputs.copy() if self.inputs else [],
+            outputs=self.outputs.copy() if self.outputs else [],
+            provenance=self.provenance,
+            documentation=self.documentation,
+            intent=self.intent.copy() if self.intent else [],
+            metadata=self.metadata
+        )
+        
+        # Copy all environment-specific values
+        for field_name, field_value in self.__dict__.items():
+            if isinstance(field_value, EnvironmentSpecificValue):
+                # Create a new EnvironmentSpecificValue with the same values
+                new_env_value = EnvironmentSpecificValue()
+                new_env_value.default_value = field_value.default_value
+                new_env_value.values = [entry.copy() for entry in field_value.values]
+                setattr(new_task, field_name, new_env_value)
+            elif field_name not in ['id', 'label', 'doc', 'inputs', 'outputs', 'provenance', 'documentation', 'intent', 'metadata', 'extra']:
+                # Copy non-environment-specific fields
+                setattr(new_task, field_name, field_value)
+        
+        # Copy extra fields
+        for key, value in self.extra.items():
+            if isinstance(value, EnvironmentSpecificValue):
+                new_env_value = EnvironmentSpecificValue()
+                new_env_value.default_value = value.default_value
+                new_env_value.values = [entry.copy() for entry in value.values]
+                new_task.extra[key] = new_env_value
+            else:
+                new_task.extra[key] = value
+        
+        # Copy explicit retry settings
+        new_task._explicit_retry_settings = self._explicit_retry_settings.copy()
+        
+        return new_task
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert task to dictionary for JSON serialization, excluding internal fields."""
         result = {}
@@ -1045,6 +1094,56 @@ class Workflow:
             raise KeyError(f"Child task '{child}' not found in workflow")
 
         self.edges.append(Edge(parent, child))
+
+    def copy(self) -> "Workflow":
+        """Create a deep copy of this workflow."""
+        # Create a new workflow with the same basic attributes
+        new_workflow = Workflow(
+            name=self.name,
+            version=self.version,
+            label=self.label,
+            doc=self.doc,
+            inputs=self.inputs.copy() if self.inputs else [],
+            outputs=self.outputs.copy() if self.outputs else [],
+            provenance=self.provenance,
+            documentation=self.documentation,
+            intent=self.intent.copy() if self.intent else [],
+            cwl_version=self.cwl_version,
+            bco_spec=self.bco_spec,
+            loss_map=self.loss_map.copy() if self.loss_map else [],
+            metadata=self.metadata
+        )
+        
+        # Copy all environment-specific values
+        for field_name, field_value in self.__dict__.items():
+            if isinstance(field_value, EnvironmentSpecificValue):
+                # Create a new EnvironmentSpecificValue with the same values
+                new_env_value = EnvironmentSpecificValue()
+                new_env_value.default_value = field_value.default_value
+                new_env_value.values = [entry.copy() for entry in field_value.values]
+                setattr(new_workflow, field_name, new_env_value)
+            elif field_name not in ['name', 'version', 'label', 'doc', 'inputs', 'outputs', 'provenance', 'documentation', 'intent', 'cwl_version', 'bco_spec', 'loss_map', 'metadata', 'tasks', 'edges', 'extra']:
+                # Copy non-environment-specific fields
+                setattr(new_workflow, field_name, field_value)
+        
+        # Copy tasks
+        for task_id, task in self.tasks.items():
+            new_workflow.tasks[task_id] = task.copy()
+        
+        # Copy edges
+        new_workflow.edges = [Edge(parent=edge.parent, child=edge.child) for edge in self.edges]
+        
+        # Copy extra fields
+        for key, value in self.extra.items():
+            if isinstance(value, EnvironmentSpecificValue):
+                new_env_value = EnvironmentSpecificValue()
+                new_env_value.default_value = value.default_value
+                new_env_value.values = [entry.copy() for entry in value.values]
+                new_workflow.extra[key] = new_env_value
+            else:
+                new_workflow.extra[key] = value
+        
+        return new_workflow
 
     def get_for_environment(self, environment: str) -> Dict[str, Any]:
         """Get workflow configuration for the given environment."""
@@ -1315,28 +1414,24 @@ class EnvironmentAdapter:
         
         # Apply default resource specifications if needed
         if env_config.default_resource_specification:
-            if task.cpu.value is None:
-                task.cpu.value = 1
-                task.cpu.add_environment(env)
-            if task.mem_mb.value is None:
-                task.mem_mb.value = 4096
-                task.mem_mb.add_environment(env)
-            if task.disk_mb.value is None:
-                task.disk_mb.value = 4096
-                task.disk_mb.add_environment(env)
+            if task.cpu.get_value_for(env) is None:
+                task.cpu.set_for_environment(1, env)
+            if task.mem_mb.get_value_for(env) is None:
+                task.mem_mb.set_for_environment(4096, env)
+            if task.disk_mb.get_value_for(env) is None:
+                task.disk_mb.set_for_environment(4096, env)
         
         # Apply default error handling if needed
         if env_config.default_error_handling:
-            if task.retry_count.value is None:
+            if task.retry_count.get_value_for(env) is None:
                 task.set_retry_inferred(2, env)
         
         # Apply default environment isolation if needed
         if env_config.default_environment_isolation:
-            if task.container.value is None and task.conda.value is None:
+            if task.container.get_value_for(env) is None and task.conda.get_value_for(env) is None:
                 # Add default container for distributed/cloud environments
                 if env in ["distributed_computing", "cloud_native"]:
-                    task.container.value = "default-runtime:latest"
-                    task.container.add_environment(env)
+                    task.container.set_for_environment("default-runtime:latest", env)
 
 # -----------------------------------------------------------------------------
 # JSON Serialization Support
@@ -1379,6 +1474,22 @@ class WF2WFJSONDecoder:
                         # Remove any remaining None values
                         environments = [e for e in environments if e is not None]
                         
+                        # Handle spec objects within values
+                        if isinstance(value, dict):
+                            # Check if this looks like a spec object by checking for common fields
+                            if any(key in value for key in ['strategy', 'interval', 'enabled', 'notes']):
+                                # This looks like a CheckpointSpec
+                                value = cls.decode_spec(value, CheckpointSpec)
+                            elif any(key in value for key in ['log_level', 'log_format', 'log_destination', 'aggregation']):
+                                # This looks like a LoggingSpec
+                                value = cls.decode_spec(value, LoggingSpec)
+                            elif any(key in value for key in ['encryption', 'access_policies', 'secrets', 'authentication']):
+                                # This looks like a SecuritySpec
+                                value = cls.decode_spec(value, SecuritySpec)
+                            elif any(key in value for key in ['network_mode', 'allowed_ports', 'egress_rules', 'ingress_rules']):
+                                # This looks like a NetworkingSpec
+                                value = cls.decode_spec(value, NetworkingSpec)
+                        
                         if value is not None:
                             # Remove any existing values for these environments
                             for env in environments:
@@ -1414,14 +1525,29 @@ class WF2WFJSONDecoder:
         if not isinstance(data, dict):
             return None
         try:
-            # Filter out None values and error fields
-            filtered_data = {k: v for k, v in data.items() if v is not None and not k.startswith('_error')}
-            # Always create the spec class instance, even with empty data
+            # Get valid argument names for the spec_class constructor
+            import inspect
+            valid_args = set()
+            for c in inspect.getmro(spec_class):
+                if hasattr(c, '__dataclass_fields__'):
+                    valid_args.update(c.__dataclass_fields__.keys())
+            # Reconstruct EnvironmentSpecificValue fields if present
+            for k, v in list(data.items()):
+                if isinstance(v, dict) and "values" in v:
+                    data[k] = cls.decode_environment_specific_value(v)
+            # Filter out None values, keys starting with '_', and invalid keys
+            filtered_data = {k: v for k, v in data.items() if v is not None and not k.startswith('_') and k in valid_args}
+            
+            # Check if we have enough data to create the spec object
+            # Check if we have any required fields
+            if not filtered_data:
+                return None
+            
+            # Create the spec class instance
             return spec_class(**filtered_data)
         except Exception as e:
             print(f"Warning: Failed to decode {spec_class.__name__}: {e}")
-            # Return empty instance on failure
-            return spec_class()
+            return None
 
 class WF2WFJSONEncoder(json.JSONEncoder):
     """Custom JSON encoder for wf2wf dataclasses and objects."""
@@ -1619,3 +1745,34 @@ class MetadataSpec:
     def get_environment_metadata(self, environment: str) -> Dict[str, Any]:
         """Get metadata for a specific environment."""
         return self.environment_metadata.get(environment, {})
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert metadata to dictionary for JSON serialization."""
+        result = {}
+        
+        # Add all non-empty fields
+        if self.source_format is not None:
+            result["source_format"] = self.source_format
+        if self.source_file is not None:
+            result["source_file"] = self.source_file
+        if self.source_version is not None:
+            result["source_version"] = self.source_version
+        
+        if self.parsing_notes:
+            result["parsing_notes"] = self.parsing_notes
+        if self.conversion_warnings:
+            result["conversion_warnings"] = self.conversion_warnings
+        if self.format_specific:
+            result["format_specific"] = self.format_specific
+        if self.uninterpreted:
+            result["uninterpreted"] = self.uninterpreted
+        if self.annotations:
+            result["annotations"] = self.annotations
+        if self.environment_metadata:
+            result["environment_metadata"] = self.environment_metadata
+        if self.validation_errors:
+            result["validation_errors"] = self.validation_errors
+        if self.quality_metrics:
+            result["quality_metrics"] = self.quality_metrics
+        
+        return result

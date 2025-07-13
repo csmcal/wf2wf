@@ -46,13 +46,14 @@ class DAGManImporter(BaseImporter):
         }
 
     def _create_basic_workflow(self, parsed_data: Dict[str, Any]) -> Workflow:
-        """Create basic workflow from parsed DAGMan data."""
-        metadata = parsed_data["metadata"]
-        dag_path = parsed_data["dag_path"]
-        workflow_name = metadata.get("original_workflow_name", dag_path.stem)
+        metadata = parsed_data.get("metadata", {})
+        name = metadata.get("original_workflow_name") or parsed_data.get("name")
+        version = metadata.get("original_workflow_version") or parsed_data.get("version") or "1.0"
         wf = Workflow(
-            name=workflow_name, 
-            version=metadata.get("original_workflow_version", "1.0")
+            name=name,
+            version=version,
+            tasks={},
+            edges=[],
         )
         # Always create metadata
         if wf.metadata is None:

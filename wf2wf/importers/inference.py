@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 
 def infer_environment_specific_values(
     workflow: Workflow, 
-    source_format: str
+    source_format: str,
+    execution_model: str = None
 ) -> None:
     """
     Infer environment-specific values for all tasks in the workflow.
@@ -33,9 +34,14 @@ def infer_environment_specific_values(
     Args:
         workflow: Workflow to process
         source_format: Source format name
+        execution_model: Detected execution model (if None, infers for all target environments)
     """
     # Get target environments for the source format
     target_environments = _get_target_environments_for_format(source_format)
+    
+    # If execution model is specified, focus on that environment
+    if execution_model and execution_model in target_environments:
+        target_environments = {execution_model}
     
     # Process each task
     for task in workflow.tasks.values():
