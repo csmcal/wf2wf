@@ -49,3 +49,13 @@ The loss tracking system provides comprehensive support for tracking, recording,
 :members:
 :undoc-members:
 ```
+
+## Additional API Documentation
+
+```{toctree}
+:maxdepth: 2
+:caption: API Reference
+
+loss
+validation
+```

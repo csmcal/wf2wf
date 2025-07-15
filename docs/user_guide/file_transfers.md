@@ -127,7 +127,7 @@ wf2wf automatically detects transfer modes based on file path patterns:
 # → Detected as transfer_mode="auto"
 ```
 
-## Best Practices
+## File Transfer Best Practices
 
 ### For Workflow Authors
 

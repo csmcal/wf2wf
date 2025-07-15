@@ -66,14 +66,14 @@ The `wf2wf.loss` package provides a comprehensive system for tracking, recording
 
 ## Import Loss Detection
 
-### Side-car Validation
+### Loss Side-car Validation
 
 ```{automodule} wf2wf.loss.import_
 :members: validate_loss_sidecar, validate_loss_entry
 :undoc-members:
 ```
 
-### Import Loss Detection
+### Import Loss Detection Functions
 
 ```{automodule} wf2wf.loss.import_
 :members: detect_and_record_import_losses
@@ -108,7 +108,7 @@ Each loss entry contains:
 
 ## Usage Examples
 
-### Basic Loss Recording
+### Basic Loss Recording Example
 
 ```python
 from wf2wf.loss import record, reset, as_list
@@ -144,7 +144,7 @@ record_environment_specific_value_loss(
 )
 ```
 
-### Export Loss Detection
+### Export Loss Detection Example
 
 ```python
 from wf2wf.loss import detect_and_record_export_losses
@@ -158,7 +158,7 @@ detect_and_record_export_losses(
 )
 ```
 
-### Loss Reinjection
+### Loss Reinjection Example
 
 ```python
 from wf2wf.loss import detect_and_apply_loss_sidecar
@@ -210,7 +210,7 @@ write_loss_document(
 )
 ```
 
-### Side-car Validation
+### Side-car Validation Example
 
 ```python
 from wf2wf.loss import validate_loss_sidecar, validate_loss_entry
