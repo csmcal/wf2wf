@@ -264,7 +264,7 @@ def test_galaxy_round_trip_basic():
 
     import json
 
-    # Simple Galaxy workflow
+    # Simple Galaxy workflow with an actual tool step
     galaxy_workflow = {
         "a_galaxy_workflow": "true",
         "annotation": "Test workflow",
@@ -286,6 +286,24 @@ def test_galaxy_round_trip_basic():
                 "type": "data_input",
                 "uuid": "input-uuid",
                 "workflow_outputs": [],
+            },
+            "1": {
+                "annotation": "Process data",
+                "content_id": None,
+                "id": 1,
+                "input_connections": {
+                    "input": {"id": 0, "output_name": "output"}
+                },
+                "inputs": [{"description": "Input dataset", "name": "input"}],
+                "label": "Process Data",
+                "name": "Process data",
+                "outputs": [{"name": "output", "type": "data"}],
+                "tool_id": "toolshed.g2.bx.psu.edu/repos/devteam/cat/cat/1.0.0",
+                "tool_state": "{\"input\": \"null\", \"lines\": \"1\", \"__page__\": 0, \"__rerun_remap_job_id__\": null}",
+                "tool_version": "1.0.0",
+                "type": "tool",
+                "uuid": "tool-uuid",
+                "workflow_outputs": [{"output_name": "output", "label": "Processed Data"}],
             }
         },
         "tags": ["test"],
@@ -308,6 +326,7 @@ def test_galaxy_round_trip_basic():
 
         # Verify basic import
         assert workflow.name == "Test Workflow"
+        assert len(workflow.tasks) == 1  # Should have one task from the tool step
         assert len(workflow.inputs) == 1
 
         # Export IR back to Galaxy using the module-level from_workflow function

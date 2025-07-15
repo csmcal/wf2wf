@@ -279,7 +279,7 @@ rule report:
 
 #### Output: DAGMan Workflow
 
-```dag
+```text
 # HTCondor DAGMan file
 JOB process_data_A process_data_A.sub
 JOB process_data_B process_data_B.sub
