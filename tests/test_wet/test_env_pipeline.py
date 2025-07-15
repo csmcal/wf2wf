@@ -162,3 +162,41 @@ rule test:
     repo_root = Path.cwd()
     leaks = list(repo_root.glob("*.tar.gz")) + list(repo_root.glob("*.sif"))
     assert not leaks, f"Artefacts leaked into repo root: {leaks}"
+
+
+def test_conda_packaging_creates_tarball(tmp_path):
+    """Test that pack_conda_environment creates a tarball from a conda env YAML."""
+    import sys
+    import tarfile
+    from wf2wf.environ import pack_conda_environment
+
+    # Check if conda-pack is available
+    try:
+        import conda_pack  # noqa: F401
+    except ImportError:
+        pytest.skip("conda-pack is not installed")
+
+    # Create a minimal conda environment YAML
+    env_yaml = tmp_path / "test_env.yaml"
+    env_yaml.write_text(
+        """
+        name: test_env
+        channels:
+          - defaults
+        dependencies:
+          - python=3.9
+        """
+    )
+
+    # Call pack_conda_environment
+    tarball_path = pack_conda_environment(str(env_yaml), tmp_path)
+
+    # Assert tarball was created
+    assert tarball_path.exists(), f"Conda environment tarball not created: {tarball_path}"
+    assert tarball_path.suffixes[-2:] == ['.tar', '.gz'], f"Tarball does not have .tar.gz extension: {tarball_path}"
+
+    # Optionally, check tarball contents
+    with tarfile.open(tarball_path, "r:gz") as tar:
+        members = tar.getnames()
+        # Should contain at least bin/python or similar
+        assert any("bin/python" in m or "bin/python3" in m for m in members), "Tarball does not contain python binary"

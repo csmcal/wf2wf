@@ -156,7 +156,9 @@ def demonstrate_environment_adaptation():
         
         # Show the adapted task
         task = adaptation.adapted_workflow.tasks["analyze_data"]
-        print(f"Resources: CPU={task.resources.cpu.value}, Memory={task.resources.mem_mb.value}MB")
+        cpu = task.cpu.get_value_for(env) if hasattr(task, "cpu") else None
+        mem = task.mem_mb.get_value_for(env) if hasattr(task, "mem_mb") else None
+        print(f"Resources: CPU={cpu}, Memory={mem}MB")
         print(f"File Transfer: {task.inputs[0].file_transfer.mode}")
         print(f"Error Handling: {task.error_handling.retry_count} retries")
         
@@ -198,8 +200,9 @@ def demonstrate_multi_environment_access():
     # Access environment-specific resource values
     print("Resource specifications by environment:")
     for env in ["shared_filesystem", "distributed_computing", "cloud_native"]:
-        resources = task.multi_env_resources.get_for_environment(env)
-        print(f"  {env}: CPU={resources.cpu.value}, Memory={resources.mem_mb.value}MB")
+        cpu = task.cpu.get_value_for(env) if hasattr(task, "cpu") else None
+        mem = task.mem_mb.get_value_for(env) if hasattr(task, "mem_mb") else None
+        print(f"  {env}: CPU={cpu}, Memory={mem}MB")
     
     print()
     

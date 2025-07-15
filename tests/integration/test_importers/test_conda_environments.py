@@ -79,10 +79,10 @@ class TestCondaEnvironmentSetup:
         wf = Workflow(name="conda_workflow")
 
         task = Task(id="conda_analysis")
-        task.command.set_for_environment("python analyze.py --input data.csv --output results.json", "shared_filesystem")
-        task.conda.set_for_environment("analysis_env.yaml", "shared_filesystem")
-        task.cpu.set_for_environment(4, "shared_filesystem")
-        task.mem_mb.set_for_environment(8192, "shared_filesystem")
+        task.command.set_for_environment("python analyze.py --input data.csv --output results.json", "distributed_computing")
+        task.conda.set_for_environment("analysis_env.yaml", "distributed_computing")
+        task.cpu.set_for_environment(4, "distributed_computing")
+        task.mem_mb.set_for_environment(8192, "distributed_computing")
         wf.add_task(task)
 
         dag_path = tmp_path / "conda_workflow.dag"
@@ -256,10 +256,10 @@ class TestCondaEnvironmentExport:
         wf = Workflow(name="conda_vanilla")
 
         task = Task(id="conda_task")
-        task.command.set_for_environment("python process.py", "shared_filesystem")
-        task.conda.set_for_environment("processing.yaml", "shared_filesystem")
-        task.cpu.set_for_environment(2, "shared_filesystem")
-        task.mem_mb.set_for_environment(4096, "shared_filesystem")
+        task.command.set_for_environment("python process.py", "distributed_computing")
+        task.conda.set_for_environment("processing.yaml", "distributed_computing")
+        task.cpu.set_for_environment(2, "distributed_computing")
+        task.mem_mb.set_for_environment(4096, "distributed_computing")
         wf.add_task(task)
 
         dag_path = tmp_path / "conda_vanilla.dag"
@@ -290,13 +290,13 @@ class TestCondaEnvironmentExport:
         # Task 1 with first environment
         task1 = Task(id="preprocess")
         task1.command.set_for_environment("python preprocess.py", "shared_filesystem")
-        task1.conda.set_for_environment("preprocess.yaml", "shared_filesystem")
+        task1.conda.set_for_environment("preprocess.yaml", "distributed_computing")
         wf.add_task(task1)
 
         # Task 2 with second environment
         task2 = Task(id="analyze")
         task2.command.set_for_environment("python analyze.py", "shared_filesystem")
-        task2.conda.set_for_environment("analysis.yaml", "shared_filesystem")
+        task2.conda.set_for_environment("analysis.yaml", "distributed_computing")
         wf.add_task(task2)
 
         wf.add_edge("preprocess", "analyze")

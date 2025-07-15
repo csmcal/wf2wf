@@ -351,24 +351,73 @@ def prompt_for_missing_information(workflow: Workflow, source_format: str) -> No
 
 
 def prompt_for_execution_model_confirmation(
-    workflow: Workflow, 
     source_format: str, 
     content_analysis: Any
-) -> None:
+) -> str:
     """
     Prompt for execution model confirmation during import.
-    
     Args:
-        workflow: Workflow to prompt for
         source_format: Source format name
         content_analysis: Content analysis results
+        
+    Returns:
+        Selected execution model string
     """
     prompter = get_prompter()
-    
+
+    # Handle case where content_analysis is None
+    if content_analysis is None:
+        print(f"\n=== Execution Model Detection for {source_format.upper()} ===")
+        print("Warning: Could not analyze workflow content for execution model detection.")
+        print("Using format-based default.")
+        
+        # Use format-based default
+        format_defaults = {
+            "snakemake": "shared_filesystem",
+            "dagman": "distributed_computing", 
+            "nextflow": "hybrid",
+            "cwl": "shared_filesystem",
+            "wdl": "shared_filesystem",
+            "galaxy": "shared_filesystem"
+        }
+        default_model = format_defaults.get(source_format.lower(), "unknown")
+        
+        print(f"Default execution model for {source_format}: {default_model}")
+        
+        # Present options
+        models = [
+            ("Shared Filesystem (NFS, Lustre, local cluster)", "shared_filesystem"),
+            ("Distributed Computing (HTCondor, Grid, cloud batch)", "distributed_computing"),
+            ("Hybrid (Nextflow, mixed cloud/HPC)", "hybrid"),
+            ("Cloud-native (S3/GCS/Azure, serverless)", "cloud_native"),
+            ("Other / Not sure", "unknown"),
+            ("Use format default", "auto")
+        ]
+        print("\nPlease select the expected execution model for this workflow:")
+        for idx, (desc, _) in enumerate(models, 1):
+            print(f"  {idx}) {desc}")
+
+        while True:
+            choice = input(f"Select option (1-{len(models)} or 'auto'): ").strip().lower()
+            if choice == 'auto' or choice == str(len(models)):
+                # Use format default
+                model = default_model
+                print(f"Using format default: {model}")
+                return model
+            try:
+                idx = int(choice) - 1
+                if 0 <= idx < len(models) - 1:
+                    model = models[idx][1]
+                    print(f"Selected execution model: {model}")
+                    return model
+                else:
+                    print(f"Please enter a number between 1 and {len(models)} or 'auto'.")
+            except ValueError:
+                print(f"Please enter a valid number or 'auto'.")
+
     print(f"\n=== Execution Model Detection for {source_format.upper()} ===")
     print(f"Detected model: {content_analysis.execution_model}")
-    print(f"Confidence: {content_analysis.confidence:.2f}")
-    
+
     if content_analysis.indicators:
         print("\nDetection evidence:")
         for model_type, indicators in content_analysis.indicators.items():
@@ -378,72 +427,42 @@ def prompt_for_execution_model_confirmation(
                     print(f"    - {indicator}")
                 if len(indicators) > 3:
                     print(f"    ... and {len(indicators) - 3} more")
-    
+
     if content_analysis.recommendations:
         print("\nRecommendations:")
         for rec in content_analysis.recommendations:
             print(f"  - {rec}")
-    
-    # Ask for confirmation
-    confirm = prompter.prompt_choice(
-        "Use detected execution model?",
-        choices=["yes", "no", "manual"],
-        default="yes"
-    )
-    
-    if confirm == "no":
-        # Let user choose a different model
-        models = ["shared_filesystem", "distributed_computing", "hybrid", "cloud_native"]
-        selected = prompter.prompt_choice(
-            "Select execution model:",
-            choices=models,
-            default=content_analysis.execution_model
-        )
-        workflow.execution_model.set_for_environment(selected, 'shared_filesystem')
-    elif confirm == "manual":
-        # Advanced manual configuration
-        print("\nManual execution model configuration:")
-        
-        # Filesystem type
-        fs_type = prompter.prompt_choice(
-            "Filesystem type:",
-            choices=["shared", "distributed", "hybrid", "cloud_storage"],
-            default="shared"
-        )
-        
-        # Resource management
-        resource_mgmt = prompter.prompt_choice(
-            "Resource management:",
-            choices=["implicit", "explicit", "dynamic", "cloud_managed"],
-            default="implicit"
-        )
-        
-        # Environment isolation
-        env_isolation = prompter.prompt_choice(
-            "Environment isolation:",
-            choices=["none", "conda", "container", "cloud_runtime"],
-            default="none"
-        )
-        
-        # File transfer mode
-        file_transfer = prompter.prompt_choice(
-            "File transfer mode:",
-            choices=["none", "manual", "automatic", "cloud_storage"],
-            default="none"
-        )
-        
-        # Determine model from configuration
-        if fs_type == "cloud_storage":
-            model = "cloud_native"
-        elif fs_type == "distributed" and resource_mgmt == "explicit":
-            model = "distributed_computing"
-        elif fs_type == "hybrid" or resource_mgmt == "dynamic":
-            model = "hybrid"
-        else:
-            model = "shared_filesystem"
-        
-        workflow.execution_model.set_for_environment(model, 'shared_filesystem')
-        print(f"Configured execution model: {model}")
+
+    # Present options
+    models = [
+        ("Shared Filesystem (NFS, Lustre, local cluster)", "shared_filesystem"),
+        ("Distributed Computing (HTCondor, Grid, cloud batch)", "distributed_computing"),
+        ("Hybrid (Nextflow, mixed cloud/HPC)", "hybrid"),
+        ("Cloud-native (S3/GCS/Azure, serverless)", "cloud_native"),
+        ("Other / Not sure", "unknown"),
+        ("Auto-detect; will default to auto when no other option is selected", "auto")
+    ]
+    print("\nPlease select the expected execution model for this workflow:")
+    for idx, (desc, _) in enumerate(models, 1):
+        print(f"  {idx}) {desc}")
+
+    while True:
+        choice = input(f"Select option (1-{len(models)} or 'auto'): ").strip().lower()
+        if choice == 'auto' or choice == str(len(models)):
+            # Use auto-detect
+            model = content_analysis.execution_model
+            print(f"Using automatic execution model detection: {model}")
+            return model
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(models) - 1:
+                model = models[idx][1]
+                print(f"Selected execution model: {model}")
+                return model
+            else:
+                print(f"Please enter a number between 1 and {len(models)} or 'auto'.")
+        except ValueError:
+            print(f"Please enter a valid number or 'auto'.")
 
 
 def prompt_for_workflow_optimization(workflow: Workflow, target_format: str) -> None:

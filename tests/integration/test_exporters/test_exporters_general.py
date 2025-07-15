@@ -361,11 +361,26 @@ class TestIndividualExporters:
             
             assert output_path.exists()
             
-            # Check content
+            # Check main.nf content (DSL2 workflow definition)
             content = output_path.read_text()
-            assert "process" in content
-            assert "input:" in content
-            assert "output:" in content
+            assert "nextflow.enable.dsl=2" in content
+            assert "workflow {" in content
+            assert "include {" in content
+            assert "take:" in content
+            assert "emit:" in content
+            
+            # Check that module files exist and contain process definitions
+            modules_dir = temp_path / "modules"
+            assert modules_dir.exists(), "Modules directory should be created"
+            
+            module_files = list(modules_dir.glob("*.nf"))
+            assert len(module_files) > 0, "At least one module file should be created"
+            
+            # Check that at least one module contains process definition with input/output
+            module_content = module_files[0].read_text()
+            assert "process" in module_content
+            assert "input:" in module_content
+            assert "output:" in module_content
 
     def test_wdl_exporter(self):
         """Test WDL exporter specifically."""

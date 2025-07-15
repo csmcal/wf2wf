@@ -43,6 +43,11 @@ def infer_environment_specific_values(
     if execution_model and execution_model in target_environments:
         target_environments = {execution_model}
     
+    # Get the original execution environment from metadata
+    original_env = None
+    if workflow.metadata and workflow.metadata.original_execution_environment:
+        original_env = workflow.metadata.original_execution_environment
+    
     # Process each task
     for task in workflow.tasks.values():
         for environment in target_environments:

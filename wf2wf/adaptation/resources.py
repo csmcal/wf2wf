@@ -2,9 +2,12 @@
 Resource-specific adaptation strategies.
 """
 
+import logging
 from typing import Any, Optional
 from .base import EnvironmentAdapter
 from .environments import environment_mapper
+
+logger = logging.getLogger(__name__)
 
 
 class ResourceAdapter(EnvironmentAdapter):
@@ -27,13 +30,17 @@ class ResourceAdapter(EnvironmentAdapter):
         Returns:
             Adapted value for target environment, or None if no adaptation needed
         """
+        logger.debug(f"ResourceAdapter._adapt_resource_value called with field_name={field_name}, source_value={source_value}")
+        
         if source_value is None:
+            logger.debug(f"source_value is None, returning None")
             return None
         
         # Apply environment-specific adaptation
         adapted_value = environment_mapper.calculate_adapted_resource(
             source_value, self.source_env, self.target_env, field_name
         )
+        logger.debug(f"environment_mapper.calculate_adapted_resource returned: {adapted_value}")
         
         # Apply field-specific adaptation logic
         if field_name == "mem_mb":

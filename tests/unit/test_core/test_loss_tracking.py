@@ -360,7 +360,7 @@ class TestLossTracking:
             ("security", "/tasks/task1/security", "security", {}),
             ("networking", "/tasks/task1/networking", "networking", {}),
             ("metadata", "/provenance", "provenance", {}),
-            ("execution_model", "/execution_model", "execution_model", "shared_filesystem"),
+            ("metadata", "/metadata/original_execution_environment", "original_execution_environment", "shared_filesystem"),
             ("advanced_features", "/tasks/task1/when", "when", "condition"),
             ("legacy_compatibility", "/tasks/task1/legacy_field", "legacy_field", "value")
         ]

@@ -62,16 +62,19 @@ def test_multi_environment_import():
                 print(f"  Multi-environment resources: ✓")
                 
                 # Check shared environment (should have minimal resources)
-                shared_resources = task.multi_env_resources.get_for_environment("shared")
-                print(f"    Shared environment - CPU: {shared_resources.cpu.value}, Memory: {shared_resources.mem_mb.value}")
+                shared_cpu = task.cpu.get_value_for("shared") if hasattr(task, "cpu") else None
+                shared_mem = task.mem_mb.get_value_for("shared") if hasattr(task, "mem_mb") else None
+                print(f"    Shared environment - CPU: {shared_cpu}, Memory: {shared_mem}")
                 
                 # Check distributed environment (should have full resources)
-                distributed_resources = task.multi_env_resources.get_for_environment("distributed")
-                print(f"    Distributed environment - CPU: {distributed_resources.cpu.value}, Memory: {distributed_resources.mem_mb.value}")
+                distributed_cpu = task.cpu.get_value_for("distributed") if hasattr(task, "cpu") else None
+                distributed_mem = task.mem_mb.get_value_for("distributed") if hasattr(task, "mem_mb") else None
+                print(f"    Distributed environment - CPU: {distributed_cpu}, Memory: {distributed_mem}")
                 
                 # Check cloud environment (should have full resources)
-                cloud_resources = task.multi_env_resources.get_for_environment("cloud")
-                print(f"    Cloud environment - CPU: {cloud_resources.cpu.value}, Memory: {cloud_resources.mem_mb.value}")
+                cloud_cpu = task.cpu.get_value_for("cloud") if hasattr(task, "cpu") else None
+                cloud_mem = task.mem_mb.get_value_for("cloud") if hasattr(task, "mem_mb") else None
+                print(f"    Cloud environment - CPU: {cloud_cpu}, Memory: {cloud_mem}")
             else:
                 print(f"  Multi-environment resources: ✗")
             
@@ -118,9 +121,12 @@ def test_multi_environment_adaptation():
         
         for task_id, task in adapted_workflow.tasks.items():
             print(f"  {task_id}:")
-            print(f"    CPU: {task.resources.cpu.value}")
-            print(f"    Memory: {task.resources.mem_mb.value}")
-            print(f"    Retry: {task.retry}")
+            cpu = task.cpu.get_value_for(env) if hasattr(task, "cpu") else None
+            mem = task.mem_mb.get_value_for(env) if hasattr(task, "mem_mb") else None
+            retry = task.retry_count.get_value_for(env) if hasattr(task, "retry_count") else None
+            print(f"    CPU: {cpu}")
+            print(f"    Memory: {mem}")
+            print(f"    Retry: {retry}")
 
 
 def test_multi_environment_export():
@@ -177,19 +183,28 @@ def test_environment_comparison():
         cloud_task = cloud_workflow.tasks[task_id]
         
         print(f"  Shared environment:")
-        print(f"    CPU: {shared_task.resources.cpu.value}")
-        print(f"    Memory: {shared_task.resources.mem_mb.value}")
-        print(f"    Retry: {shared_task.retry}")
+        shared_cpu = shared_task.cpu.get_value_for("shared") if hasattr(shared_task, "cpu") else None
+        shared_mem = shared_task.mem_mb.get_value_for("shared") if hasattr(shared_task, "mem_mb") else None
+        shared_retry = shared_task.retry_count.get_value_for("shared") if hasattr(shared_task, "retry_count") else None
+        print(f"    CPU: {shared_cpu}")
+        print(f"    Memory: {shared_mem}")
+        print(f"    Retry: {shared_retry}")
         
         print(f"  Distributed environment:")
-        print(f"    CPU: {distributed_task.resources.cpu.value}")
-        print(f"    Memory: {distributed_task.resources.mem_mb.value}")
-        print(f"    Retry: {distributed_task.retry}")
+        distributed_cpu = distributed_task.cpu.get_value_for("distributed") if hasattr(distributed_task, "cpu") else None
+        distributed_mem = distributed_task.mem_mb.get_value_for("distributed") if hasattr(distributed_task, "mem_mb") else None
+        distributed_retry = distributed_task.retry_count.get_value_for("distributed") if hasattr(distributed_task, "retry_count") else None
+        print(f"    CPU: {distributed_cpu}")
+        print(f"    Memory: {distributed_mem}")
+        print(f"    Retry: {distributed_retry}")
         
         print(f"  Cloud environment:")
-        print(f"    CPU: {cloud_task.resources.cpu.value}")
-        print(f"    Memory: {cloud_task.resources.mem_mb.value}")
-        print(f"    Retry: {cloud_task.retry}")
+        cloud_cpu = cloud_task.cpu.get_value_for("cloud") if hasattr(cloud_task, "cpu") else None
+        cloud_mem = cloud_task.mem_mb.get_value_for("cloud") if hasattr(cloud_task, "mem_mb") else None
+        cloud_retry = cloud_task.retry_count.get_value_for("cloud") if hasattr(cloud_task, "retry_count") else None
+        print(f"    CPU: {cloud_cpu}")
+        print(f"    Memory: {cloud_mem}")
+        print(f"    Retry: {cloud_retry}")
 
 
 if __name__ == "__main__":

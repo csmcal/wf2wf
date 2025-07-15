@@ -13,16 +13,17 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from wf2wf.core import Workflow, Task, Edge
+from wf2wf.core import Workflow, Task, Edge, TypeSpec
 from wf2wf.environ import EnvironmentManager
 from wf2wf.interactive import get_prompter
 from wf2wf.loss import detect_and_apply_loss_sidecar, create_loss_sidecar_summary
-from wf2wf.importers.inference import infer_environment_specific_values, infer_execution_model
+from wf2wf.importers.inference import infer_environment_specific_values
 from wf2wf.workflow_analysis import detect_execution_model_from_content, create_execution_model_spec
 from wf2wf.importers.inference import infer_condor_attributes
 from wf2wf.importers.resource_processor import process_workflow_resources
 from wf2wf.interactive import get_prompter
 from wf2wf.utils.format_detection import detect_input_format, can_import
+from wf2wf.core import MetadataSpec
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +80,8 @@ class BaseImporter(ABC):
         7. Validate and return
         
         Args:
-            path: Path to the source workflow file
-            **opts: Additional options specific to the importer
+            path: Path to source workflow file
+            **opts: Import options
             
         Returns:
             Workflow object representing the imported workflow
@@ -89,15 +90,75 @@ class BaseImporter(ABC):
             ImportError: If the workflow cannot be imported
             ValueError: If the workflow is invalid
         """
+        # Store source path and opts for later use
+        self._source_path = path
+        self._opts = opts
+        
+        # Convert string to Path if needed
+        if isinstance(path, str):
+            path = Path(path)
+        
+        # Set up logging
+        if opts.get("verbose"):
+            self.verbose = True
+        if opts.get("debug"):
+            self.debug = True
+        if opts.get("interactive"):
+            self.interactive = True
+            
         try:
+            # Step 0: Early execution model detection and confirmation (ONLY ONCE)
+            if self.verbose:
+                logger.info(f"Step 0: Detecting execution model for {path}")
+            
+            # Get content analysis for execution model detection
+            content_analysis = detect_execution_model_from_content(path, self._get_source_format())
+            
+            # Interactive execution model confirmation if enabled
+            if self.interactive:
+                from wf2wf.interactive import prompt_for_execution_model_confirmation
+                # Get user selection for execution model
+                self._selected_execution_model = prompt_for_execution_model_confirmation(
+                    self._get_source_format(),
+                    content_analysis
+                )
+            else:
+                # Use content analysis result or format default
+                if content_analysis and content_analysis.execution_model:
+                    self._selected_execution_model = content_analysis.execution_model
+                else:
+                    # Use format-based default
+                    format_defaults = {
+                        "snakemake": "shared_filesystem",
+                        "dagman": "distributed_computing", 
+                        "nextflow": "hybrid",
+                        "cwl": "shared_filesystem",
+                        "wdl": "shared_filesystem",
+                        "galaxy": "shared_filesystem"
+                    }
+                    self._selected_execution_model = format_defaults.get(self._get_source_format().lower(), "shared_filesystem")
+            
+            if self.verbose:
+                logger.info(f"Selected execution model: {self._selected_execution_model}")
+            
             # Step 1: Parse source format
             if self.verbose:
-                logger.info(f"Parsing {path} with {self.__class__.__name__}")
+                logger.info(f"Step 1: Parsing {path} with {self.__class__.__name__}")
             
             parsed_data = self._parse_source(path, **opts)
             
             # Step 2: Create basic workflow structure
             workflow = self._create_basic_workflow(parsed_data)
+            
+            # Store the original execution environment in metadata
+            if not workflow.metadata:
+                workflow.metadata = MetadataSpec()
+            workflow.metadata.original_execution_environment = self._selected_execution_model
+            workflow.metadata.original_source_format = self._get_source_format()
+            workflow.metadata.source_format = self._get_source_format()
+            
+            if self.verbose:
+                logger.info(f"Stored original execution environment '{self._selected_execution_model}' in metadata")
             
             # Step 3: Apply loss side-car if available
             detect_and_apply_loss_sidecar(workflow, path, self.verbose)
@@ -110,22 +171,8 @@ class BaseImporter(ABC):
             
             # Step 6: Interactive prompting if enabled
             if self.interactive:
-                # Enhanced interactive prompting with execution model confirmation
-                from wf2wf.interactive import (
-                    prompt_for_missing_information, 
-                    prompt_for_execution_model_confirmation,
-                    prompt_for_workflow_optimization
-                )
-                
-                # Get content analysis for execution model confirmation
-                content_analysis = detect_execution_model_from_content(path, self._get_source_format())
-                
-                # Prompt for execution model confirmation
-                prompt_for_execution_model_confirmation(
-                    workflow, 
-                    self._get_source_format(),
-                    content_analysis
-                )
+                # Only prompt for missing information, not execution model
+                from wf2wf.interactive import prompt_for_missing_information
                 
                 # Standard missing information prompting
                 prompt_for_missing_information(workflow, self._get_source_format())
@@ -133,10 +180,14 @@ class BaseImporter(ABC):
                 # Check for target format optimization if specified
                 target_format = opts.get('target_format')
                 if target_format:
+                    from wf2wf.interactive import prompt_for_workflow_optimization
                     prompt_for_workflow_optimization(workflow, target_format)
             
             # Step 7: Validate and return
             workflow.validate()
+            
+            # Step 8: Validate workflow functionality
+            self._validate_workflow_functionality(workflow, self._selected_execution_model)
             
             if self.verbose:
                 logger.info(f"Successfully imported workflow with {len(workflow.tasks)} tasks")
@@ -589,73 +640,15 @@ class BaseImporter(ABC):
         """
         source_format = self._get_source_format()
         
-        # Enhanced execution model detection
-        execution_model = self._detect_execution_model(workflow, source_path, source_format)
-        workflow.execution_model.set_for_environment(execution_model, execution_model)
+        # Use the execution model that was selected during import
+        execution_model = self._selected_execution_model
         
-        # Infer environment-specific values for the detected execution model
+        # Infer environment-specific values for the selected execution model
         infer_environment_specific_values(workflow, source_format, execution_model)
         
         # Infer Condor-specific attributes if converting to DAGMan
         if source_format == 'snakemake':
             infer_condor_attributes(workflow, 'distributed_computing')
-
-    def _detect_execution_model(self, workflow: Workflow, source_path: Path, source_format: str) -> str:
-        """
-        Detect execution model using multiple methods.
-        
-        This method combines format-based, content-based, and workflow-based
-        analysis to determine the most appropriate execution model.
-        
-        Args:
-            workflow: Workflow object to analyze
-            source_path: Path to the source workflow file
-            source_format: Source format name
-            
-        Returns:
-            Detected execution model
-        """
-        
-        # Method 1: Content-based analysis
-        content_analysis = detect_execution_model_from_content(source_path, source_format)
-        
-        # Method 2: Workflow-based inference
-        workflow_model = infer_execution_model(workflow, source_format)
-        
-        # Method 3: Format-based default
-        format_model = self._get_format_default_execution_model(source_format)
-        
-        if self.verbose:
-            logger.info(f"Execution model detection results:")
-            logger.info(f"  Content-based: {content_analysis.execution_model} (confidence: {content_analysis.confidence:.2f})")
-            logger.info(f"  Workflow-based: {workflow_model}")
-            logger.info(f"  Format-based: {format_model}")
-        
-        # Interactive confirmation if enabled and confidence is low
-        if self.interactive and content_analysis.confidence < 0.6:
-            final_model = self._prompt_for_execution_model(
-                content_analysis, workflow_model, format_model, source_format
-            )
-        else:
-            # Use content-based model if confidence is high, otherwise workflow-based
-            final_model = content_analysis.execution_model if content_analysis.confidence > 0.6 else workflow_model
-        
-        # Create detailed execution model specification
-        execution_spec = create_execution_model_spec(
-            source_format, content_analysis, final_model
-        )
-        
-        # Store the execution model specification in workflow metadata
-        if not hasattr(workflow, 'execution_model_spec'):
-            workflow.execution_model_spec = execution_spec
-        else:
-            workflow.execution_model_spec = execution_spec
-        
-        if self.verbose:
-            logger.info(f"Final execution model: {final_model}")
-            logger.info(f"Model characteristics: {execution_spec}")
-        
-        return final_model
 
     def _get_format_default_execution_model(self, source_format: str) -> str:
         """
@@ -677,77 +670,6 @@ class BaseImporter(ABC):
         }
         return format_models.get(source_format.lower(), 'unknown')
 
-    def _prompt_for_execution_model(
-        self, 
-        content_analysis, 
-        workflow_model: str, 
-        format_model: str, 
-        source_format: str
-    ) -> str:
-        """
-        Interactive prompting for execution model selection.
-        
-        Args:
-            content_analysis: Content analysis results
-            workflow_model: Workflow-based model
-            format_model: Format-based model
-            source_format: Source format name
-            
-        Returns:
-            Selected execution model
-        """
-        from wf2wf import prompt
-        
-        print(f"\nExecution model detection for {source_format} workflow:")
-        print(f"  Content analysis: {content_analysis.execution_model} (confidence: {content_analysis.confidence:.2f})")
-        print(f"  Workflow analysis: {workflow_model}")
-        print(f"  Format default: {format_model}")
-        
-        if content_analysis.indicators:
-            print(f"\nDetection indicators:")
-            for model_type, indicators in content_analysis.indicators.items():
-                if indicators:
-                    print(f"  {model_type}:")
-                    for indicator in indicators[:3]:  # Show first 3 indicators
-                        print(f"    - {indicator}")
-                    if len(indicators) > 3:
-                        print(f"    ... and {len(indicators) - 3} more")
-        
-        if content_analysis.recommendations:
-            print(f"\nRecommendations:")
-            for rec in content_analysis.recommendations:
-                print(f"  - {rec}")
-        
-        # Prompt for model selection
-        models = [content_analysis.execution_model, workflow_model, format_model]
-        unique_models = list(dict.fromkeys(models))  # Remove duplicates while preserving order
-        
-        if len(unique_models) == 1:
-            print(f"\nAll detection methods agree: {unique_models[0]}")
-            return unique_models[0]
-        
-        print(f"\nAvailable execution models:")
-        for i, model in enumerate(unique_models, 1):
-            print(f"  {i}. {model}")
-        
-        while True:
-            try:
-                choice = input(f"\nSelect execution model (1-{len(unique_models)}, or 'auto' for content-based): ").strip()
-                
-                if choice.lower() == 'auto':
-                    return content_analysis.execution_model
-                
-                choice_idx = int(choice) - 1
-                if 0 <= choice_idx < len(unique_models):
-                    return unique_models[choice_idx]
-                else:
-                    print(f"Please enter a number between 1 and {len(unique_models)}")
-            except ValueError:
-                print("Please enter a valid number or 'auto'")
-            except (EOFError, KeyboardInterrupt):
-                print(f"\nUsing content-based model: {content_analysis.execution_model}")
-                return content_analysis.execution_model
-
     def _analyze_execution_model_transition(self, workflow: Workflow, target_format: str) -> Dict[str, Any]:
         """
         Analyze what changes are needed when transitioning between execution models.
@@ -763,7 +685,7 @@ class BaseImporter(ABC):
         
         if not hasattr(workflow, 'execution_model_spec'):
             # Create a basic execution model spec if not available
-            source_model = workflow.execution_model.get_value_for('shared_filesystem') or 'unknown'
+            source_model = workflow.metadata.original_execution_environment if workflow.metadata else 'unknown'
             from wf2wf.core import ExecutionModelSpec
             workflow.execution_model_spec = ExecutionModelSpec(
                 model=source_model,
@@ -883,3 +805,117 @@ class BaseImporter(ABC):
             True if this importer can import the file
         """
         return can_import(path, self.get_supported_extensions())
+    
+    def _validate_workflow_functionality(self, workflow: Workflow, execution_model: str) -> None:
+        """
+        Validate that the workflow is functional and not malformed.
+        
+        This method checks for common issues that would make a workflow non-functional:
+        - Tasks with no inputs, outputs, or commands
+        - Empty workflows
+        - Tasks with malformed resource specifications
+        - Tasks with invalid environment specifications
+        
+        Args:
+            workflow: The workflow to validate
+            
+        Raises:
+            ValueError: If the workflow is non-functional or malformed
+        """
+        if not workflow.tasks:
+            raise ValueError("Workflow contains no tasks - cannot be executed")
+        
+        problematic_tasks = []
+        
+        for task_id, task in workflow.tasks.items():
+            issues = []
+            
+            # Check if task has any meaningful content
+            has_inputs = len(task.inputs) > 0
+            has_outputs = len(task.outputs) > 0
+            has_command = task.command.get_value_for(execution_model) is not None
+            has_script = task.script.get_value_for(execution_model) is not None
+            
+            if not (has_inputs or has_outputs or has_command or has_script):
+                issues.append("Task has no inputs, outputs, commands, or scripts")
+            
+            # Check for malformed resource specifications
+            resources = task.mem_mb.get_value_for(execution_model)
+            if resources is not None and not isinstance(resources, (int, float)) and resources <= 0:
+                issues.append(f"Invalid memory specification: {resources}")
+            
+            cpu = task.cpu.get_value_for(execution_model)
+            if cpu is not None and not isinstance(cpu, (int, float)) and cpu <= 0:
+                issues.append(f"Invalid CPU specification: {cpu}")
+            
+            # Check for malformed environment specifications
+            conda = task.conda.get_value_for(execution_model)
+            if conda is not None and not isinstance(conda, str):
+                issues.append(f"Invalid conda specification: {conda}")
+            
+            container = task.container.get_value_for(execution_model)
+            if container is not None and not isinstance(container, str):
+                issues.append(f"Invalid container specification: {container}")
+            
+            # Check for malformed parameter specifications
+            for param in task.inputs + task.outputs:
+                if not param.id or not param.id.strip():
+                    issues.append("Parameter has empty or missing ID")
+                if not isinstance(param.type, (str, TypeSpec)):
+                    issues.append(f"Parameter {param.id} has invalid type specification")
+            
+            if issues:
+                problematic_tasks.append((task_id, issues))
+        
+        if problematic_tasks:
+            error_msg = "Workflow contains non-functional or malformed tasks:\n"
+            for task_id, issues in problematic_tasks:
+                error_msg += f"  - Task '{task_id}':\n"
+                for issue in issues:
+                    error_msg += f"    * {issue}\n"
+            raise ValueError(error_msg)
+        
+        # Check for circular dependencies
+        self._check_circular_dependencies(workflow)
+        
+        if self.verbose:
+            logger.info(f"Workflow functionality validation passed - {len(workflow.tasks)} tasks are functional")
+    
+    def _check_circular_dependencies(self, workflow: Workflow) -> None:
+        """
+        Check for circular dependencies in the workflow.
+        
+        Args:
+            workflow: The workflow to check
+            
+        Raises:
+            ValueError: If circular dependencies are detected
+        """
+        # Build adjacency list
+        graph = {task_id: [] for task_id in workflow.tasks.keys()}
+        for edge in workflow.edges:
+            if edge.parent in graph and edge.child in graph:
+                graph[edge.parent].append(edge.child)
+        
+        # Detect cycles using DFS
+        visited = set()
+        rec_stack = set()
+        
+        def has_cycle(node):
+            visited.add(node)
+            rec_stack.add(node)
+            
+            for neighbor in graph.get(node, []):
+                if neighbor not in visited:
+                    if has_cycle(neighbor):
+                        return True
+                elif neighbor in rec_stack:
+                    return True
+            
+            rec_stack.remove(node)
+            return False
+        
+        for node in graph:
+            if node not in visited:
+                if has_cycle(node):
+                    raise ValueError("Workflow contains circular dependencies")

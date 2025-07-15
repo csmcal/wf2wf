@@ -281,6 +281,12 @@ class CWLExporter(BaseExporter):
                     wf_doc["prov"] = {"wasGeneratedBy": wf.metadata.format_specific["prov:wasGeneratedBy"]}
                 if "schema:author" in wf.metadata.format_specific:
                     wf_doc.setdefault("schema", {})["author"] = wf.metadata.format_specific["schema:author"]
+            elif hasattr(wf.metadata, "annotations") and wf.metadata.annotations:
+                # Annotations structure
+                if "prov:wasGeneratedBy" in wf.metadata.annotations:
+                    wf_doc["prov"] = {"wasGeneratedBy": wf.metadata.annotations["prov:wasGeneratedBy"]}
+                if "schema:author" in wf.metadata.annotations:
+                    wf_doc.setdefault("schema", {})["author"] = wf.metadata.annotations["schema:author"]
             elif isinstance(wf.metadata, dict):
                 # Direct metadata dictionary
                 if "prov:wasGeneratedBy" in wf.metadata:
@@ -594,17 +600,25 @@ class CWLExporter(BaseExporter):
         # Add conda as SoftwareRequirement if present
         conda_env = self._get_environment_specific_value_for_target(task.conda)
         if conda_env:
-            packages = []
-            for dep in conda_env.get("dependencies", []):
-                if isinstance(dep, str):
-                    pkg, *_ = dep.split("=")
-                    packages.append({"package": pkg})
-                elif isinstance(dep, dict):
-                    packages.append(dep)
-            tool_doc["requirements"].append({
-                "class": "SoftwareRequirement",
-                "packages": packages
-            })
+            # Handle conda environment as string (environment name/path)
+            if isinstance(conda_env, str):
+                tool_doc["requirements"].append({
+                    "class": "SoftwareRequirement",
+                    "packages": [{"package": "conda", "version": [conda_env]}]
+                })
+            # Handle conda environment as dictionary (environment specification)
+            elif isinstance(conda_env, dict):
+                packages = []
+                for dep in conda_env.get("dependencies", []):
+                    if isinstance(dep, str):
+                        pkg, *_ = dep.split("=")
+                        packages.append({"package": pkg})
+                    elif isinstance(dep, dict):
+                        packages.append(dep)
+                tool_doc["requirements"].append({
+                    "class": "SoftwareRequirement",
+                    "packages": packages
+                })
 
         # Add environment requirements using shared infrastructure
         env_req = self._generate_environment_requirement(task)

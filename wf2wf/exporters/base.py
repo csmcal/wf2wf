@@ -27,6 +27,17 @@ from wf2wf.loss import (
 from wf2wf.exporters.inference import infer_missing_values
 from wf2wf.interactive import get_prompter
 
+# Import adaptation system if available
+try:
+    from wf2wf.adaptation import adapt_workflow, AdaptationRegistry
+    ADAPTATION_AVAILABLE = True
+except ImportError:
+    ADAPTATION_AVAILABLE = False
+    adapt_workflow = None
+    AdaptationRegistry = None
+
+import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -62,23 +73,26 @@ class BaseExporter(ABC):
         loss_prepare(workflow.loss_map)
         loss_reset()
         
-        # 2. Infer missing values based on target format and environment
-        infer_missing_values(workflow, self.target_format, target_environment=self.target_environment, verbose=self.verbose)
+        # 2. Check for missing target environment values and handle adaptation
+        self._check_and_handle_environment_adaptation(workflow, **opts)
         
-        # 3. Interactive prompting if enabled
+        # 3. Interactive prompting if enabled (before inference to allow user input)
         if self.interactive:
             self.prompter.prompt_for_missing_values(workflow, "export", self.target_environment)
         
-        # 4. Record format-specific losses
+        # 4. Infer missing values based on target format and environment (after interactive prompts)
+        infer_missing_values(workflow, self.target_format, target_environment=self.target_environment, verbose=self.verbose)
+        
+        # 5. Record format-specific losses
         detect_and_record_export_losses(workflow, self.target_format, target_environment=self.target_environment, verbose=self.verbose)
         
-        # 5. Create output directory
+        # 6. Create output directory
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # 6. Generate format-specific output
+        # 7. Generate format-specific output
         self._generate_output(workflow, output_path, **opts)
         
-        # 7. Write loss side-car
+        # 8. Write loss side-car
         write_loss_document(
             output_path.with_suffix(".loss.json"),
             target_engine=self.target_format,
@@ -86,7 +100,7 @@ class BaseExporter(ABC):
         )
         workflow.loss_map = loss_list()
         
-        # 8. Report completion
+        # 9. Report completion
         if self.verbose:
             print(f"✓ {self.target_format.title()} workflow exported to {output_path}")
             print(f"  Target environment: {self.target_environment}")
@@ -210,11 +224,12 @@ class BaseExporter(ABC):
         """Get workflow hints for specific environment."""
         hints = self._get_environment_specific_value(workflow.hints, environment)
         return hints if hints is not None else []
-    
-    def _get_execution_model(self, workflow: Workflow, environment: str = "shared_filesystem") -> str:
-        """Get execution model for specific environment."""
-        model = self._get_environment_specific_value(workflow.execution_model, environment)
-        return model if model is not None else "unknown"
+
+    def _get_original_execution_model(self, workflow: Workflow) -> str:
+        """Get original execution model from metadata."""
+        if workflow.metadata and workflow.metadata.original_execution_environment:
+            return workflow.metadata.original_execution_environment
+        return "unknown"
     
     # Convenience methods that use target_environment by default
     def _get_task_resources_for_target(self, task: Task) -> Dict[str, Any]:
@@ -349,3 +364,200 @@ class BaseExporter(ABC):
             metadata['documentation'] = workflow.documentation.__dict__
         
         return metadata 
+
+    def _check_and_handle_environment_adaptation(self, workflow: Workflow, **opts: Any) -> None:
+        """
+        Check if target environment values are missing and handle adaptation.
+        
+        This method checks if the workflow has appropriate values for the target environment.
+        If values are missing, it either:
+        1. Automatically applies adaptation (if available and not in interactive mode)
+        2. Prompts the user for adaptation decisions (if in interactive mode)
+        3. Continues with defaults (if adaptation is not available)
+        """
+        print(f"DEBUG: Checking environment adaptation...")
+        print(f"DEBUG: ADAPTATION_AVAILABLE = {ADAPTATION_AVAILABLE}")
+        print(f"DEBUG: target_environment = {self.target_environment}")
+        
+        if not ADAPTATION_AVAILABLE:
+            if self.verbose:
+                print("  ⚠ Environment adaptation system not available")
+            print("DEBUG: Adaptation system not available")
+            return
+        
+        # Determine source environment
+        source_environment = self._get_source_environment(workflow)
+        print(f"DEBUG: source_environment = {source_environment}")
+        
+        # Skip if source and target environments are the same
+        if source_environment == self.target_environment:
+            if self.verbose:
+                print(f"  ✓ No adaptation needed (same environment: {source_environment})")
+            print(f"DEBUG: No adaptation needed (same environment)")
+            return
+        
+        # Check if target environment values are missing
+        missing_values = self._check_missing_target_environment_values(workflow)
+        print(f"DEBUG: missing_values = {missing_values}")
+        
+        if not missing_values:
+            if self.verbose:
+                print(f"  ✓ Target environment values already present for {self.target_environment}")
+            print(f"DEBUG: No missing values")
+            return
+        
+        if self.verbose:
+            print(f"  🔧 Found {len(missing_values)} tasks missing target environment values")
+            print(f"  Source environment: {source_environment}")
+            print(f"  Target environment: {self.target_environment}")
+        
+        print(f"DEBUG: Found {len(missing_values)} missing values, interactive = {self.interactive}")
+        
+        # Handle adaptation based on interactive mode
+        if self.interactive:
+            logger.debug("Handling interactive adaptation")
+            self._handle_interactive_adaptation(workflow, source_environment, missing_values, **opts)
+        else:
+            logger.debug("Handling automatic adaptation")
+            self._handle_automatic_adaptation(workflow, source_environment, **opts)
+    
+    def _get_source_environment(self, workflow: Workflow) -> str:
+        """Determine the source environment from workflow metadata or format."""
+        # Try to get from workflow metadata first
+        if workflow.metadata and workflow.metadata.original_execution_environment:
+            return workflow.metadata.original_execution_environment
+        
+        # Fall back to format-based detection
+        format_to_env = {
+            "snakemake": "shared_filesystem",
+            "dagman": "distributed_computing",
+            "nextflow": "hybrid",
+            "cwl": "shared_filesystem",
+            "wdl": "shared_filesystem",
+            "galaxy": "shared_filesystem"
+        }
+        
+        # Try to infer from the workflow format if available
+        if hasattr(workflow, 'format') and workflow.format:
+            return format_to_env.get(workflow.format, "unknown")
+        
+        # Default to shared_filesystem if we can't determine
+        return "shared_filesystem"
+    
+    def _check_missing_target_environment_values(self, workflow: Workflow) -> List[str]:
+        """Check which tasks are missing values for the target environment."""
+        missing_tasks = []
+        
+        for task in workflow.tasks.values():
+            has_target_values = False
+            
+            logger.debug(f"Checking task {task.id} for target environment {self.target_environment}")
+            
+            # Check if task has any values for the target environment
+            for field_name in ['cpu', 'mem_mb', 'disk_mb', 'gpu', 'gpu_mem_mb', 'time_s', 'threads']:
+                if hasattr(task, field_name):
+                    field_value = getattr(task, field_name)
+                    if isinstance(field_value, EnvironmentSpecificValue):
+                        target_value = field_value.get_value_for(self.target_environment)
+                        logger.debug(f"{field_name}: get_value_for({self.target_environment}) = {target_value} from {field_value}")
+                        if target_value is not None:
+                            has_target_values = True
+                            logger.debug(f"Found target value for {field_name}: {target_value}")
+                            break
+            
+            if not has_target_values:
+                missing_tasks.append(task.id)
+                logger.debug(f"Task {task.id} has no target values")
+            else:
+                logger.debug(f"Task {task.id} has target values")
+        
+        return missing_tasks
+    
+    def _handle_interactive_adaptation(self, workflow: Workflow, source_environment: str, 
+                                     missing_values: List[str], **opts: Any) -> None:
+        """Handle adaptation in interactive mode with user prompting."""
+        from wf2wf.interactive import prompt
+        
+        if not prompt.ask(
+            f"Found {len(missing_values)} tasks missing values for {self.target_environment} environment. "
+            f"Apply environment adaptation from {source_environment} to {self.target_environment}?",
+            default=True
+        ):
+            if self.verbose:
+                print("  ⚠ Skipping environment adaptation (user choice)")
+            return
+        
+        # Apply adaptation
+        try:
+            adapted_workflow = adapt_workflow(
+                workflow, 
+                source_environment, 
+                self.target_environment,
+                strategy=opts.get("adaptation_strategy", "balanced")
+            )
+            
+            # Update the workflow with adapted values
+            for task_id, adapted_task in adapted_workflow.tasks.items():
+                if task_id in workflow.tasks:
+                    # Copy adapted values to the original workflow
+                    for field_name in ['cpu', 'mem_mb', 'disk_mb', 'gpu', 'gpu_mem_mb', 'time_s', 'threads']:
+                        if hasattr(adapted_task, field_name) and hasattr(workflow.tasks[task_id], field_name):
+                            adapted_value = getattr(adapted_task, field_name)
+                            original_value = getattr(workflow.tasks[task_id], field_name)
+                            if isinstance(adapted_value, EnvironmentSpecificValue) and isinstance(original_value, EnvironmentSpecificValue):
+                                # Copy the target environment value
+                                target_value = adapted_value.get_value_for(self.target_environment)
+                                if target_value is not None:
+                                    original_value.set_for_environment(target_value, self.target_environment)
+            
+            if self.verbose:
+                print("  ✓ Environment adaptation applied successfully")
+                
+        except Exception as e:
+            if self.verbose:
+                print(f"  ⚠ Environment adaptation failed: {e}")
+                print("  Continuing with existing values and defaults")
+    
+    def _handle_automatic_adaptation(self, workflow: Workflow, source_environment: str, **opts: Any) -> None:
+        """Handle adaptation automatically without user prompting."""
+        logger.debug(f"Starting automatic adaptation from {source_environment} to {self.target_environment}")
+        try:
+            logger.debug(f"Calling adapt_workflow...")
+            adapted_workflow = adapt_workflow(
+                workflow, 
+                source_environment, 
+                self.target_environment,
+                strategy=opts.get("adaptation_strategy", "balanced")
+            )
+            
+            # Update the workflow with adapted values
+            logger.debug(f"Updating workflow with adapted values...")
+            for task_id, adapted_task in adapted_workflow.tasks.items():
+                if task_id in workflow.tasks:
+                    logger.debug(f"Updating task {task_id}")
+                    # Copy adapted values to the original workflow
+                    for field_name in ['cpu', 'mem_mb', 'disk_mb', 'gpu', 'gpu_mem_mb', 'time_s', 'threads']:
+                        if hasattr(adapted_task, field_name) and hasattr(workflow.tasks[task_id], field_name):
+                            adapted_value = getattr(adapted_task, field_name)
+                            original_value = getattr(workflow.tasks[task_id], field_name)
+                            if isinstance(adapted_value, EnvironmentSpecificValue) and isinstance(original_value, EnvironmentSpecificValue):
+                                # Copy the target environment value
+                                target_value = adapted_value.get_value_for(self.target_environment)
+                                logger.debug(f"  {field_name}: target_value = {target_value}")
+                                if target_value is not None:
+                                    original_value.set_for_environment(target_value, self.target_environment)
+                                    logger.debug(f"  Set {field_name} = {target_value} for {self.target_environment}")
+                                else:
+                                    logger.debug(f"  No target value for {field_name}")
+                            else:
+                                logger.debug(f"  Field {field_name} is not EnvironmentSpecificValue")
+                        else:
+                            logger.debug(f"  Field {field_name} not found in adapted_task or workflow.tasks[{task_id}]")
+            
+            if self.verbose:
+                print("  ✓ Environment adaptation applied automatically")
+                
+        except Exception as e:
+            if self.verbose:
+                print(f"  ⚠ Environment adaptation failed: {e}")
+                print("  Continuing with existing values and defaults") 

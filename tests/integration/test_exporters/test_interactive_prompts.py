@@ -7,7 +7,7 @@ ensuring that user inputs are properly handled and values are set correctly.
 
 import pytest
 from wf2wf.core import Workflow, Task
-from wf2wf.interactive import get_prompter
+from wf2wf.interactive import get_prompter, set_prompter, InteractivePrompter
 
 
 class TestInteractivePrompts:
@@ -15,6 +15,7 @@ class TestInteractivePrompts:
     
     def test_nextflow_prompts_with_gpu(self, interactive_responses):
         """Test Nextflow prompts including GPU configuration."""
+        set_prompter(InteractivePrompter())  # Reset global prompter after monkeypatch
         interactive_responses.set_responses([
             # Resource Configuration
             "4",      # CPU cores
@@ -60,6 +61,7 @@ class TestInteractivePrompts:
     
     def test_snakemake_prompts_with_conda(self, interactive_responses):
         """Test Snakemake prompts with conda environment."""
+        set_prompter(InteractivePrompter())
         interactive_responses.set_responses([
             # Resource Configuration
             "8",      # CPU cores
@@ -105,6 +107,7 @@ class TestInteractivePrompts:
     
     def test_advanced_gpu_configuration(self, interactive_responses):
         """Test advanced GPU configuration with memory specification."""
+        set_prompter(InteractivePrompter())
         interactive_responses.set_responses([
             # Resource Configuration
             "16",     # CPU cores
@@ -152,6 +155,7 @@ class TestInteractivePrompts:
     
     def test_import_context_prompts(self, interactive_responses):
         """Test interactive prompts in import context (no error handling)."""
+        set_prompter(InteractivePrompter())
         interactive_responses.set_responses([
             # Resource Configuration
             "2",      # CPU cores
@@ -192,6 +196,7 @@ class TestInteractivePrompts:
     
     def test_default_value_handling(self, interactive_responses):
         """Test that default values are used when user provides empty input."""
+        set_prompter(InteractivePrompter())
         interactive_responses.set_responses([
             "",       # CPU cores (use default: 1)
             "",       # Memory (MB) (use default: 4096)

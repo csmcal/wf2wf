@@ -130,16 +130,63 @@ class CWLImporter(BaseImporter):
         Override import_workflow to pass workflow path for external tool resolution.
         """
         try:
+            # Step 0: Early execution model detection and confirmation (ONLY ONCE)
+            if self.verbose:
+                logger.info(f"Step 0: Detecting execution model for {path}")
+            
+            # Get content analysis for execution model detection
+            from wf2wf.workflow_analysis import detect_execution_model_from_content
+            content_analysis = detect_execution_model_from_content(path, self._get_source_format())
+            
+            # Interactive execution model confirmation if enabled
+            if self.interactive:
+                from wf2wf.interactive import prompt_for_execution_model_confirmation
+                # Get user selection for execution model
+                self._selected_execution_model = prompt_for_execution_model_confirmation(
+                    self._get_source_format(),
+                    content_analysis
+                )
+            else:
+                # Use content analysis result or format default
+                if content_analysis and content_analysis.execution_model:
+                    self._selected_execution_model = content_analysis.execution_model
+                else:
+                    # Use format-based default
+                    format_defaults = {
+                        "snakemake": "shared_filesystem",
+                        "dagman": "distributed_computing", 
+                        "nextflow": "hybrid",
+                        "cwl": "shared_filesystem",
+                        "wdl": "shared_filesystem",
+                        "galaxy": "shared_filesystem"
+                    }
+                    self._selected_execution_model = format_defaults.get(self._get_source_format().lower(), "shared_filesystem")
+            
+            if self.verbose:
+                logger.info(f"Selected execution model: {self._selected_execution_model}")
+            
             # Step 1: Parse source format
             if self.verbose:
-                logger.info(f"Parsing {path} with {self.__class__.__name__}")
+                logger.info(f"Step 1: Parsing {path} with {self.__class__.__name__}")
             
             parsed_data = self._parse_source(path, **opts)
             
             # Step 2: Create basic workflow structure with workflow path
             workflow = self._create_basic_workflow(parsed_data, workflow_path=str(path))
             
+            # Store the original execution environment in metadata
+            if not workflow.metadata:
+                from wf2wf.core import MetadataSpec
+                workflow.metadata = MetadataSpec()
+            workflow.metadata.original_execution_environment = self._selected_execution_model
+            workflow.metadata.original_source_format = self._get_source_format()
+            workflow.metadata.source_format = self._get_source_format()
+            
+            if self.verbose:
+                logger.info(f"Stored original execution environment '{self._selected_execution_model}' in metadata")
+            
             # Step 3: Apply loss side-car if available
+            from wf2wf.loss import detect_and_apply_loss_sidecar
             detect_and_apply_loss_sidecar(workflow, path, self.verbose)
             
             # Step 4: Infer missing information
@@ -150,22 +197,8 @@ class CWLImporter(BaseImporter):
             
             # Step 6: Interactive prompting if enabled
             if self.interactive:
-                # Enhanced interactive prompting with execution model confirmation
-                from wf2wf.interactive import (
-                    prompt_for_missing_information, 
-                    prompt_for_execution_model_confirmation,
-                    prompt_for_workflow_optimization
-                )
-                
-                # Get content analysis for execution model confirmation
-                content_analysis = detect_execution_model_from_content(path, self._get_source_format())
-                
-                # Prompt for execution model confirmation
-                prompt_for_execution_model_confirmation(
-                    workflow, 
-                    self._get_source_format(),
-                    content_analysis
-                )
+                # Only prompt for missing information, not execution model
+                from wf2wf.interactive import prompt_for_missing_information
                 
                 # Standard missing information prompting
                 prompt_for_missing_information(workflow, self._get_source_format())
@@ -173,6 +206,7 @@ class CWLImporter(BaseImporter):
                 # Check for target format optimization if specified
                 target_format = opts.get('target_format')
                 if target_format:
+                    from wf2wf.interactive import prompt_for_workflow_optimization
                     prompt_for_workflow_optimization(workflow, target_format)
             
             # Step 7: Validate and return
@@ -256,11 +290,8 @@ class CWLImporter(BaseImporter):
             workflow.add_edge(edge.parent, edge.child)
 
         # --- Enhanced shared infrastructure integration ---
-        # Environment-specific value inference
-        infer_environment_specific_values(workflow, "cwl")
-        
-        # Execution model inference (let BaseImporter handle this)
-        # Note: BaseImporter will set execution_model in _infer_missing_information
+        # Environment-specific value inference with the selected execution model
+        infer_environment_specific_values(workflow, "cwl", self._selected_execution_model)
         
         # Resource processing with validation and interactive prompting
         process_workflow_resources(
@@ -288,7 +319,9 @@ class CWLImporter(BaseImporter):
 
     def _extract_provenance_from_cwl(self, parsed_data: Dict[str, Any]) -> Optional[ProvenanceSpec]:
         """Extract provenance information from CWL document."""
-        # Check for structured provenance first
+        extras = {}
+        
+        # Check for structured provenance first (with s: prefix)
         if 's:provenance' in parsed_data:
             prov_data = parsed_data['s:provenance']
             return ProvenanceSpec(
@@ -305,6 +338,18 @@ class CWLImporter(BaseImporter):
                 extras=prov_data.get('extras', {})
             )
         
+        # Check for structured provenance without s: prefix
+        if 'prov' in parsed_data:
+            prov_data = parsed_data['prov']
+            # Convert all prov fields to extras with prov: prefix
+            for key, value in prov_data.items():
+                extras[f"prov:{key}"] = value
+        
+        # Check for top-level namespaced provenance fields
+        for key, value in parsed_data.items():
+            if key.startswith('prov:') or key.startswith('schema:'):
+                extras[key] = value
+        
         # Check for simple metadata fields
         authors = []
         if 's:author' in parsed_data:
@@ -313,11 +358,12 @@ class CWLImporter(BaseImporter):
         version = parsed_data.get('s:version')
         created = parsed_data.get('s:dateCreated')
         
-        if authors or version or created:
+        if authors or version or created or extras:
             return ProvenanceSpec(
                 authors=authors,
                 version=version,
-                created=created
+                created=created,
+                extras=extras
             )
         
         return None
@@ -590,11 +636,18 @@ class CWLImporter(BaseImporter):
         for req in requirements:
             if isinstance(req, dict) and req.get('class') == 'DockerRequirement':
                 docker_pull = req.get('dockerPull')
+                docker_image_id = req.get('dockerImageId')
+                
                 if docker_pull:
                     container_ref = f"docker://{docker_pull}"
                     task.container.set_for_environment(container_ref, 'shared_filesystem')
                     if self.verbose:
                         logger.info(f"Set container to {container_ref}")
+                elif docker_image_id:
+                    # For dockerImageId, use it directly as it may already have the proper prefix
+                    task.container.set_for_environment(docker_image_id, 'shared_filesystem')
+                    if self.verbose:
+                        logger.info(f"Set container to {docker_image_id}")
                 break
             if isinstance(req, dict) and req.get('class') == 'SoftwareRequirement':
                 # Map to conda YAML string

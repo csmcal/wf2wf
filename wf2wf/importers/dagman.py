@@ -48,6 +48,15 @@ class DAGManImporter(BaseImporter):
     def _create_basic_workflow(self, parsed_data: Dict[str, Any]) -> Workflow:
         metadata = parsed_data.get("metadata", {})
         name = metadata.get("original_workflow_name") or parsed_data.get("name")
+        
+        # Fallback to DAG file stem if no name is found
+        if not name and parsed_data.get("dag_path"):
+            name = Path(parsed_data["dag_path"]).stem
+        
+        # Final fallback to a default name
+        if not name:
+            name = "imported_dagman_workflow"
+            
         version = metadata.get("original_workflow_version") or parsed_data.get("version") or "1.0"
         wf = Workflow(
             name=name,

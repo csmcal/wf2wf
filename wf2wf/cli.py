@@ -703,105 +703,9 @@ def convert(
     content_analysis = None
 
     # ------------------------------------------------------------------
-    # Interactive execution model selection
+    # Interactive execution model selection (REMOVED: now handled by interactive module)
     # ------------------------------------------------------------------
-    
-    if interactive:
-        click.echo(f"\nInput file: {input_path.name}")
-        click.echo("Please select the expected execution model for this workflow:")
-        click.echo("  1) Shared Filesystem (NFS, Lustre, local cluster)")
-        click.echo("  2) Distributed Computing (HTCondor, Grid, cloud batch)")
-        click.echo("  3) Hybrid (Nextflow, mixed cloud/HPC)")
-        click.echo("  4) Cloud-native (S3/GCS/Azure, serverless)")
-        click.echo("  5) Other / Not sure")
-        
-        # Use the existing prompt scheme
-        if _prompt.ask("Use automatic detection instead?", default=True):
-            # User chose automatic detection
-            if verbose:
-                click.echo("Using automatic execution model detection...")
-        else:
-            # User wants to specify manually
-            click.echo("Please select the execution model:")
-            click.echo("  1) Shared Filesystem (NFS, Lustre, local cluster)")
-            click.echo("  2) Distributed Computing (HTCondor, Grid, cloud batch)")
-            click.echo("  3) Hybrid (Nextflow, mixed cloud/HPC)")
-            click.echo("  4) Cloud-native (S3/GCS/Azure, serverless)")
-            click.echo("  5) Other / Not sure")
-            
-            # Use the existing prompt system for choice selection
-            choice_map = {
-                "1": "shared_filesystem",
-                "2": "distributed_computing", 
-                "3": "hybrid",
-                "4": "cloud_native",
-                "5": "unknown"
-            }
-            
-            # Present choices one by one and let user select
-            if _prompt.ask("Use Shared Filesystem (option 1)?", default=False):
-                execution_model = "shared_filesystem"
-            elif _prompt.ask("Use Distributed Computing (option 2)?", default=False):
-                execution_model = "distributed_computing"
-            elif _prompt.ask("Use Hybrid (option 3)?", default=False):
-                execution_model = "hybrid"
-            elif _prompt.ask("Use Cloud-native (option 4)?", default=False):
-                execution_model = "cloud_native"
-            else:
-                execution_model = "unknown"
-            
-            if verbose:
-                click.echo(f"User specified execution model: {execution_model}")
-            # Skip automatic detection
-            content_analysis = None
-    else:
-        # Non-interactive mode - use automatic detection
-        if verbose:
-            click.echo(f"\nAnalyzing workflow execution model...")
-        
-        try:
-            from wf2wf.workflow_analysis import detect_execution_model_from_content
-            content_analysis = detect_execution_model_from_content(input_path, input_format)
-            
-            if verbose:
-                click.echo(f"Detected execution model: {content_analysis.execution_model} (confidence: {content_analysis.confidence:.2f})")
-                
-                if content_analysis.indicators:
-                    click.echo("Evidence:")
-                    for model, indicators in content_analysis.indicators.items():
-                        if indicators:
-                            click.echo(f"  {model}: {len(indicators)} indicators")
-                            for indicator in indicators[:3]:  # Show first 3 indicators
-                                click.echo(f"    - {indicator}")
-                            if len(indicators) > 3:
-                                click.echo(f"    ... and {len(indicators) - 3} more")
-                
-                if content_analysis.recommendations:
-                    click.echo("Recommendations:")
-                    for rec in content_analysis.recommendations:
-                        click.echo(f"  - {rec}")
-            
-            # Store execution model in workflow metadata for later use
-            execution_model = content_analysis.execution_model
-            
-        except Exception as e:
-            if verbose:
-                click.echo(f"Warning: Could not analyze execution model: {e}")
-            execution_model = "unknown"
-            content_analysis = None
-    
-    # If we have content analysis results, show them even in interactive mode
-    if content_analysis and verbose:
-        click.echo(f"\nAutomatic detection results:")
-        click.echo(f"  Detected: {content_analysis.execution_model} (confidence: {content_analysis.confidence:.2f})")
-        if content_analysis.indicators:
-            for model, indicators in content_analysis.indicators.items():
-                if indicators:
-                    click.echo(f"  {model}: {len(indicators)} indicators")
-        if content_analysis.recommendations:
-            click.echo("  Recommendations:")
-            for rec in content_analysis.recommendations:
-                click.echo(f"    - {rec}")
+    # (Old prompt code removed)
 
     # ------------------------------------------------------------------
     # Interactive prompt: overwrite existing output?
@@ -874,6 +778,8 @@ def convert(
                 import_opts["verbose"] = verbose
             if debug:
                 import_opts["debug"] = debug
+            if interactive:
+                import_opts["interactive"] = interactive
 
         try:
             wf = importer.to_workflow(input_path, **import_opts)

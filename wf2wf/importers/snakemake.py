@@ -30,8 +30,8 @@ from wf2wf.core import (
 )
 from wf2wf.importers.base import BaseImporter
 from wf2wf.importers.utils import parse_memory_string, parse_disk_string, parse_time_string, parse_resource_value
-from wf2wf.importers.inference import infer_execution_model, infer_environment_specific_values
-from wf2wf.interactive import prompt_for_execution_model_confirmation, prompt_for_missing_information
+from wf2wf.importers.inference import infer_environment_specific_values
+from wf2wf.interactive import prompt_for_missing_information
 from wf2wf.loss import detect_and_apply_loss_sidecar, record
 
 import logging
@@ -62,7 +62,6 @@ class SnakemakeImporter(BaseImporter):
         wf = Workflow(
             name=workflow_name,
             version="1.0",
-            execution_model=EnvironmentSpecificValue("shared_filesystem", ["shared_filesystem"]),
         )
         # Extract and add tasks
         tasks = self._extract_tasks(parsed_data)
@@ -129,12 +128,8 @@ class SnakemakeImporter(BaseImporter):
         if self.verbose:
             logger.info("Inferring Snakemake-specific information using shared infrastructure...")
         
-        # Use shared inference for execution model detection
-        execution_model = infer_execution_model(workflow, "snakemake")
-        workflow.execution_model.set_for_environment(execution_model, 'shared_filesystem')
-        
-        # Use shared inference for environment-specific values
-        infer_environment_specific_values(workflow, "snakemake")
+        # Use shared inference for environment-specific values with the selected execution model
+        infer_environment_specific_values(workflow, "snakemake", self._selected_execution_model)
         
         # Snakemake-specific enhancements that aren't covered by shared infrastructure
         self._apply_snakemake_specific_defaults(workflow, parsed_data)
@@ -162,14 +157,6 @@ class SnakemakeImporter(BaseImporter):
         """Interactive prompting for Snakemake-specific configurations."""
         if self.verbose:
             logger.info("Starting interactive prompting for Snakemake configurations...")
-        
-        # Use shared interactive prompting for execution model confirmation
-        prompt_for_execution_model_confirmation(
-            workflow, 
-            "snakemake",
-            content_analysis=parsed_data.get("rule_templates"),
-            target_format=getattr(self, '_target_format', None)
-        )
         
         # Use shared interactive prompting for common resource types
         prompt_for_missing_information(workflow, "snakemake")
@@ -209,6 +196,148 @@ class SnakemakeImporter(BaseImporter):
         if self.verbose:
             logger.info("Environment management available for conda/container specifications")
     
+    def _detect_missing_input_files(self, path: Path, workdir: Path, configfile: str, cores: int, snakemake_args: List[str], verbose: bool) -> List[str]:
+        """
+        Detect missing input files by parsing the Snakefile and checking file existence.
+        Only files that are not produced by any rule (i.e., true workflow inputs) are checked.
+        Returns:
+            List of missing input file paths
+        """
+        import re
+        from pathlib import Path
+        
+        missing_files = []
+        all_input_files = set()
+        all_output_files = set()
+        
+        # Parse the Snakefile to extract input and output files from rules
+        try:
+            with open(path, 'r') as f:
+                content = f.read()
+            
+            # Find all rule definitions
+            rule_pattern = re.compile(r'rule\s+(\w+):\s*\n(.*?)(?=\nrule|\n$)', re.DOTALL)
+            for rule_match in rule_pattern.finditer(content):
+                rule_name = rule_match.group(1)
+                rule_body = rule_match.group(2)
+                
+                # Skip the 'all' rule as it's a target rule, not a processing rule
+                if rule_name == 'all':
+                    continue
+                
+                # Find input specification
+                input_match = re.search(r'input:\s*\n(.*?)(?=\n\s*(?:output|params|resources|threads|conda|container|shell|script|run|benchmark|log|priority|group|local|restartable|shadow|wrapper|conda|container|envmodules|singularity|apptainer|notebook|script|shell|run|benchmark|log|priority|group|local|restartable|shadow|wrapper|conda|container|envmodules|singularity|apptainer|notebook|rule|$))', rule_body, re.DOTALL | re.IGNORECASE)
+                if input_match:
+                    input_spec = input_match.group(1).strip()
+                    input_files = []
+                    named_pattern = re.compile(r'(\w+)\s*=\s*["\']([^"\']+)["\']')
+                    named_matches = named_pattern.findall(input_spec)
+                    for name, file_path in named_matches:
+                        input_files.append(file_path)
+                    simple_pattern = re.compile(r'["\']([^"\']+)["\']')
+                    simple_matches = simple_pattern.findall(input_spec)
+                    for file_path in simple_matches:
+                        if file_path not in [f for _, f in named_matches]:
+                            input_files.append(file_path)
+                    lines = input_spec.split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if line and not line.startswith('#') and not '=' in line:
+                            unquoted_pattern = re.compile(r'([a-zA-Z0-9_/.-]+\.(?:txt|fastq|fq|bam|sam|vcf|bed|gtf|gff|fa|fasta|fna|faa|json|yaml|yml|html|png|jpg|jpeg|pdf|csv|tsv))')
+                            unquoted_matches = unquoted_pattern.findall(line)
+                            for file_path in unquoted_matches:
+                                if file_path not in input_files:
+                                    input_files.append(file_path)
+                    for input_file in input_files:
+                        if input_file and not input_file.startswith('{') and not input_file.startswith('*'):
+                            all_input_files.add(input_file)
+                # Find output specification
+                output_match = re.search(r'output:\s*\n(.*?)(?=\n\s*(?:input|params|resources|threads|conda|container|shell|script|run|benchmark|log|priority|group|local|restartable|shadow|wrapper|conda|container|envmodules|singularity|apptainer|notebook|script|shell|run|benchmark|log|priority|group|local|restartable|shadow|wrapper|conda|container|envmodules|singularity|apptainer|notebook|rule|$))', rule_body, re.DOTALL | re.IGNORECASE)
+                if output_match:
+                    output_spec = output_match.group(1).strip()
+                    output_files = []
+                    named_pattern = re.compile(r'(\w+)\s*=\s*["\']([^"\']+)["\']')
+                    named_matches = named_pattern.findall(output_spec)
+                    for name, file_path in named_matches:
+                        output_files.append(file_path)
+                    simple_pattern = re.compile(r'["\']([^"\']+)["\']')
+                    simple_matches = simple_pattern.findall(output_spec)
+                    for file_path in simple_matches:
+                        if file_path not in [f for _, f in named_matches]:
+                            output_files.append(file_path)
+                    lines = output_spec.split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if line and not line.startswith('#') and not '=' in line:
+                            unquoted_pattern = re.compile(r'([a-zA-Z0-9_/.-]+\.(?:txt|fastq|fq|bam|sam|vcf|bed|gtf|gff|fa|fasta|fna|faa|json|yaml|yml|html|png|jpg|jpeg|pdf|csv|tsv))')
+                            unquoted_matches = unquoted_pattern.findall(line)
+                            for file_path in unquoted_matches:
+                                if file_path not in output_files:
+                                    output_files.append(file_path)
+                    for output_file in output_files:
+                        if output_file and not output_file.startswith('{') and not output_file.startswith('*'):
+                            all_output_files.add(output_file)
+        except Exception as e:
+            if verbose:
+                logger.warning(f"Error parsing Snakefile for input/output files: {e}")
+        # Only check for input files that are not produced by any rule
+        true_inputs = all_input_files - all_output_files
+        for input_file in true_inputs:
+            file_path = Path(input_file)
+            if workdir:
+                file_path = workdir / file_path
+            if not file_path.exists():
+                missing_files.append(input_file)
+                if verbose:
+                    logger.debug(f"Missing true input file: {input_file}")
+        if verbose:
+            logger.debug(f"Detected missing input files: {missing_files}")
+        return missing_files
+
+    def _handle_missing_input_files(self, missing_files: List[str], path: Path, verbose: bool) -> bool:
+        """
+        Handle missing input files by warning the user and optionally switching to parse-only mode.
+        
+        Returns:
+            True if should continue with parse-only mode, False if should terminate
+        """
+        if not missing_files:
+            return True  # No missing files, continue normally
+        
+        # Create warning message
+        warning_msg = f"\n⚠️  Missing input files detected in {path.name}:\n"
+        for file_path in missing_files:
+            warning_msg += f"   - {file_path}\n"
+        warning_msg += "\nThis will prevent Snakemake from building the DAG and extracting job details.\n"
+        warning_msg += "You can:\n"
+        warning_msg += "1. Create the missing input files and try again\n"
+        warning_msg += "2. Use parse-only mode (limited functionality, no DAG/job details)\n"
+        warning_msg += "3. Cancel the import\n"
+        
+        print(warning_msg)
+        
+        if self.interactive:
+            # Interactive mode: ask user what to do
+            while True:
+                response = input("Choose option (1/2/3) or press Enter for parse-only mode: ").strip().lower()
+                if response in ['', '2']:
+                    if verbose:
+                        logger.info("Switching to parse-only mode due to missing input files")
+                    return True  # Continue with parse-only mode
+                elif response == '1':
+                    print("Please create the missing input files and run the import again.")
+                    return False  # Terminate
+                elif response == '3':
+                    print("Import cancelled by user.")
+                    return False  # Terminate
+                else:
+                    print("Invalid option. Please choose 1, 2, or 3.")
+        else:
+            # Non-interactive mode: default to parse-only mode
+            if verbose:
+                logger.info("Non-interactive mode: defaulting to parse-only mode due to missing input files")
+            return True  # Continue with parse-only mode
+
     def _parse_source(self, path: Path, **opts: Any) -> Dict[str, Any]:
         """Parse Snakefile and extract all information."""
         # Store source path and opts for later use
@@ -264,6 +393,42 @@ class SnakemakeImporter(BaseImporter):
             "snakemake_args": snakemake_args
         }
         
+        # --- ENVIRONMENT DEPENDENCY CHECK: EARLY EXIT IF NEEDED ---
+        if not parse_only:
+            if verbose:
+                logger.info("Step 1.5: Checking environment dependencies...")
+            dependencies = self._detect_environment_dependencies(path)
+            
+            # Check if we need to handle missing dependencies
+            if (dependencies['conda']['required'] and not dependencies['conda']['available']) or \
+                (dependencies['docker']['required'] and not dependencies['docker']['available']):
+                
+                if not self._handle_environment_dependencies(dependencies, path, verbose):
+                    raise RuntimeError("Import terminated due to missing environment dependencies")
+                
+                # Switch to parse-only mode and skip all Snakemake subprocess calls
+                parse_only = True
+                result["parse_only"] = True
+                if verbose:
+                    logger.info("Continuing with parse-only mode due to missing environment dependencies")
+        
+        # --- MISSING INPUT FILE CHECK: EARLY EXIT IF NEEDED ---
+        if not parse_only:
+            if verbose:
+                logger.info("Step 1.6: Checking for missing input files...")
+            missing_files = self._detect_missing_input_files(path, workdir, configfile, cores, snakemake_args, verbose)
+            if missing_files:
+                should_continue = self._handle_missing_input_files(missing_files, path, verbose)
+                if not should_continue:
+                    raise RuntimeError("Import terminated due to missing input files")
+                # Switch to parse-only mode and skip all Snakemake subprocess calls
+                parse_only = True
+                result["parse_only"] = True
+                if verbose:
+                    logger.info("Continuing with parse-only mode due to missing input files")
+        
+        # --- END CHECKS ---
+
         # If not parse-only, get additional information from snakemake
         if not parse_only:
             # Get execution graph from `snakemake --dag`
@@ -286,6 +451,21 @@ class SnakemakeImporter(BaseImporter):
                 result["jobs"] = jobs
                 if debug:
                     logger.debug(f"Parsed {len(jobs)} jobs from dry-run output")
+        else:
+            # In parse-only mode, use enhanced static parsing
+            if verbose:
+                logger.info("Parse-only mode: using enhanced static parsing...")
+            
+            static_data = self._extract_dependencies_static(path)
+            result.update(static_data)
+            
+            # Set empty DAG and jobs for compatibility
+            result["dag_output"] = ""
+            result["dryrun_output"] = ""
+            result["jobs"] = {}
+            
+            if verbose:
+                logger.info("Parse-only mode: skipping Snakemake execution")
 
         return result
     
@@ -380,7 +560,8 @@ class SnakemakeImporter(BaseImporter):
         
         # Create one task per rule, with scatter information if multiple instances
         for rule_name, rule_details in rules.items():
-            # For the "all" rule, only include it if it has both input and output specifications
+            # For the "all" rule, only include it as a task if it has both input and output specifications
+            # If it only has inputs, it's a target specification and should be handled as workflow outputs, not a task
             if rule_name == "all":
                 has_input = "input" in rule_details
                 has_output = "output" in rule_details
@@ -417,6 +598,12 @@ class SnakemakeImporter(BaseImporter):
         # Check if "all" rule should be included as a task
         all_rule_details = rules.get("all", {})
         include_all_rule = "input" in all_rule_details and "output" in all_rule_details
+
+        # If DAG output is incomplete (only shows some rules), fall back to rule-based edge extraction
+        if self._is_dag_output_incomplete(dot_output, rules):
+            if self.verbose:
+                logger.info("DAG output is incomplete, using rule-based edge extraction")
+            return self._extract_edges_from_rules(rules, include_all_rule)
 
         # Build mapping from DOT node IDs to base rule names (first line of label)
         id_to_rule = {}
@@ -478,14 +665,96 @@ class SnakemakeImporter(BaseImporter):
                 logger.debug(f"Edge: {edge.parent} -> {edge.child}")
 
         return edges
-    
-    def _extract_environment_specific_values(self, parsed_data: Dict[str, Any], workflow: Workflow) -> None:
-        """Extract environment-specific values from parsed data."""
-        # Snakemake is inherently for shared filesystem, so set execution model
-        workflow.execution_model.set_for_environment("shared_filesystem", "shared_filesystem")
+
+    def _is_dag_output_incomplete(self, dot_output: str, rules: Dict[str, Any]) -> bool:
+        """Check if the DAG output is incomplete (doesn't show all rules)."""
+        if not dot_output.strip():
+            return True
         
-        # Note: Config handling removed - config should be converted to proper IR parameters
-        # rather than stored as opaque data
+        # Count rules in DAG output
+        dag_rules = set()
+        node_label_pattern = re.compile(r'label\s*=\s*"([^"]+)"')
+        for line in dot_output.splitlines():
+            m = node_label_pattern.search(line)
+            if m:
+                label = m.group(1)
+                # Extract rule name from label
+                if "\\n" in label:
+                    rule_name = label.split("\\n", 1)[0].strip()
+                else:
+                    rule_name = label.split("\n", 1)[0].strip()
+                if rule_name.startswith("rule "):
+                    rule_name = rule_name[5:].strip()
+                dag_rules.add(rule_name)
+        
+        # Count rules in parsed data
+        parsed_rules = set(rules.keys())
+        
+        # DAG is incomplete if it shows fewer rules than parsed data
+        is_incomplete = len(dag_rules) < len(parsed_rules)
+        
+        if self.verbose:
+            logger.info(f"DAG rules: {dag_rules}")
+            logger.info(f"Parsed rules: {parsed_rules}")
+            logger.info(f"DAG incomplete: {is_incomplete}")
+        
+        return is_incomplete
+
+    def _extract_edges_from_rules(self, rules: Dict[str, Any], include_all_rule: bool) -> List[Edge]:
+        """Extract edges from rule input/output specifications."""
+        edges = []
+        seen = set()
+        
+        # Build mapping from output files to rule names
+        output_to_rule = {}
+        for rule_name, rule_data in rules.items():
+            if "output" in rule_data:
+                output_spec = rule_data["output"]
+                # Handle both string and list outputs from parser
+                if isinstance(output_spec, str):
+                    outputs = [output_spec]
+                else:
+                    outputs = output_spec
+                for output in outputs:
+                    output_to_rule[output] = rule_name
+        
+        if self.verbose:
+            logger.info(f"Output to rule mapping: {output_to_rule}")
+        
+        # Find edges by matching inputs to outputs
+        for rule_name, rule_data in rules.items():
+            if "input" in rule_data:
+                input_spec = rule_data["input"]
+                # Handle both string and list inputs from parser
+                if isinstance(input_spec, str):
+                    inputs = [input_spec]
+                else:
+                    inputs = input_spec
+                for input_file in inputs:
+                    if input_file in output_to_rule:
+                        parent_rule = output_to_rule[input_file]
+                        # Exclude edges involving the 'all' pseudo-task only if it's not a real task
+                        if (parent_rule == "all" and not include_all_rule) or (rule_name == "all" and not include_all_rule):
+                            continue
+                        key = (parent_rule, rule_name)
+                        if key not in seen:
+                            edge = Edge(parent=parent_rule, child=rule_name)
+                            edges.append(edge)
+                            seen.add(key)
+                            if self.verbose:
+                                logger.debug(f"Created edge from I/O: {parent_rule} -> {rule_name} (via {input_file})")
+        
+        if self.verbose:
+            logger.info(f"Extracted {len(edges)} edges from rule I/O specifications")
+            for edge in edges:
+                logger.debug(f"Edge: {edge.parent} -> {edge.child}")
+        
+        return edges
+    
+    # def _extract_environment_specific_values(self, parsed_data: Dict[str, Any], workflow: Workflow) -> None:
+    #     """Extract environment-specific values from parsed data."""
+    #     # Note: Config handling removed - config should be converted to proper IR parameters
+    #     # rather than stored as opaque data
     
     def _get_source_format(self) -> str:
         """Get the source format name."""
@@ -515,6 +784,308 @@ class SnakemakeImporter(BaseImporter):
                             outputs.append(ParameterSpec(id=inp.strip(), type=TypeSpec(type="File")))
         
         return outputs
+
+    def _detect_environment_dependencies(self, path: Path) -> Dict[str, Any]:
+        """
+        Detect environment dependencies (conda, docker) from Snakefile and check availability.
+        
+        Returns:
+            Dictionary with dependency information and availability status
+        """
+        import subprocess
+        import shutil
+        
+        dependencies = {
+            'conda': {'required': False, 'available': False, 'environments': []},
+            'docker': {'required': False, 'available': False, 'containers': []}
+        }
+        
+        # Parse Snakefile for dependencies
+        try:
+            with open(path, 'r') as f:
+                content = f.read()
+            
+            # Check for conda directives
+            import re
+            conda_pattern = r'conda:\s*["\']([^"\']+)["\']'
+            conda_matches = re.findall(conda_pattern, content)
+            if conda_matches:
+                dependencies['conda']['required'] = True
+                dependencies['conda']['environments'] = conda_matches
+            
+            # Check for container directives
+            container_pattern = r'container:\s*["\']([^"\']+)["\']'
+            container_matches = re.findall(container_pattern, content)
+            if container_matches:
+                dependencies['docker']['required'] = True
+                dependencies['docker']['containers'] = container_matches
+            
+        except Exception as e:
+            if self.verbose:
+                logger.warning(f"Error parsing Snakefile for dependencies: {e}")
+        
+        # Check conda availability
+        if dependencies['conda']['required']:
+            conda_available = shutil.which('conda') is not None or shutil.which('mamba') is not None
+            dependencies['conda']['available'] = conda_available
+            
+            if not conda_available and self.verbose:
+                logger.warning("Conda environments required but conda/mamba not found in PATH")
+        
+        # Check Docker availability
+        if dependencies['docker']['required']:
+            try:
+                # Check if docker command exists
+                docker_exists = shutil.which('docker') is not None
+                if docker_exists:
+                    # Check if docker daemon is running
+                    result = subprocess.run(['docker', 'info'], 
+                                          capture_output=True, text=True, timeout=5)
+                    docker_running = result.returncode == 0
+                    dependencies['docker']['available'] = docker_running
+                    
+                    if not docker_running and self.verbose:
+                        logger.warning("Docker containers required but Docker daemon not running")
+                else:
+                    dependencies['docker']['available'] = False
+                    if self.verbose:
+                        logger.warning("Docker containers required but docker command not found")
+            except Exception as e:
+                dependencies['docker']['available'] = False
+                if self.verbose:
+                    logger.warning(f"Error checking Docker availability: {e}")
+        
+        return dependencies
+
+    def _handle_environment_dependencies(self, dependencies: Dict[str, Any], path: Path, verbose: bool) -> bool:
+        """
+        Handle environment dependency issues with interactive prompting.
+        
+        Args:
+            dependencies: Dependency information from _detect_environment_dependencies
+            path: Path to Snakefile
+            verbose: Verbose logging flag
+            
+        Returns:
+            True if import should proceed, False if cancelled
+        """
+        missing_deps = []
+        
+        if dependencies['conda']['required'] and not dependencies['conda']['available']:
+            missing_deps.append(('conda', dependencies['conda']['environments']))
+        
+        if dependencies['docker']['required'] and not dependencies['docker']['available']:
+            missing_deps.append(('docker', dependencies['docker']['containers']))
+        
+        if not missing_deps:
+            return True  # All dependencies available
+        
+        # Show warning about missing dependencies
+        print(f"\n⚠️  Environment dependencies missing for {path.name}:")
+        for dep_type, items in missing_deps:
+            print(f"   • {dep_type.upper()}: {', '.join(items)}")
+        
+        if self.interactive:
+            print("\nOptions:")
+            print("1. Use parse-only mode (static parsing, limited functionality)")
+            print("2. Try to create missing conda environments (if conda available)")
+            print("3. Skip container usage (if docker unavailable)")
+            print("4. Cancel import")
+            
+            while True:
+                try:
+                    choice = input("\nSelect option (1-4): ").strip()
+                    if choice == '1':
+                        if verbose:
+                            logger.info("User selected parse-only mode")
+                        return True  # Will use parse-only mode
+                    elif choice == '2':
+                        if dependencies['conda']['required'] and not dependencies['conda']['available']:
+                            print("❌ Conda not available, cannot create environments")
+                            continue
+                        if verbose:
+                            logger.info("User selected to create conda environments")
+                        return True  # Will try to create environments
+                    elif choice == '3':
+                        if dependencies['docker']['required'] and not dependencies['docker']['available']:
+                            if verbose:
+                                logger.info("User selected to skip container usage")
+                            return True  # Will skip containers
+                        else:
+                            print("❌ No docker dependencies to skip")
+                            continue
+                    elif choice == '4':
+                        if verbose:
+                            logger.info("User cancelled import")
+                        return False
+                    else:
+                        print("❌ Invalid choice, please enter 1-4")
+                except KeyboardInterrupt:
+                    print("\n❌ Import cancelled by user")
+                    return False
+        else:
+            # Non-interactive mode: default to parse-only
+            if verbose:
+                logger.info("Non-interactive mode: defaulting to parse-only mode")
+            return True
+
+    def _extract_dependencies_static(self, path: Path) -> Dict[str, Any]:
+        """
+        Extract dependencies and workflow structure using static parsing.
+        
+        This method analyzes the Snakefile to infer:
+        - Input/output file patterns
+        - Wildcard relationships
+        - Rule dependencies
+        - Resource specifications
+        
+        Args:
+            path: Path to Snakefile
+            
+        Returns:
+            Dictionary with extracted information
+        """
+        import re
+        from collections import defaultdict
+        
+        result = {
+            'rules': {},
+            'dependencies': defaultdict(set),
+            'file_patterns': {},
+            'wildcards': {}
+        }
+        
+        try:
+            # Parse rules using existing function
+            parsed_rules = _parse_snakefile_for_rules(path, debug=getattr(self, 'debug', False))
+            # Extract the actual rules from the parsed data
+            result['rules'] = parsed_rules.get('rules', {})
+            result['directives'] = parsed_rules.get('directives', {})
+            
+            # Extract file patterns and infer dependencies
+            for rule_name, rule_details in rules.items():
+                if rule_name == 'all':
+                    continue  # Skip the 'all' rule for dependency analysis
+                
+                inputs = rule_details.get('input', [])
+                outputs = rule_details.get('output', [])
+                
+                # Convert to lists if they're strings
+                if isinstance(inputs, str):
+                    inputs = [inputs]
+                if isinstance(outputs, str):
+                    outputs = [outputs]
+                
+                # Store file patterns
+                result['file_patterns'][rule_name] = {
+                    'inputs': inputs,
+                    'outputs': outputs
+                }
+                
+                # Extract wildcard patterns
+                wildcards = self._extract_wildcard_patterns_from_rule(rule_name, inputs, outputs)
+                if wildcards:
+                    result['wildcards'][rule_name] = wildcards
+                
+                # Infer dependencies based on file patterns
+                for output_pattern in outputs:
+                    for other_rule, other_patterns in result['file_patterns'].items():
+                        if other_rule == rule_name:
+                            continue
+                        
+                        # Check if this rule's outputs are inputs to other rules
+                        for other_input in other_patterns['inputs']:
+                            if self._patterns_match(output_pattern, other_input):
+                                result['dependencies'][other_rule].add(rule_name)
+            
+            if self.verbose:
+                logger.info(f"Extracted {len(result['rules'])} rules with static parsing")
+                logger.info(f"Inferred {len(result['dependencies'])} dependency relationships")
+                
+        except Exception as e:
+            if self.verbose:
+                logger.warning(f"Error in static dependency extraction: {e}")
+        
+        return result
+    
+    def _extract_wildcard_patterns_from_rule(self, rule_name: str, inputs: List[str], outputs: List[str]) -> Dict[str, str]:
+        """
+        Extract wildcard patterns from rule inputs and outputs.
+        
+        Args:
+            rule_name: Name of the rule
+            inputs: List of input patterns
+            outputs: List of output patterns
+            
+        Returns:
+            Dictionary mapping wildcard names to patterns
+        """
+        import re
+        
+        wildcards = {}
+        
+        # Look for wildcard patterns like {wildcard} or {wildcard,}
+        wildcard_pattern = r'\{([^}]+)\}'
+        
+        # Check outputs first (they usually define the wildcard patterns)
+        for output in outputs:
+            matches = re.findall(wildcard_pattern, output)
+            for match in matches:
+                # Handle comma-separated wildcards
+                for wc in match.split(','):
+                    wc = wc.strip()
+                    if wc and wc not in wildcards:
+                        wildcards[wc] = output
+        
+        # Check inputs for additional wildcards
+        for input_pattern in inputs:
+            matches = re.findall(wildcard_pattern, input_pattern)
+            for match in matches:
+                for wc in match.split(','):
+                    wc = wc.strip()
+                    if wc and wc not in wildcards:
+                        wildcards[wc] = input_pattern
+        
+        return wildcards
+    
+    def _patterns_match(self, pattern1: str, pattern2: str) -> bool:
+        """
+        Check if two file patterns could match (basic pattern matching).
+        
+        Args:
+            pattern1: First file pattern
+            pattern2: Second file pattern
+            
+        Returns:
+            True if patterns could match
+        """
+        import re
+        
+        # Simple heuristic: check if patterns share common elements
+        # This is a basic implementation - could be enhanced with more sophisticated matching
+        
+        # Remove wildcards for comparison
+        clean1 = re.sub(r'\{[^}]+\}', '*', pattern1)
+        clean2 = re.sub(r'\{[^}]+\}', '*', pattern2)
+        
+        # Check if one pattern is a subset of the other
+        if clean1 == clean2:
+            return True
+        
+        # Check if patterns share common path elements
+        parts1 = clean1.split('/')
+        parts2 = clean2.split('/')
+        
+        # Find common prefix
+        common_length = 0
+        for p1, p2 in zip(parts1, parts2):
+            if p1 == p2 or p1 == '*' or p2 == '*':
+                common_length += 1
+            else:
+                break
+        
+        # If they share most of their path, consider them matching
+        return common_length >= min(len(parts1), len(parts2)) - 1
 
 
 def _build_task_from_job_data(rule_name: str, job_data: Dict[str, Any], rule_template: Dict[str, Any]) -> Task:
@@ -628,54 +1199,54 @@ def to_dag_info(*, snakefile_path: Union[str, Path], **kwargs) -> Dict[str, Any]
 # ---------------------------------------------------------------------------
 
 
-def _workflow_to_dag_info(wf: Workflow) -> Dict[str, Any]:
-    """Convert a Workflow back to the legacy dag_info structure for compatibility."""
+# def _workflow_to_dag_info(wf: Workflow) -> Dict[str, Any]:
+#     """Convert a Workflow back to the legacy dag_info structure for compatibility."""
 
-    jobs = {}
-    job_dependencies = {}
+#     jobs = {}
+#     job_dependencies = {}
 
-    for task in wf.tasks.values():
-        # Extract rule name and index from task_id (format: rule_name_index)
-        rule_name = task.meta.get("rule_name", task.id)
+#     for task in wf.tasks.values():
+#         # Extract rule name and index from task_id (format: rule_name_index)
+#         rule_name = task.meta.get("rule_name", task.id)
 
-        job_dict = {
-            "rule_name": rule_name,
-            "condor_job_name": _sanitize_condor_job_name(task.id),
-            "wildcards_dict": task.meta.get("wildcards_dict", {}),
-            "inputs": task.inputs,
-            "outputs": task.outputs,
-            "log_files": task.meta.get("log_files", []),
-            "shell_command": task.command,
-            "threads": task.resources.get("threads"),
-            "resources": task.resources,
-            "conda_env_spec": task.environment.get("conda"),
-            "container_img_url": task.environment.get("container"),
-            "is_shell": task.meta.get("is_shell", False),
-            "is_script": task.meta.get("is_script", False),
-            "is_run": task.meta.get("is_run", False),
-            "is_containerized": task.meta.get("is_containerized", False),
-            "script_file": None, # No longer available in new IR
-            "run_block_code": task.meta.get("run_block_code"),
-            "retries": task.retry_count.get_value_for('shared_filesystem'),
-            "params_dict": task.params,
-            "benchmark_file": None,
-            "container_img_path": None,
-        }
+#         job_dict = {
+#             "rule_name": rule_name,
+#             "condor_job_name": _sanitize_condor_job_name(task.id),
+#             "wildcards_dict": task.meta.get("wildcards_dict", {}),
+#             "inputs": task.inputs,
+#             "outputs": task.outputs,
+#             "log_files": task.meta.get("log_files", []),
+#             "shell_command": task.command,
+#             "threads": task.resources.get("threads"),
+#             "resources": task.resources,
+#             "conda_env_spec": task.environment.get("conda"),
+#             "container_img_url": task.environment.get("container"),
+#             "is_shell": task.meta.get("is_shell", False),
+#             "is_script": task.meta.get("is_script", False),
+#             "is_run": task.meta.get("is_run", False),
+#             "is_containerized": task.meta.get("is_containerized", False),
+#             "script_file": None, # No longer available in new IR
+#             "run_block_code": task.meta.get("run_block_code"),
+#             "retries": task.retry_count.get_value_for('shared_filesystem'),
+#             "params_dict": task.params,
+#             "benchmark_file": None,
+#             "container_img_path": None,
+#         }
 
-        jobs[task.id] = job_dict
+#         jobs[task.id] = job_dict
 
-    # Build job dependencies (child -> [parents])
-    for edge in wf.edges:
-        if edge.child not in job_dependencies:
-            job_dependencies[edge.child] = []
-        job_dependencies[edge.child].append(edge.parent)
+#     # Build job dependencies (child -> [parents])
+#     for edge in wf.edges:
+#         if edge.child not in job_dependencies:
+#             job_dependencies[edge.child] = []
+#         job_dependencies[edge.child].append(edge.parent)
 
-    return {
-        "jobs": jobs,
-        "job_dependencies": job_dependencies,
-        "snakefile": wf.name,
-        "config": wf.config,
-    }
+#     return {
+#         "jobs": jobs,
+#         "job_dependencies": job_dependencies,
+#         "snakefile": wf.name,
+#         "config": wf.config,
+#     }
 
 
 def _parse_snakefile_for_rules(snakefile_path, debug=False):
@@ -689,15 +1260,16 @@ def _parse_snakefile_for_rules(snakefile_path, debug=False):
         lines = f.readlines()
 
     rule_starts = []
-    rule_name_pattern = re.compile(r"^\s*rule\s+(\w+):")
+    rule_name_pattern = re.compile(r"^\s*(rule|checkpoint)\s+(\w+):")
     configfile_pattern = re.compile(r"^\s*configfile:\s*['\"](.*?)['\"]")
 
     # 1. Find the starting line of all rules and top-level directives
     for i, line in enumerate(lines):
         match = rule_name_pattern.match(line)
         if match:
-            rule_name = match.group(1)
-            rule_starts.append({"name": rule_name, "start": i})
+            rule_type = match.group(1)  # 'rule' or 'checkpoint'
+            rule_name = match.group(2)
+            rule_starts.append({"name": rule_name, "start": i, "type": rule_type})
             continue  # It's a rule, not a top-level directive
 
         config_match = configfile_pattern.match(line)
@@ -708,9 +1280,13 @@ def _parse_snakefile_for_rules(snakefile_path, debug=False):
         templates["directives"] = top_level_directives
         return templates
 
+    # Track non-Snakemake directives for warnings (persistent across all rules)
+    non_snakemake_directives = set()
+    
     # 2. The body of each rule is the text between its start and the next rule's start
     for i, rule_info in enumerate(rule_starts):
         rule_name = rule_info["name"]
+        rule_type = rule_info["type"]  # 'rule' or 'checkpoint'
         start_line = rule_info["start"]
 
         # Determine the end line for the current rule's body
@@ -724,12 +1300,27 @@ def _parse_snakefile_for_rules(snakefile_path, debug=False):
         body = "".join(body_lines)
 
         details = {}
+        
+        # Store the rule type
+        if rule_type == "checkpoint":
+            details["checkpoint"] = True
 
         # 3. Parse directives from the extracted rule body
         # Robust, quote-aware parsing for key directives
         directives_to_capture = [
             "input", "output", "log", "conda", "container", "shell", "script", "priority"
         ]
+        
+        # Valid Snakemake directives (for warning about invalid ones)
+        valid_snakemake_directives = {
+            "input", "output", "log", "conda", "container", "shell", "script", "priority",
+            "threads", "retries", "resources", "run", "params", "benchmark", "checkpoint",
+            "group", "localrule", "shadow", "wrapper", "notebook", "envmodules"
+        }
+        
+        # Track context to avoid flagging directives inside other directive blocks
+        current_block = None
+        block_start_patterns = ["resources:", "input:", "output:", "shell:", "run:", "script:", "conda:", "container:", "threads:", "retries:", "params:", "log:", "benchmark:"]
         
         # Process each line and handle indented directives properly
         i = 0
@@ -742,24 +1333,58 @@ def _parse_snakefile_for_rules(snakefile_path, debug=False):
                 i += 1
                 continue
             
-            # Check if this line starts a directive (after stripping whitespace)
+            # FIRST: Check for any directive-like pattern to detect non-Snakemake directives
+            # Check for directives that are not inside other directive blocks
+            if ":" in stripped and not stripped.startswith("#"):
+                # Check if we're inside a directive block by looking at indentation
+                # If the line is indented, it's inside a block
+                is_indented = line.startswith((" ", "\t"))
+                
+                # Check for unknown directives if we're not inside a block (not indented) OR if it's a potential directive
+                # But skip if we're inside a resources block (resource keys are valid)
+                if (not is_indented or (is_indented and ":" in stripped and not any(stripped.startswith(block) for block in block_start_patterns))) and current_block != "resources":
+                    if debug:
+                        logger.debug(f"Processing line '{stripped}' as potential directive")
+                    potential_directive = stripped.split(":")[0].strip()
+                    if debug:
+                        logger.debug(f"Checking potential directive '{potential_directive}' in rule '{rule_name}'")
+                    if (potential_directive and 
+                        potential_directive not in valid_snakemake_directives and
+                        not potential_directive.startswith(("shell:", "run:", "script:", "resources:", "conda:", "container:", "threads:", "retries:", "params:", "log:", "benchmark:")) and
+                        not any(char in potential_directive for char in ['"', "'", "=", "/", "\\"]) and
+                        (potential_directive.isalnum() or "_" in potential_directive)):
+                        if debug:
+                            logger.debug(f"Adding '{potential_directive}' to non-Snakemake directives")
+                        non_snakemake_directives.add(potential_directive)
+            
+            # SECOND: Handle block context for known directives
+            # Check if we're starting a new directive block
+            for pattern in block_start_patterns:
+                if stripped.startswith(pattern):
+                    current_block = pattern.rstrip(":")
+                    break
+            
+            # Check if we're ending a directive block (non-indented line that's not a directive)
+            if current_block and not line.startswith((" ", "\t")) and stripped and ":" not in stripped:
+                current_block = None
+            
+            # THIRD: Check if this line starts a directive (after stripping whitespace)
             directive_found = None
             for directive in directives_to_capture:
                 if stripped.startswith(f"{directive}:"):
                     directive_found = directive
                     break
             
+            # Parse known directives if found
             if directive_found:
                 # Find the start of the value (after colon)
                 colon_pos = stripped.find(":")
                 value = stripped[colon_pos + 1:].lstrip()
-                
                 # If value starts with a quote, capture until matching quote
                 if value and value[0] in ('"', "'"):
                     quote_char = value[0]
                     value_body = value[1:]
                     collected = []
-                    
                     # If the quote ends on the same line
                     if value_body.endswith(quote_char) and not value_body[:-1].endswith("\\"):
                         collected.append(value_body[:-1])
@@ -778,7 +1403,6 @@ def _parse_snakefile_for_rules(snakefile_path, debug=False):
                 else:
                     # Unquoted value (single line)
                     value = value.strip()
-                
                 details[directive_found] = value
             
             i += 1
@@ -795,13 +1419,14 @@ def _parse_snakefile_for_rules(snakefile_path, debug=False):
         for line in body_lines:
             stripped_line = line.strip()
             if stripped_line.startswith("input:"):
-                # Handle single-line input: input: "A.txt"
+                # Handle single-line input: input: "A.txt" or input: "A.txt", "B.txt"
                 after_colon = line.split("input:", 1)[1].strip()
                 if after_colon:
-                    # Remove quotes and trailing commas
-                    after_colon = after_colon.rstrip(",").strip('"\'')
-                    if after_colon:
-                        input_lines.append(after_colon)
+                    # Use the robust parser for single-line inputs too
+                    items = _parse_snakemake_io_spec(after_colon)
+                    for item in items:
+                        if item and not item.startswith(("shell:", "run:", "script:", "resources:", "conda:", "container:", "threads:", "retries:", "params:", "log:", "benchmark:")):
+                            input_lines.append(item)
                     in_input_block = False
                 else:
                     in_input_block = True
@@ -814,7 +1439,7 @@ def _parse_snakefile_for_rules(snakefile_path, debug=False):
                 and stripped_line
             ):
                 # Check if this is the start of a new directive
-                if any(stripped_line.startswith(d) for d in ["output:", "shell:", "run:", "script:", "resources:", "conda:", "container:", "threads:", "retries:"]):
+                if any(stripped_line.startswith(d) for d in ["output:", "shell:", "run:", "script:", "resources:", "conda:", "container:", "threads:", "retries:", "params:", "log:", "benchmark:"]):
                     in_input_block = False
 
             if in_input_block and (line.startswith(" ") or line.startswith("\t")):
@@ -825,11 +1450,10 @@ def _parse_snakefile_for_rules(snakefile_path, debug=False):
             input_items = []
             for line in input_lines:
                 if line and not line.startswith("#"):
-                    # Split by comma and handle each item
-                    items = [item.strip().strip('"\'') for item in line.split(",")]
+                    # Use the robust parser for input/output specifications
+                    items = _parse_snakemake_io_spec(line)
                     for item in items:
-                        item = item.strip()
-                        if item and not item.startswith(("shell:", "run:", "script:", "resources:", "conda:", "container:", "threads:", "retries:")):
+                        if item and not item.startswith(("shell:", "run:", "script:", "resources:", "conda:", "container:", "threads:", "retries:", "params:", "log:", "benchmark:")):
                             input_items.append(item)
             if input_items:
                 if len(input_items) == 1:
@@ -843,12 +1467,14 @@ def _parse_snakefile_for_rules(snakefile_path, debug=False):
         for line in body_lines:
             stripped_line = line.strip()
             if stripped_line.startswith("output:"):
-                # Handle single-line output: output: "A.txt"
+                # Handle single-line output: output: "A.txt" or output: "A.txt", "B.txt"
                 after_colon = line.split("output:", 1)[1].strip()
                 if after_colon:
-                    after_colon = after_colon.rstrip(",").strip('"\'')
-                    if after_colon:
-                        output_lines.append(after_colon)
+                    # Use the robust parser for single-line outputs too
+                    items = _parse_snakemake_io_spec(after_colon)
+                    for item in items:
+                        if item and not item.startswith(("shell:", "run:", "script:", "resources:", "conda:", "container:", "threads:", "retries:", "params:", "log:", "benchmark:")):
+                            output_lines.append(item)
                     in_output_block = False
                 else:
                     in_output_block = True
@@ -861,7 +1487,7 @@ def _parse_snakefile_for_rules(snakefile_path, debug=False):
                 and stripped_line
             ):
                 # Check if this is the start of a new directive
-                if any(stripped_line.startswith(d) for d in ["input:", "shell:", "run:", "script:", "resources:", "conda:", "container:", "threads:", "retries:"]):
+                if any(stripped_line.startswith(d) for d in ["input:", "shell:", "run:", "script:", "resources:", "conda:", "container:", "threads:", "retries:", "params:", "log:", "benchmark:"]):
                     in_output_block = False
 
             if in_output_block and (line.startswith(" ") or line.startswith("\t")):
@@ -872,11 +1498,10 @@ def _parse_snakefile_for_rules(snakefile_path, debug=False):
             output_items = []
             for line in output_lines:
                 if line and not line.startswith("#"):
-                    # Split by comma and handle each item
-                    items = [item.strip().strip('"\'') for item in line.split(",")]
+                    # Use the robust parser for input/output specifications
+                    items = _parse_snakemake_io_spec(line)
                     for item in items:
-                        item = item.strip()
-                        if item and not item.startswith(("shell:", "run:", "script:", "resources:", "conda:", "container:", "threads:", "retries:")):
+                        if item and not item.startswith(("shell:", "run:", "script:", "resources:", "conda:", "container:", "threads:", "retries:", "params:", "log:", "benchmark:")):
                             output_items.append(item)
             if output_items:
                 if len(output_items) == 1:
@@ -954,9 +1579,223 @@ def _parse_snakefile_for_rules(snakefile_path, debug=False):
             if res_details:
                 details["resources"] = res_details
 
+        # State machine for the 'container:' block
+        in_container_block = False
+        container_lines = []
+        container_directives = ["input:", "output:", "shell:", "run:", "script:", "resources:", "conda:", "threads:", "retries:", "params:"]
+        for line in body_lines:
+            stripped_line = line.strip()
+            if stripped_line.startswith("container:"):
+                # Handle single-line container: container: "docker://image:tag"
+                after_colon = line.split("container:", 1)[1].strip()
+                if after_colon:
+                    # Parse container specification
+                    container_spec = after_colon.strip().strip('"\'')
+                    details["container"] = container_spec
+                    in_container_block = False
+                else:
+                    in_container_block = True
+                continue
+
+            if in_container_block:
+                # Only include indented lines that are not directives
+                if line.startswith((" ", "\t")) and not any(stripped_line.startswith(d) for d in container_directives):
+                    container_lines.append(line)
+                else:
+                    in_container_block = False
+
+        if container_lines:
+            # Parse multi-line container specification
+            container_spec = "".join(container_lines).strip().strip('"\'')
+            details["container"] = container_spec
+
+        # State machine for the 'conda:' block
+        in_conda_block = False
+        conda_lines = []
+        conda_directives = ["input:", "output:", "shell:", "run:", "script:", "resources:", "container:", "threads:", "retries:", "params:"]
+        for line in body_lines:
+            stripped_line = line.strip()
+            if stripped_line.startswith("conda:"):
+                # Handle single-line conda: conda: "environment.yaml"
+                after_colon = line.split("conda:", 1)[1].strip()
+                if after_colon:
+                    # Parse conda specification
+                    conda_spec = after_colon.split("#")[0].strip().strip('"\'')
+                    details["conda"] = conda_spec
+                    # Do NOT set in_conda_block = True for single-line
+                else:
+                    in_conda_block = True
+                continue
+            if in_conda_block:
+                # Only include indented lines that do not start with another directive
+                if (line.startswith(" ") or line.startswith("\t")) and not any(line.lstrip().startswith(d) for d in conda_directives):
+                    conda_lines.append(line.strip())
+                else:
+                    # End of conda block
+                    if conda_lines:
+                        conda_spec = " ".join(conda_lines).split("#")[0].strip().strip('"\'')
+                        details["conda"] = conda_spec
+                    in_conda_block = False
+                continue
+        # If still in conda block at the end
+        if in_conda_block and conda_lines:
+            conda_spec = " ".join(conda_lines).split("#")[0].strip().strip('"\'')
+            details["conda"] = conda_spec
+
+        # State machine for the 'script:' block
+        in_script_block = False
+        script_lines = []
+        script_directives = ["input:", "output:", "shell:", "run:", "resources:", "conda:", "container:", "threads:", "retries:", "params:"]
+        for line in body_lines:
+            stripped_line = line.strip()
+            if stripped_line.startswith("script:"):
+                # Handle single-line script: script: "script.py"
+                after_colon = line.split("script:", 1)[1].strip()
+                if after_colon:
+                    # Parse script specification
+                    script_spec = after_colon.strip().strip('"\'')
+                    details["script"] = script_spec
+                    # Do NOT set in_script_block = True for single-line
+                else:
+                    in_script_block = True
+                continue
+
+            if in_script_block:
+                # Only include indented lines that don't start with other directives
+                if line.startswith((" ", "\t")) and not any(stripped_line.startswith(d) for d in script_directives):
+                    script_lines.append(line)
+                elif not line.startswith((" ", "\t")) and stripped_line:
+                    # Non-indented line or new directive - end the script block
+                    in_script_block = False
+
+        if script_lines:
+            # Parse multi-line script specification
+            script_spec = "".join(script_lines).strip().strip('"\'')
+            details["script"] = script_spec
+
+        # State machine for the 'shell:' block
+        in_shell_block = False
+        shell_lines = []
+        for line in body_lines:
+            stripped_line = line.strip()
+            if stripped_line.startswith("shell:"):
+                # Handle single-line shell: shell: "echo 'hello'"
+                after_colon = line.split("shell:", 1)[1].strip()
+                if after_colon:
+                    # Parse shell specification
+                    shell_spec = after_colon.strip().strip('"\'')
+                    details["shell"] = shell_spec
+                    in_shell_block = False
+                else:
+                    in_shell_block = True
+                continue
+
+            if (
+                in_shell_block
+                and line
+                and not line.startswith((" ", "\t"))
+                and stripped_line
+            ):
+                if ":" in stripped_line and not stripped_line.startswith("#"):
+                    in_shell_block = False
+
+            if in_shell_block:
+                shell_lines.append(line)
+
+        if shell_lines:
+            # Parse multi-line shell specification
+            shell_spec = "".join(shell_lines).strip().strip('"\'')
+            details["shell"] = shell_spec
+
+        # State machine for the 'threads:' block
+        in_threads_block = False
+        threads_lines = []
+        for line in body_lines:
+            stripped_line = line.strip()
+            if stripped_line.startswith("threads:"):
+                # Handle single-line threads: threads: 4
+                after_colon = line.split("threads:", 1)[1].strip()
+                if after_colon:
+                    # Parse threads specification
+                    threads_spec = after_colon.strip().strip('"\'')
+                    try:
+                        details["threads"] = int(threads_spec)
+                    except ValueError:
+                        details["threads"] = threads_spec
+                    in_threads_block = False
+                else:
+                    in_threads_block = True
+                continue
+
+            if (
+                in_threads_block
+                and line
+                and not line.startswith((" ", "\t"))
+                and stripped_line
+            ):
+                if ":" in stripped_line and not stripped_line.startswith("#"):
+                    in_threads_block = False
+
+            if in_threads_block:
+                threads_lines.append(line)
+
+        if threads_lines:
+            # Parse multi-line threads specification - strip comments
+            threads_spec = "".join(threads_lines).split("#")[0].strip().strip('"\'')
+            try:
+                details["threads"] = int(threads_spec)
+            except ValueError:
+                details["threads"] = threads_spec
+
+        # State machine for the 'retries:' block
+        in_retries_block = False
+        retries_lines = []
+        for line in body_lines:
+            stripped_line = line.strip()
+            if stripped_line.startswith("retries:"):
+                # Handle single-line retries: retries: 3
+                after_colon = line.split("retries:", 1)[1].strip()
+                if after_colon:
+                    # Parse retries specification - strip comments
+                    retries_spec = after_colon.split("#")[0].strip().strip('"\'')
+                    try:
+                        details["retries"] = int(retries_spec)
+                    except ValueError:
+                        details["retries"] = retries_spec
+                    in_retries_block = False
+                else:
+                    in_retries_block = True
+                continue
+
+            if (
+                in_retries_block
+                and line
+                and not line.startswith((" ", "\t"))
+                and stripped_line
+            ):
+                if ":" in stripped_line and not stripped_line.startswith("#"):
+                    in_retries_block = False
+
+            if in_retries_block:
+                retries_lines.append(line)
+
+        if retries_lines:
+            # Parse multi-line retries specification - strip comments
+            retries_spec = "".join(retries_lines).split("#")[0].strip().strip('"\'')
+            try:
+                details["retries"] = int(retries_spec)
+            except ValueError:
+                details["retries"] = retries_spec
+
         if debug:
             print(f"DEBUG: Parsed rule '{rule_name}' with details: {details}")
         templates["rules"][rule_name] = details
+
+    # Emit warnings for non-Snakemake directives found across all rules
+    if non_snakemake_directives:
+        import warnings
+        warning_msg = f"Snakefile contains non-Snakemake directives that will be ignored: {', '.join(sorted(non_snakemake_directives))}"
+        warnings.warn(warning_msg, UserWarning, stacklevel=2)
 
     templates["directives"] = top_level_directives
     return templates
@@ -1279,7 +2118,12 @@ def _create_task_from_rule_template(rule_name: str, rule_details: Dict[str, Any]
     # Inputs
     inputs = []
     if rule_details.get("input"):
-        input_list = _parse_snakemake_list(rule_details["input"])
+        input_spec = rule_details["input"]
+        # Handle both string and list inputs from parser
+        if isinstance(input_spec, str):
+            input_list = [input_spec]
+        else:
+            input_list = input_spec
         for inp in input_list:
             if inp.strip():
                 param = ParameterSpec(id=inp.strip(), type="File")
@@ -1289,7 +2133,12 @@ def _create_task_from_rule_template(rule_name: str, rule_details: Dict[str, Any]
     # Outputs
     outputs = []
     if rule_details.get("output"):
-        output_list = _parse_snakemake_list(rule_details["output"])
+        output_spec = rule_details["output"]
+        # Handle both string and list outputs from parser
+        if isinstance(output_spec, str):
+            output_list = [output_spec]
+        else:
+            output_list = output_spec
         for out in output_list:
             if out.strip():
                 param = ParameterSpec(id=out.strip(), type="File")
@@ -1330,7 +2179,7 @@ def _create_task_from_rule_template(rule_name: str, rule_details: Dict[str, Any]
 
     # Retry logic (environment-specific for shared_filesystem)
     if rule_details.get("retries"):
-        task.retry_count.set_for_environment(rule_details["retries"], "shared_filesystem")
+        task.retry_count.set_for_environment(int(rule_details["retries"]), "shared_filesystem")
 
     # Priority (environment-specific for shared_filesystem)
     if rule_details.get("priority"):
@@ -1344,19 +2193,59 @@ def _create_task_from_rule_template(rule_name: str, rule_details: Dict[str, Any]
     return task
 
 
-def _parse_snakemake_list(list_str: str) -> List[str]:
-    """Parse a Snakemake list string (comma-separated, possibly quoted)."""
-    if not list_str:
+
+def _parse_snakemake_io_spec(spec_str: str) -> List[str]:
+    """
+    Parse a Snakemake input/output specification that can be either:
+    1. A single quoted string: "file.txt"
+    2. Comma-separated quoted strings: "file1.txt", "file2.txt"
+    3. Python list syntax: ["file1.txt", "file2.txt"]
+    """
+    if not spec_str:
         return []
     
-    # Simple parsing - split by comma and strip whitespace
-    # This is a basic implementation that could be enhanced for complex cases
+    spec_str = spec_str.strip()
+    
+    # Handle Python list syntax: ["file1.txt", "file2.txt"]
+    if spec_str.startswith('[') and spec_str.endswith(']'):
+        # Remove outer brackets
+        inner_content = spec_str[1:-1].strip()
+        if not inner_content:
+            return []
+        
+        # Parse the inner content as comma-separated quoted strings
+        items = []
+        current_item = ""
+        in_quotes = False
+        quote_char = None
+        
+        for char in inner_content:
+            if char in ['"', "'"] and not in_quotes:
+                in_quotes = True
+                quote_char = char
+            elif char == quote_char and in_quotes:
+                in_quotes = False
+                quote_char = None
+            elif char == ',' and not in_quotes:
+                if current_item.strip():
+                    items.append(current_item.strip().strip('"\''))
+                current_item = ""
+            else:
+                current_item += char
+        
+        # Add the last item
+        if current_item.strip():
+            items.append(current_item.strip().strip('"\''))
+        
+        return [item for item in items if item]
+    
+    # Handle comma-separated quoted strings: "file1.txt", "file2.txt"
     items = []
     current_item = ""
     in_quotes = False
     quote_char = None
     
-    for char in list_str:
+    for char in spec_str:
         if char in ['"', "'"] and not in_quotes:
             in_quotes = True
             quote_char = char
@@ -1364,16 +2253,17 @@ def _parse_snakemake_list(list_str: str) -> List[str]:
             in_quotes = False
             quote_char = None
         elif char == ',' and not in_quotes:
-            items.append(current_item.strip())
+            if current_item.strip():
+                items.append(current_item.strip().strip('"\''))
             current_item = ""
         else:
             current_item += char
     
     # Add the last item
     if current_item.strip():
-        items.append(current_item.strip())
+        items.append(current_item.strip().strip('"\''))
     
-    return items
+    return [item for item in items if item]
 
 
 def _build_task_from_rule_details(rule_name: str, rule_details: Dict[str, Any]) -> Task:
@@ -1444,13 +2334,21 @@ def _build_task_from_rule_details(rule_name: str, rule_details: Dict[str, Any]) 
             task.priority.set_for_environment(priority_value, "shared_filesystem")
     
     # Set inputs and outputs
-    if rule_details.get("inputs"):
-        for inp in rule_details["inputs"]:
+    if rule_details.get("input"):
+        inputs = rule_details["input"]
+        # Handle both single string and list of strings
+        if isinstance(inputs, str):
+            inputs = [inputs]
+        for inp in inputs:
             param = ParameterSpec(id=inp.strip(), type="File")
             task.inputs.append(param)
     
-    if rule_details.get("outputs"):
-        for out in rule_details["outputs"]:
+    if rule_details.get("output"):
+        outputs = rule_details["output"]
+        # Handle both single string and list of strings
+        if isinstance(outputs, str):
+            outputs = [outputs]
+        for out in outputs:
             param = ParameterSpec(id=out.strip(), type="File")
             task.outputs.append(param)
     
@@ -1603,7 +2501,14 @@ def _build_task_from_rule_with_wildcards(rule_name: str, rule_details: Dict[str,
     
     # Inputs with wildcard patterns
     if "input" in rule_details:
-        for i, input_pattern in enumerate(rule_details["input"]):
+        input_spec = rule_details["input"]
+        # Handle both string and list inputs
+        if isinstance(input_spec, str):
+            input_patterns = [input_spec]
+        else:
+            input_patterns = input_spec
+        
+        for i, input_pattern in enumerate(input_patterns):
             param = ParameterSpec(
                 id=f"input_{i}",
                 type="File",
@@ -1613,7 +2518,14 @@ def _build_task_from_rule_with_wildcards(rule_name: str, rule_details: Dict[str,
     
     # Outputs with wildcard patterns
     if "output" in rule_details:
-        for i, output_pattern in enumerate(rule_details["output"]):
+        output_spec = rule_details["output"]
+        # Handle both string and list outputs
+        if isinstance(output_spec, str):
+            output_patterns = [output_spec]
+        else:
+            output_patterns = output_spec
+        
+        for i, output_pattern in enumerate(output_patterns):
             param = ParameterSpec(
                 id=f"output_{i}",
                 type="File",

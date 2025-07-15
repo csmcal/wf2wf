@@ -120,7 +120,7 @@ class GalaxyImporter(BaseImporter):
         )
         
         # --- Shared infrastructure: inference and prompting ---
-        infer_environment_specific_values(wf, "galaxy")
+        infer_environment_specific_values(wf, "galaxy", self._selected_execution_model)
         if self.interactive:
             prompt_for_missing_information(wf, "galaxy")
         # (Loss sidecar and environment management are handled by BaseImporter)

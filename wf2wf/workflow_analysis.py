@@ -224,6 +224,21 @@ def detect_execution_model_from_content(file_path: Path, format_name: str) -> Co
                 ]
             )
         
+        # Determine primary model with format-specific weighting
+        # For format-specific models, give extra weight to format indicators
+        format_default = FORMAT_EXECUTION_MODELS.get(format_name, "unknown")
+        
+        # Adjust counts based on format-specific indicators
+        if format_name == "nextflow" and hybrid_count > 0:
+            # Nextflow with hybrid indicators should strongly favor hybrid
+            hybrid_count += 3  # Give extra weight
+        elif format_name == "dagman" and distributed_count > 0:
+            # DAGMan with distributed indicators should strongly favor distributed
+            distributed_count += 3
+        elif format_name == "snakemake" and shared_count > 0:
+            # Snakemake with shared indicators should strongly favor shared
+            shared_count += 2
+        
         # Determine primary model
         if cloud_native_count > shared_count and cloud_native_count > distributed_count and cloud_native_count > hybrid_count:
             execution_model = "cloud_native"
@@ -239,8 +254,7 @@ def detect_execution_model_from_content(file_path: Path, format_name: str) -> Co
             confidence = min(0.8, 0.4 + (hybrid_count / total_indicators) * 0.4)
         else:
             # Tie or unclear, use format-based default
-            default_model = FORMAT_EXECUTION_MODELS.get(format_name, "unknown")
-            execution_model = default_model
+            execution_model = format_default
             confidence = 0.4
         
         # Generate recommendations

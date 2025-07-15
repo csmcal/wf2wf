@@ -191,7 +191,6 @@ class WDLImporter(BaseImporter):
         workflow = Workflow(
             name=workflow_name,
             version=wdl_doc.get("version", "1.0"),
-            execution_model=EnvironmentSpecificValue("shared_filesystem", ["shared_filesystem"]),
         )
         
         # Add metadata
@@ -219,7 +218,7 @@ class WDLImporter(BaseImporter):
             workflow.outputs = _convert_wdl_workflow_outputs(workflow_def.get("outputs", {}))
         
         # --- Shared infrastructure: inference and prompting ---
-        infer_environment_specific_values(workflow, "wdl")
+        infer_environment_specific_values(workflow, "wdl", self._selected_execution_model)
         if self.interactive:
             prompt_for_missing_information(workflow, "wdl")
         # (Loss sidecar and environment management are handled by BaseImporter)

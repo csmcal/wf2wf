@@ -2,10 +2,13 @@
 Base classes for environment adaptation.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 from wf2wf.core import Workflow, Task, EnvironmentSpecificValue
 from wf2wf.loss.core import record as loss_record
+
+logger = logging.getLogger(__name__)
 
 
 class EnvironmentAdapter(ABC):
@@ -32,17 +35,23 @@ class EnvironmentAdapter(ABC):
         Returns:
             Adapted workflow
         """
+        logger.debug(f"Starting workflow adaptation from {self.source_env} to {self.target_env}")
+        logger.debug(f"Workflow has {len(workflow.tasks)} tasks")
+        
         # Create a copy to avoid modifying the original
         adapted_workflow = workflow.copy()
+        logger.debug("Created deep copy of workflow for adaptation")
         
         # Adapt each task
         for task_id, task in adapted_workflow.tasks.items():
+            logger.debug(f"Adapting task {task_id}")
             adapted_task = self.adapt_task(task, **opts)
             adapted_workflow.tasks[task_id] = adapted_task
             
         # Adapt workflow-level properties
         self._adapt_workflow_properties(adapted_workflow, **opts)
         
+        logger.debug(f"Workflow adaptation completed. Adaptation log has {len(self.adaptation_log)} entries")
         return adapted_workflow
     
     def adapt_task(self, task: Task, **opts) -> Task:
@@ -59,6 +68,9 @@ class EnvironmentAdapter(ABC):
         # Create a copy to avoid modifying the original
         adapted_task = task.copy()
         
+        # Set current task for adaptation methods that need access to the task
+        self._current_task = adapted_task
+        
         # Adapt resource requirements
         self._adapt_task_resources(adapted_task, **opts)
         
@@ -67,6 +79,9 @@ class EnvironmentAdapter(ABC):
         
         # Adapt error handling
         self._adapt_task_error_handling(adapted_task, **opts)
+        
+        # Clear current task reference
+        self._current_task = None
         
         return adapted_task
     
@@ -106,28 +121,33 @@ class EnvironmentAdapter(ABC):
                     if adapted_value is not None:
                         setattr(task, field, adapted_value)
     
-    def _adapt_workflow_properties(self, workflow: Workflow, **opts):
-        """Adapt workflow-level properties."""
-        # Adapt execution model if needed
-        if workflow.execution_model:
-            adapted_model = self._adapt_execution_model(workflow.execution_model, **opts)
-            if adapted_model is not None:
-                workflow.execution_model = adapted_model
+    # def _adapt_workflow_properties(self, workflow: Workflow, **opts):
+    #     """Adapt workflow-level properties."""
+    #     # Note: Execution model is now stored in metadata, not as EnvironmentSpecificValue
+    #     # Adaptation of execution model should be handled at the metadata level if needed
+    #     pass
     
     def _adapt_resource_field(self, field_name: str, field_value: EnvironmentSpecificValue, **opts) -> Optional[EnvironmentSpecificValue]:
         """Adapt a resource field value."""
         # Get source value
         source_value = field_value.get_value_for(self.source_env)
+        logger.debug(f"Adapting {field_name}: source_value={source_value} from {self.source_env}")
+        
         if source_value is None:
+            logger.debug(f"No source value for {field_name} in {self.source_env}")
             return None
             
         # Apply adaptation
         adapted_value = self._adapt_resource_value(field_name, source_value, **opts)
+        logger.debug(f"Adapted {field_name}: {source_value} -> {adapted_value}")
+        
         if adapted_value is None:
+            logger.debug(f"No adaptation needed for {field_name}")
             return None
             
         # Set the adapted value for the target environment (this handles duplicates)
         field_value.set_for_environment(adapted_value, self.target_env)
+        logger.debug(f"Set {field_name}={adapted_value} for {self.target_env}")
         return field_value
     
     def _adapt_environment_field(self, field_name: str, field_value: EnvironmentSpecificValue, **opts) -> Optional[EnvironmentSpecificValue]:

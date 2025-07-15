@@ -23,6 +23,7 @@ from wf2wf.core import Workflow, Task, EnvironmentSpecificValue
 from wf2wf.exporters.base import BaseExporter
 from wf2wf.exporters.inference import _has_env_value
 from wf2wf.importers.inference import infer_condor_attributes
+from wf2wf.environ import pack_conda_environment, generate_conda_activation_script
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ class DAGManExporter(BaseExporter):
     """DAGMan exporter using shared infrastructure."""
     
     def __init__(self, interactive: bool = False, verbose: bool = False, target_environment: str = "distributed_computing"):
-        """Initialize DAGMan exporter with distributed computing as default target environment."""
+        """Initialize DAGMan exporter with distributed_computing as default target environment."""
         super().__init__(interactive=interactive, verbose=verbose, target_environment=target_environment)
     
     def _get_target_format(self) -> str:
@@ -103,32 +104,68 @@ class DAGManExporter(BaseExporter):
         # Note: Could use _has_env_value(task.command, self.target_environment) to check existence
         command = task.command.get_value_with_default(self.target_environment)
         script = task.script.get_value_with_default(self.target_environment)
+        environment = self._get_task_environment_for_target(task)
+        conda_env = environment.get('conda')
+        
+        # Handle conda environment if specified
+        conda_activation_script = None
+        if conda_env:
+            try:
+                # Package the conda environment
+                env_tarball_path = pack_conda_environment(conda_env, path.parent)
+                if self.verbose:
+                    logger.info(f"Packaged conda environment '{conda_env}' to {env_tarball_path}")
+                
+                # Generate activation script
+                conda_activation_script = generate_conda_activation_script(
+                    env_tarball_path.name, command or script
+                )
+            except Exception as e:
+                logger.warning(f"Failed to package conda environment '{conda_env}': {e}")
+                # Fall back to direct conda activation
+                conda_activation_script = f"#!/bin/bash\nset -euo pipefail\nconda activate {conda_env}\n"
         
         if script:
             # Copy script file
             script_path = Path(script)
             if script_path.exists():
-                shutil.copy2(script_path, path)
+                if conda_activation_script:
+                    # Create wrapper that activates conda environment first
+                    path.write_text(conda_activation_script)
+                else:
+                    shutil.copy2(script_path, path)
                 # Make executable
                 path.chmod(0o755)
             else:
                 # Create placeholder script with proper format
                 script_ext = script_path.suffix
-                if script_ext in ('.py', '.PY'):
-                    script_content = f"#!/bin/bash\nset -euo pipefail\npython {script}\n"
-                elif script_ext in ('.R', '.r'):
-                    script_content = f"#!/bin/bash\nset -euo pipefail\nRscript {script}\n"
+                if conda_activation_script:
+                    # Use conda activation script
+                    path.write_text(conda_activation_script)
                 else:
-                    script_content = f"#!/bin/bash\nset -euo pipefail\nbash {script}\n"
-                path.write_text(script_content)
+                    if script_ext in ('.py', '.PY'):
+                        script_content = f"#!/bin/bash\nset -euo pipefail\npython {script}\n"
+                    elif script_ext in ('.R', '.r'):
+                        script_content = f"#!/bin/bash\nset -euo pipefail\nRscript {script}\n"
+                    else:
+                        script_content = f"#!/bin/bash\nset -euo pipefail\nbash {script}\n"
+                    path.write_text(script_content)
                 path.chmod(0o755)
         elif command:
             # Create wrapper script with command
-            path.write_text(f"#!/bin/bash\nset -euo pipefail\n{command}\n")
+            if conda_activation_script:
+                # Use conda activation script
+                path.write_text(conda_activation_script)
+            else:
+                path.write_text(f"#!/bin/bash\nset -euo pipefail\n{command}\n")
             path.chmod(0o755)
         else:
             # Create placeholder script
-            path.write_text(f"#!/bin/bash\nset -euo pipefail\necho 'No command defined'\nexit 1\n")
+            if conda_activation_script:
+                # Use conda activation script
+                path.write_text(conda_activation_script)
+            else:
+                path.write_text(f"#!/bin/bash\nset -euo pipefail\necho 'No command defined'\nexit 1\n")
             path.chmod(0o755)
 
     def _write_dag_file(
@@ -297,7 +334,8 @@ class DAGManExporter(BaseExporter):
             # Only set universe = vanilla if not already set by container
             if not container or not container.startswith("docker://"):
                 submit_lines.append("universe = vanilla")
-            submit_lines.append(f"+CondaEnv = {conda}")
+            # Note: Conda environments are now handled through packaging and activation scripts
+            # The +CondaEnv attribute is not used as we package environments for portability
         
         # Working directory
         workdir_spec = environment.get('workdir')
@@ -398,4 +436,4 @@ def from_workflow(wf: Workflow, out_file: Union[str, Path], **opts: Any) -> None
         verbose=opts.get("verbose", False),
         target_environment=opts.get("target_environment", "distributed_computing")
     )
-    exporter._generate_output(wf, Path(out_file), **opts)
+    exporter.export_workflow(wf, Path(out_file), **opts)

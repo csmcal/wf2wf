@@ -35,7 +35,6 @@
     "intent": {"type": "array", "items": {"type": "string"}, "default": []},
     "cwl_version": {"type": ["string", "null"]},
     "bco_spec": {"$ref": "#/definitions/bco_spec"},
-    "execution_model": {"$ref": "#/definitions/environment_specific_string"},
     "loss_map": {"type": "array", "items": {"type": "object"}, "default": []},
     "metadata": {"$ref": "#/definitions/metadata_spec"},
     "extra": {"type": "object"}
@@ -586,6 +585,8 @@
         "source_format": {"type": ["string", "null"]},
         "source_file": {"type": ["string", "null"]},
         "source_version": {"type": ["string", "null"]},
+        "original_execution_environment": {"type": ["string", "null"]},
+        "original_source_format": {"type": ["string", "null"]},
         "parsing_notes": {"type": "array", "items": {"type": "string"}, "default": []},
         "conversion_warnings": {"type": "array", "items": {"type": "string"}, "default": []},
         "format_specific": {"type": "object", "default": {}},

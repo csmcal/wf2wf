@@ -38,6 +38,8 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "generate_lock_hash",
     "prepare_env",
+    "pack_conda_environment",
+    "generate_conda_activation_script",
     "OCIBuilder",
     "DockerBuildxBuilder",
     "BuildahBuilder",
@@ -507,6 +509,175 @@ def prepare_env(
                 tf.add(lock_file, arcname="environment.yaml")
 
     return EnvBuildResult(lock_hash=lock_hash, lock_file=lock_file, tarball=tarball)
+
+
+def pack_conda_environment(
+    env_yaml_path: Union[str, Path],
+    output_dir: Optional[Union[str, Path]] = None,
+    *,
+    verbose: bool = False,
+    dry_run: bool = False,
+) -> Optional[Path]:
+    """
+    Package a conda environment using conda-pack for portable deployment.
+    
+    This function creates a portable tarball of a conda environment that can be
+    transferred to HTCondor execution nodes and unpacked/activated during job execution.
+    
+    Args:
+        env_yaml_path: Path to the conda environment YAML file
+        output_dir: Directory to save the packaged environment (defaults to same dir as YAML)
+        verbose: Enable verbose output
+        dry_run: If True, only show what would be done without actually packaging
+        
+    Returns:
+        Path to the created .tar.gz file, or None if packaging failed
+        
+    Raises:
+        RuntimeError: If conda-pack is not available or packaging fails
+    """
+    env_yaml_path = Path(env_yaml_path)
+    
+    if not env_yaml_path.exists():
+        raise FileNotFoundError(f"Conda environment file not found: {env_yaml_path}")
+    
+    # Check if conda-pack is available
+    if not shutil.which("conda-pack"):
+        raise RuntimeError(
+            "conda-pack not found. Install it with: conda install -c conda-forge conda-pack"
+        )
+    
+    # Determine output directory and filename
+    if output_dir is None:
+        output_dir = env_yaml_path.parent
+    else:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Extract environment name from YAML file
+    try:
+        with open(env_yaml_path, 'r') as f:
+            env_data = yaml.safe_load(f)
+        env_name = env_data.get('name', env_yaml_path.stem)
+    except Exception as e:
+        if verbose:
+            logger.warning(f"Could not parse environment name from {env_yaml_path}: {e}")
+        env_name = env_yaml_path.stem
+    
+    output_file = output_dir / f"{env_name}.tar.gz"
+    
+    if dry_run:
+        print(f"DRY RUN: Would package conda environment from {env_yaml_path}")
+        print(f"  Environment name: {env_name}")
+        print(f"  Output file: {output_file}")
+        return output_file
+    
+    if verbose:
+        print(f"Packaging conda environment: {env_name}")
+        print(f"  Source: {env_yaml_path}")
+        print(f"  Output: {output_file}")
+    
+    try:
+        # First, create the environment from the YAML file
+        create_cmd = ["conda", "env", "create", "-f", str(env_yaml_path)]
+        if verbose:
+            print(f"Creating environment: {' '.join(create_cmd)}")
+        
+        result = subprocess.run(
+            create_cmd,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        if verbose:
+            print("Environment created successfully")
+        
+        # Then package the environment using conda-pack
+        pack_cmd = [
+            "conda-pack", 
+            "-n", env_name,
+            "--dest-prefix", "$ENVDIR",
+            "-o", str(output_file)
+        ]
+        
+        if verbose:
+            print(f"Packaging environment: {' '.join(pack_cmd)}")
+        
+        result = subprocess.run(
+            pack_cmd,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        if verbose:
+            print(f"Environment packaged successfully: {output_file}")
+            print(f"File size: {output_file.stat().st_size / (1024*1024):.1f} MB")
+        
+        return output_file
+        
+    except subprocess.CalledProcessError as e:
+        error_msg = f"Failed to package conda environment: {e}"
+        if e.stdout:
+            error_msg += f"\nstdout: {e.stdout}"
+        if e.stderr:
+            error_msg += f"\nstderr: {e.stderr}"
+        raise RuntimeError(error_msg)
+    
+    except Exception as e:
+        raise RuntimeError(f"Unexpected error packaging conda environment: {e}")
+
+
+def generate_conda_activation_script(
+    env_name: str,
+    command: str,
+    *,
+    script_path: Optional[Union[str, Path]] = None,
+) -> Path:
+    """
+    Generate a bash script that unpacks and activates a conda environment for HTCondor jobs.
+    
+    This function creates a script that follows the CHTC best practices for conda
+    environment activation in HTCondor jobs.
+    
+    Args:
+        env_name: Name of the conda environment (without .tar.gz extension)
+        command: The command to run after activating the environment
+        script_path: Path to save the script (defaults to {env_name}_script.sh)
+        
+    Returns:
+        Path to the generated script
+    """
+    if script_path is None:
+        script_path = Path(f"{env_name}_script.sh")
+    else:
+        script_path = Path(script_path)
+    
+    script_content = f"""#!/bin/bash
+
+# Exit on any error
+set -e
+
+# Environment setup
+ENVNAME={env_name}
+export ENVDIR=$ENVNAME
+
+# Create environment directory and unpack
+mkdir $ENVDIR
+tar -xzf $ENVNAME.tar.gz -C $ENVDIR
+
+# Activate the conda environment
+. $ENVDIR/bin/activate
+
+# Run the specified command
+{command}
+"""
+    
+    script_path.write_text(script_content)
+    script_path.chmod(0o755)  # Make executable
+    
+    return script_path
 
 
 # ---------------------------------------------------------------------------

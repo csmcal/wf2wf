@@ -566,18 +566,19 @@ class TestWorkflowEnvironmentSpecific:
     """Test Workflow with environment-specific fields."""
     
     def test_workflow_with_environment_specific_execution_model(self):
-        """Test creating a workflow with environment-specific execution model."""
+        """Test creating a workflow with execution model stored in metadata."""
         workflow = Workflow(name="test_workflow")
         
-        # Set different execution models for different environments
-        workflow.execution_model.set_for_environment("shared_filesystem", "shared_filesystem")
-        workflow.execution_model.set_for_environment("distributed_computing", "distributed_computing")
-        workflow.execution_model.set_for_environment("cloud_native", "cloud_native")
+        # Set execution model in metadata instead of workflow IR
+        from wf2wf.core import MetadataSpec
+        workflow.metadata = MetadataSpec(
+            original_execution_environment="shared_filesystem",
+            original_source_format="snakemake"
+        )
         
-        # Verify environment-specific values
-        assert workflow.execution_model.get_value_for("shared_filesystem") == "shared_filesystem"
-        assert workflow.execution_model.get_value_for("distributed_computing") == "distributed_computing"
-        assert workflow.execution_model.get_value_for("cloud_native") == "cloud_native"
+        # Verify execution model is stored in metadata
+        assert workflow.metadata.original_execution_environment == "shared_filesystem"
+        assert workflow.metadata.original_source_format == "snakemake"
         
     def test_workflow_get_for_environment(self):
         """Test getting workflow configuration for specific environment."""

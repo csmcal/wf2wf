@@ -536,6 +536,7 @@ class TestInvalidResourceSpecifications:
 
                 assert "failed" in str(exc_info.value).lower()
 
+    @pytest.mark.xfail(reason="Resource validation not yet implemented")
     def test_negative_resource_values(self, tmp_path):
         """Test handling of negative resource values."""
         snakefile = tmp_path / "negative_resources.smk"

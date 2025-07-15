@@ -144,9 +144,9 @@ def generate(
         auto_transfer_files = []
         
         for task in wf_after.tasks.values():
-            if task.resources.mem_mb == 0:
+            if hasattr(task, 'mem_mb') and task.mem_mb.get_value_for('shared_filesystem') == 0:
                 tasks_without_memory.append(task.id)
-            if task.resources.disk_mb == 0:
+            if hasattr(task, 'disk_mb') and task.disk_mb.get_value_for('shared_filesystem') == 0:
                 tasks_without_disk.append(task.id)
             # Get environment-specific values for shared_filesystem environment
             container = task.container.get_value_for('shared_filesystem')

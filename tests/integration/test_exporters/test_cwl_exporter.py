@@ -494,7 +494,9 @@ class TestCWLGraphOptions:
         """Test structured provenance export."""
         # Build workflow with namespaced extras
         wf = Workflow(name="prov_test")
-        wf.metadata = {
+        from wf2wf.core import MetadataSpec
+        wf.metadata = MetadataSpec()
+        wf.metadata.annotations = {
             "prov:wasGeneratedBy": "wf2wf-unit", 
             "schema:author": "Alice"
         }

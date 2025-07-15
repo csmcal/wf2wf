@@ -218,10 +218,12 @@ def _apply_environment_defaults(
     
     # Apply resource defaults
     if env_def.default_resource_specification:
-        if not task.resources.cpu.value and not task.resources.mem_mb.value:
+        cpu_val = task.cpu.get_value_for(target_environment) if hasattr(task, 'cpu') else None
+        mem_val = task.mem_mb.get_value_for(target_environment) if hasattr(task, 'mem_mb') else None
+        if (not cpu_val or cpu_val == 0) and (not mem_val or mem_val == 0):
             # Add default resources
-            task.resources.cpu.value = 1
-            task.resources.mem_mb.value = 4096
+            task.cpu.set_for_environment(1, target_environment)
+            task.mem_mb.set_for_environment(4096, target_environment)
             changes_made.append({
                 'type': 'default_resource_addition',
                 'task_id': task.id,
@@ -260,7 +262,8 @@ def _check_unsupported_features(
     recommendations = []
     
     # Check GPU support
-    if task.resources.gpu.value and not env_def.supports_gpu:
+    gpu_val = task.gpu.get_value_for(target_environment) if hasattr(task, 'gpu') else None
+    if gpu_val and not env_def.supports_gpu:
         msg = f"Task {task.id} requests GPU but {target_environment} may not support it"
         warnings.append(msg)
         recommendations.append(f"Verify GPU support in {target_environment} environment")

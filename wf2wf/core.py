@@ -1061,9 +1061,6 @@ class Workflow:
     # BCO integration (environment-agnostic)
     bco_spec: Optional[BCOSpec] = None
 
-    # Execution model specification (environment-agnostic)
-    execution_model: EnvironmentSpecificValue[str] = field(default_factory=lambda: EnvironmentSpecificValue("unknown"))
-
     # Loss mapping entries captured during export (optional)
     loss_map: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -1183,9 +1180,9 @@ class Workflow:
             result['tasks'][task_id]['id'] = task_id  # Ensure ID is included
         
         # Get environment-specific execution model
-        execution_model = self.execution_model.get_value_for(environment)
-        if execution_model:
-            result['execution_model'] = execution_model
+        # execution_model = self.execution_model.get_value_for(environment) # This line is removed
+        # if execution_model:
+        #     result['execution_model'] = execution_model
         
         return result
 
@@ -1324,6 +1321,9 @@ class Workflow:
         # Handle metadata field specially
         if "metadata" in data and isinstance(data["metadata"], dict):
             data["metadata"] = MetadataSpec(**data["metadata"])
+
+        # Remove execution_model field if present (no longer part of Workflow IR)
+        data.pop("execution_model", None)
 
         loss_map = data.pop("loss_map", [])
         return cls(tasks=tasks, edges=edges, loss_map=loss_map, **data)
@@ -1703,6 +1703,8 @@ class MetadataSpec:
     source_format: Optional[str] = None  # e.g., "snakemake", "cwl", "dagman"
     source_file: Optional[str] = None    # Original file path
     source_version: Optional[str] = None # Format version
+    original_execution_environment: Optional[str] = None  # Original execution environment (e.g., "shared_filesystem", "distributed_computing")
+    original_source_format: Optional[str] = None  # Original source format (e.g., "snakemake", "cwl", "dagman")
     
     # Parsing and conversion metadata
     parsing_notes: List[str] = field(default_factory=list)  # Warnings, notes from parsing
@@ -1757,7 +1759,11 @@ class MetadataSpec:
             result["source_file"] = self.source_file
         if self.source_version is not None:
             result["source_version"] = self.source_version
-        
+        if self.original_execution_environment is not None:
+            result["original_execution_environment"] = self.original_execution_environment
+        if self.original_source_format is not None:
+            result["original_source_format"] = self.original_source_format
+            
         if self.parsing_notes:
             result["parsing_notes"] = self.parsing_notes
         if self.conversion_warnings:

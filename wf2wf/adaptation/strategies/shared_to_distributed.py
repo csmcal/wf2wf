@@ -2,9 +2,12 @@
 Specialized adapter for shared filesystem to distributed computing conversions.
 """
 
+import logging
 from typing import Any, Optional
 from ..base import EnvironmentAdapter
 from ..resources import ResourceAdapter
+
+logger = logging.getLogger(__name__)
 
 
 class SharedToDistributedAdapter(ResourceAdapter):
@@ -60,6 +63,8 @@ class SharedToDistributedAdapter(ResourceAdapter):
     
     def _adapt_memory(self, source_value: int, scaled_value: int, **opts) -> int:
         """Override with distributed computing specific memory adaptation."""
+        logger.debug(f"SharedToDistributedAdapter._adapt_memory called with source_value={source_value}, scaled_value={scaled_value}")
+        
         # Distributed computing often has higher memory overhead due to:
         # - Process isolation
         # - Network communication overhead
@@ -68,6 +73,8 @@ class SharedToDistributedAdapter(ResourceAdapter):
         # Apply additional overhead for distributed computing
         distributed_overhead = 1.15  # 15% additional overhead
         adapted_value = int(scaled_value * distributed_overhead)
+        
+        logger.debug(f"Adapted memory value: {adapted_value}")
         
         # Apply standard constraints
         return super()._adapt_memory(source_value, adapted_value, **opts)
@@ -99,4 +106,30 @@ class SharedToDistributedAdapter(ResourceAdapter):
         adapted_value = int(scaled_value * distributed_overhead)
         
         # Apply standard constraints
-        return super()._adapt_runtime(source_value, adapted_value, **opts) 
+        return super()._adapt_runtime(source_value, adapted_value, **opts)
+    
+    def _adapt_threads(self, source_value: int, scaled_value: int, **opts) -> int:
+        """Override with distributed computing specific thread adaptation."""
+        # For distributed computing, threads often map directly to CPU cores
+        # Apply standard constraints
+        adapted_threads = super()._adapt_threads(source_value, scaled_value, **opts)
+        
+        # Also update the CPU field to match threads for distributed computing
+        # This ensures compatibility with DAGMan and other distributed systems
+        if hasattr(self, '_current_task') and self._current_task:
+            self._current_task.cpu.set_for_environment(adapted_threads, self.target_env)
+            logger.debug(f"Updated CPU field to {adapted_threads} to match threads for {self.target_env}")
+        
+        return adapted_threads
+    
+    def _adapt_workflow_properties(self, workflow, **opts):
+        """Adapt workflow-level properties for distributed computing."""
+        # For distributed computing, we might need to adapt workflow-level properties
+        # such as execution model, file transfer strategies, etc.
+        # For now, we'll just log that this adaptation is needed
+        self.log_adaptation(
+            "execution_model",
+            "shared_filesystem",
+            "distributed_computing",
+            "Workflow adapted for distributed computing environment"
+        ) 

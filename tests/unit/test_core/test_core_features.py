@@ -655,8 +655,38 @@ class TestIntegrationWorkflows:
                     
                     if conda_env and not container:
                         # Task has conda but no container - should have universe = vanilla
+                        # Note: Conda environments are now handled through packaging and activation scripts
+                        # rather than the +CondaEnv attribute for better portability
                         assert "universe = vanilla" in content, f"Task {task.id} has conda but no universe = vanilla"
-                        assert "+CondaEnv" in content, f"Task {task.id} has conda but no +CondaEnv"
+                        
+                        # Check that activation script was generated in scripts directory
+                        script_files = list(scripts_dir.glob("*.sh"))
+                        assert len(script_files) > 0, f"No script files found for task {task.id}"
+                        
+                        # Check that at least one script contains conda activation logic
+                        activation_script_found = False
+                        for script_file in script_files:
+                            script_content = script_file.read_text()
+                            if "conda-pack" in script_content or "conda activate" in script_content:
+                                activation_script_found = True
+                                break
+                        assert activation_script_found, f"No conda activation script found for task {task.id}"
+                        
+                        # Check that conda environment tarball was created (if packaging succeeded)
+                        env_tarballs = list(tmp_path.glob("*.tar.gz"))
+                        if len(env_tarballs) > 0:
+                            # Packaging succeeded - verify tarball exists
+                            assert any("analysis" in tarball.name for tarball in env_tarballs), f"No environment tarball found for task {task.id}"
+                        else:
+                            # Packaging may have failed gracefully - check for fallback activation
+                            conda_script_found = False
+                            for script_file in script_files:
+                                script_content = script_file.read_text()
+                                if "conda activate analysis_env.yaml" in script_content:
+                                    conda_script_found = True
+                                    break
+                            assert conda_script_found, f"No conda activation script found for task {task.id} (packaging failed)"
+                        
                     elif not conda_env and not container:
                         # Task has no conda and no container - should not have universe = docker
                         assert "universe = docker" not in content, f"Task {task.id} has no container but has universe = docker"

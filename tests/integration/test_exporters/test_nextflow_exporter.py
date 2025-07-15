@@ -56,9 +56,9 @@ class TestNextflowExporter:
 
         # Check resource specifications
         assert "cpus 2" in content
-        assert "memory '4.0.GB'" in content
+        assert "memory '4 GB'" in content
         assert "cpus 4" in content
-        assert "memory '8.0.GB'" in content
+        assert "memory '8 GB'" in content
 
         # Check container
         assert "container 'rocker/r-ver:4.2.0'" in content
@@ -188,13 +188,16 @@ class TestNextflowExporter:
     def test_export_with_comprehensive_resources(self, interactive_responses, persistent_test_output):
         """Test exporting workflow with comprehensive resource specifications."""
         # Set up specific responses for this test to ensure we get the expected resources
-        interactive_responses.update({
-            "CPU cores (default: 1): ": "16",
-            "Memory (MB) (default: 4096): ": "32768",
-            "Disk space (MB) (default: 4096): ": "102400",
-            "GPU count (default: 0): ": "2",
-            "Time limit (seconds) (default: 3600): ": "7200"
-        })
+        # Order: CPU, Memory, Disk, Threads, Runtime, GPU choice, GPU count, GPU memory
+        interactive_responses.set_responses([
+            "16",      # CPU cores
+            "32768",   # Memory (MB)
+            "102400",  # Disk space (MB)
+            "1",       # Threads
+            "7200",    # Runtime (seconds)
+            "2",       # GPU requirements choice (2 = basic)
+            "2"        # GPU count
+        ])
         
         wf = Workflow(name="resource_workflow")
 
@@ -208,7 +211,7 @@ class TestNextflowExporter:
         wf.add_task(task)
 
         output_file = persistent_test_output / "resource_workflow.nf"
-        from_workflow(wf, output_file, modular=False)
+        from_workflow(wf, output_file, modular=False, interactive=True)
 
         content = output_file.read_text()
 
@@ -217,7 +220,7 @@ class TestNextflowExporter:
         assert "memory '32 GB'" in content
         assert "disk '100 GB'" in content
         assert "accelerator 2" in content
-        assert "time '2h'" in content
+        assert "time '2.0h'" in content
 
     def test_export_with_retry_and_error_handling(self, persistent_test_output):
         """Test exporting workflow with retry and error handling."""
@@ -387,11 +390,11 @@ class TestNextflowExporter:
 
         # Check memory conversions
         assert "cpus 1" in content
-        assert "memory '512.MB'" in content  # Small memory stays in MB
+        assert "memory '512 MB'" in content  # Small memory stays in MB
         assert "cpus 1" in content
-        assert "memory '4.0.GB'" in content  # >= 1GB converted to GB
+        assert "memory '4 GB'" in content  # >= 1GB converted to GB
         assert "cpus 1" in content
-        assert "memory '64.0.GB'" in content  # Large memory in GB
+        assert "memory '64 GB'" in content  # Large memory in GB
 
     def test_time_unit_conversion(self, persistent_test_output):
         """Test proper conversion of time units."""

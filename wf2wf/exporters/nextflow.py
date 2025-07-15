@@ -586,9 +586,16 @@ def _format_memory_nf(mem_mb):
     try:
         mem_mb = float(mem_mb)
         if mem_mb >= 1024:
-            return f"{mem_mb/1024:.1f}.GB"
+            gb = mem_mb / 1024
+            if gb.is_integer():
+                return f"{int(gb)} GB"
+            else:
+                return f"{gb:.1f} GB"
         else:
-            return f"{int(mem_mb)}.MB"
+            if mem_mb.is_integer():
+                return f"{int(mem_mb)} MB"
+            else:
+                return f"{mem_mb:.1f} MB"
     except Exception:
         return str(mem_mb)
 
@@ -617,9 +624,16 @@ def _format_disk_nf(disk_mb):
     try:
         disk_mb = float(disk_mb)
         if disk_mb >= 1024:
-            return f"{disk_mb/1024:.1f}.GB"
+            gb = disk_mb / 1024
+            if gb.is_integer():
+                return f"{int(gb)} GB"
+            else:
+                return f"{gb:.1f} GB"
         else:
-            return f"{int(disk_mb)}.MB"
+            if disk_mb.is_integer():
+                return f"{int(disk_mb)} MB"
+            else:
+                return f"{disk_mb:.1f} MB"
     except Exception:
         return str(disk_mb)
 

@@ -169,7 +169,8 @@ class EnvironmentMapper:
         scaling_map = {
             "memory": "memory_scaling",
             "mem_mb": "memory_scaling",
-            "cpu": "cpu_scaling", 
+            "cpu": "cpu_scaling",
+            "threads": "cpu_scaling",
             "disk": "disk_scaling",
             "disk_mb": "disk_scaling",
             "gpu": "gpu_scaling",

@@ -772,13 +772,14 @@ class TestCWLAdvancedFeatures:
         # Assertions
         assert "scatter_step" in wf.tasks and "maybe_step" in wf.tasks
         scat_task = wf.tasks["scatter_step"]
-        assert scat_task.scatter is not None
+        assert scat_task.scatter.get_value_for("shared_filesystem") is not None
+        scatter_spec = scat_task.scatter.get_value_for("shared_filesystem")
         assert (
-            scat_task.scatter.scatter == ["input_file"]
-            or scat_task.scatter.scatter == "input_file"
+            scatter_spec.scatter == ["input_file"]
+            or scatter_spec.scatter == "input_file"
         )
         maybe_task = wf.tasks["maybe_step"]
-        assert maybe_task.when is not None
+        assert maybe_task.when.get_value_for("shared_filesystem") is not None
 
     def test_dependency_extraction(self, persistent_test_output):
         """Test extracting task dependencies from CWL workflow."""
@@ -877,7 +878,7 @@ class TestCWLGraphSupport:
 
     def test_cwl_graph_import(self, tmp_path):
         """Test importing CWL graph workflows."""
-        data_dir = Path(__file__).parent.parent / "data"
+        data_dir = Path(__file__).parent.parent.parent / "data"
         wf_path = data_dir / "graph_workflow.cwl"
         
         try:

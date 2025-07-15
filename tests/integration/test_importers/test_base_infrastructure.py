@@ -216,6 +216,11 @@ class TestLossIntegration:
             "wf2wf_version": "0.1.0",
             "target_engine": "snakemake",
             "source_checksum": actual_checksum,
+            "summary": {
+                "total_entries": 1,
+                "by_severity": {"warn": 1},
+                "by_category": {"advanced_features": 1}
+            },
             "entries": [
                 {
                     "json_pointer": "/tasks/task1/gpu",
@@ -223,7 +228,8 @@ class TestLossIntegration:
                     "lost_value": 2,
                     "reason": "GPU resources not supported in target format",
                     "origin": "wf2wf",
-                    "severity": "warn"
+                    "severity": "warn",
+                    "status": "lost"
                 }
             ]
         }
@@ -239,8 +245,8 @@ class TestLossIntegration:
         test_file.write_text("test content")
         
         summary = create_loss_sidecar_summary(workflow, test_file)
-        assert summary['loss_sidecar_found'] is False
-        assert summary['total_entries'] == 0
+        assert summary['has_loss_sidecar'] is False
+        assert summary['entries_count'] == 0
 
     def test_create_loss_sidecar_summary_with_file(self, tmp_path):
         """Test that loss side-car summary works when file exists."""
@@ -263,6 +269,11 @@ class TestLossIntegration:
             "wf2wf_version": "0.1.0",
             "target_engine": "snakemake",
             "source_checksum": actual_checksum,
+            "summary": {
+                "total_entries": 2,
+                "by_severity": {"warn": 1, "info": 1},
+                "by_category": {"advanced_features": 1, "custom": 1}
+            },
             "entries": [
                 {
                     "json_pointer": "/tasks/task1/gpu",
@@ -270,7 +281,8 @@ class TestLossIntegration:
                     "lost_value": 2,
                     "reason": "GPU resources not supported",
                     "origin": "wf2wf",
-                    "severity": "warn"
+                    "severity": "warn",
+                    "status": "lost"
                 },
                 {
                     "json_pointer": "/tasks/task1/custom_attr",
@@ -278,17 +290,16 @@ class TestLossIntegration:
                     "lost_value": "custom_value",
                     "reason": "Custom attributes not supported",
                     "origin": "user",
-                    "severity": "info"
+                    "severity": "info",
+                    "status": "lost"
                 }
             ]
         }
         loss_file.write_text(json.dumps(loss_data))
         
         summary = create_loss_sidecar_summary(workflow, test_file)
-        assert summary['loss_sidecar_found'] is True
-        assert summary['total_entries'] == 2
-        assert summary['by_severity']['warn'] == 1
-        assert summary['by_severity']['info'] == 1
+        assert summary['has_loss_sidecar'] is True
+        assert summary['entries_count'] == 2
 
 
 class TestInference:

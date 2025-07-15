@@ -193,11 +193,10 @@ class NextflowImporter(BaseImporter):
             }
         )
         
-        # --- Shared infrastructure: inference and prompting ---
-        infer_environment_specific_values(workflow, "nextflow")
+        # --- Shared infrastructure: prompting ---
         if self.interactive:
             prompt_for_missing_information(workflow, "nextflow")
-        # (Loss sidecar and environment management are handled by BaseImporter)
+        # (Inference, loss sidecar and environment management are handled by BaseImporter)
         
         # Apply Nextflow-specific enhancements
         self._enhance_nextflow_specific_features(workflow, parsed_data)
